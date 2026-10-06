@@ -1,7 +1,8 @@
 # Peptide COA site
 
-A static lab-report library: every report grouped by peptide, searchable by name,
-batch code or task number, with the lab's document and its verification key and link.
+A static lab-report library: every report filed by peptide name and vial size (mg),
+found by picking the name and size or by searching a batch code or task number,
+with the lab's document and its verification key and link.
 Hosted on Render as a static site (publish directory: repo root, no build step).
 Every push to `main` redeploys it.
 
@@ -19,7 +20,8 @@ Report images go in the `coa/` folder and are referenced by file name in the rep
 
 1. Put the report image in `coa/`.
 2. Copy an existing entry in the LAB REPORTS block and change every field to match the new document:
-   sample, task number, key, verify link, batch, the three dates, tests requested, and each results row.
+   strength (the vial size, e.g. "20 mg"), sample, task number, key, verify link, batch,
+   the three dates, tests requested, and each results row.
 3. Commit. Render redeploys on its own.
 
 A new peptide name in `product` creates its own section on the page automatically.

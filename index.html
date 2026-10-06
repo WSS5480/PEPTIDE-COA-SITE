@@ -64,8 +64,8 @@ button, input, select { font: inherit; color: inherit; }
 
 /* finder */
 main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
-.finder { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: .9rem 1rem; align-items: end; padding: 1.1rem; }
-@media (max-width: 640px) { .finder { grid-template-columns: minmax(0, 1fr); } }
+.finder { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .7fr) minmax(0, 1.4fr); gap: .9rem 1rem; align-items: end; padding: 1.1rem; }
+@media (max-width: 760px) { .finder { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); } .finder .wide { grid-column: 1 / -1; } }
 .field { display: grid; gap: .35rem; min-width: 0; }
 .field input, .field select { width: 100%; min-width: 0; height: 3.1rem; padding: 0 1rem; background: var(--card); border: 1px solid var(--line-strong); border-radius: 10px; font-weight: 500; }
 .field input::placeholder { color: var(--ink-2); font-weight: 400; opacity: 1; }
@@ -145,7 +145,7 @@ main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
   <svg class="helix" id="helix" viewBox="0 0 1200 400" preserveAspectRatio="xMaxYMid slice" aria-hidden="true"></svg>
   <div class="wrap">
     <p class="eyebrow">Third-party testing</p>
-    <h1 id="headline">Lab reports for every peptide listed</h1>
+    <h1 id="headline">Lab reports by peptide and size</h1>
     <p class="lede" id="lede"></p>
     <dl class="tally" id="tally"></dl>
   </div>
@@ -154,12 +154,16 @@ main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
 <main><div class="wrap">
   <div class="card finder">
     <div class="field">
-      <label class="eyebrow" for="q">Peptide, batch or task number</label>
-      <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Name, batch code or task number">
-    </div>
-    <div class="field">
       <label class="eyebrow" for="product">Peptide</label>
       <select id="product"><option value="">All peptides</option></select>
+    </div>
+    <div class="field">
+      <label class="eyebrow" for="size">Size</label>
+      <select id="size"><option value="">All sizes</option></select>
+    </div>
+    <div class="field wide">
+      <label class="eyebrow" for="q">Or search</label>
+      <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Name, mg, batch or task number">
     </div>
     <p class="count" id="count" aria-live="polite"></p>
   </div>
@@ -169,8 +173,8 @@ main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
   <section class="card guide">
     <h2 class="title">How to read a report</h2>
     <dl class="terms">
-      <div><dt>Sample</dt><dd>The name the sample was submitted under. Some are product codes rather than full names.</dd></div>
-      <div><dt>Batch</dt><dd>The lot code given to the lab. Where a report says Unknown, the lab was not given one, so that report is not tied to a specific batch.</dd></div>
+      <div><dt>Name and size</dt><dd>Reports are filed by peptide name and vial size in milligrams. The Sample line shows the name the vial was submitted under, which is sometimes a product code.</dd></div>
+      <div><dt>Batch</dt><dd>The lot code given to the lab. A report is specific to one batch only when it shows a batch code.</dd></div>
       <div><dt>Amount</dt><dd>The row named after the compound gives the milligrams of it the lab measured in the vial.</dd></div>
       <div><dt>Purity</dt><dd>The compound's share of everything detected in the sample, as a percentage. It says how clean the material is, not how much is in the vial.</dd></div>
       <div><dt>Verification key</dt><dd>Each report carries a unique key. Use the verify link, or enter the key on the lab's website, to see the lab's own copy of the report.</dd></div>
@@ -202,13 +206,14 @@ const SITE = {
   brand: "",          // your brand name, shown top left. Left empty, the header reads "Lab Reports"
   tagline: "",        // small line under the brand (optional)
   notice: "For research and laboratory use only.",
-  intro: "Each report below was issued by the testing lab Janoshik and names XINT as the manufacturer. Open one to see the full results and the lab's document, then check it on the lab's own site with the key printed on it.",
+  intro: "Pick your peptide and its size to pull up the lab report. Each one was issued by the testing lab Janoshik and names XINT as the manufacturer. Open it for the full results and the lab's document, then check it on the lab's own site with the key printed on it.",
   docPath: "coa/"     // folder that holds the report images
 };
 
 /* ───────────── 2. LAB REPORTS ─────────────
    One entry per report, copied from the lab's document exactly as printed.
    product         the peptide this report is filed under on the page
+   strength        the vial size, e.g. "20 mg". Reports are matched by product and strength
    sample          the "Sample" line on the report
    task, key       the report's task number and unique verification key
    verifyUrl       the lab's own page for this report (the link inside its QR code)
@@ -218,14 +223,14 @@ const SITE = {
    results         every row of the results table: [name, value]
    image           the report image file in the coa/ folder */
 const REPORTS = [
-  { product: "Tirzepatide", sample: "Tirzepatide 20mg", task: "198695", key: "S5K9YA9B4P3T",
+  { product: "Tirzepatide", sample: "Tirzepatide 20mg", strength: "20 mg", task: "198695", key: "S5K9YA9B4P3T",
     verifyUrl: "https://verify.janoshik.com/tests/198695_S5K9YA9B4P3T",
     lab: "Janoshik", client: "XINTpeptides", manufacturer: "XINT", batch: "",
     ordered: "2026-06-22", received: "2026-07-17", tested: "2026-07-24",
     testsRequested: "Common GLP-1 peptide blind test (Semaglutide, Tirzepatide and Retatrutide)",
     results: [["Tirzepatide", "22.19 mg"], ["Purity", "99.710%"]],
     image: "tirzepatide-20mg-198695.jpeg" },
-  { product: "Tirzepatide", sample: "TR30", task: "216239", key: "8ISJNYQPW41C",
+  { product: "Tirzepatide", sample: "TR30", strength: "30 mg", task: "216239", key: "8ISJNYQPW41C",
     verifyUrl: "https://verify.janoshik.com/tests/216239_8ISJNYQPW41C",
     lab: "Janoshik", client: "XINTpeptides", manufacturer: "XINTpeptides", batch: "CP01260707130L",
     ordered: "2026-07-25", received: "2026-08-03", tested: "2026-08-06",
@@ -233,14 +238,14 @@ const REPORTS = [
     results: [["Tirzepatide", "30.27 mg"], ["Purity", "99.669%"]],
     image: "tirzepatide-tr30-216239.jpeg" },
 
-  { product: "Retatrutide", sample: "Retatrutide 20mg", task: "197962", key: "64YW4JW9VMCH",
+  { product: "Retatrutide", sample: "Retatrutide 20mg", strength: "20 mg", task: "197962", key: "64YW4JW9VMCH",
     verifyUrl: "https://verify.janoshik.com/tests/197962_64YW4JW9VMCH",
     lab: "Janoshik", client: "XIINTpeptides", manufacturer: "XINT", batch: "",
     ordered: "2026-06-19", received: "2026-07-14", tested: "2026-07-24",
     testsRequested: "Common GLP-1 peptide blind test (Semaglutide, Tirzepatide and Retatrutide)",
     results: [["Retatrutide", "21.48 mg"], ["Purity", "99.119%"]],
     image: "retatrutide-20mg-197962.jpeg" },
-  { product: "Retatrutide", sample: "RT30", task: "216237", key: "FAXKR7UPTLEP",
+  { product: "Retatrutide", sample: "RT30", strength: "30 mg", task: "216237", key: "FAXKR7UPTLEP",
     verifyUrl: "https://verify.janoshik.com/tests/216237_FAXKR7UPTLEP",
     lab: "Janoshik", client: "XINTpeptides", manufacturer: "XINTpeptides", batch: "CP01260707230L",
     ordered: "2026-07-25", received: "2026-08-03", tested: "2026-08-06",
@@ -248,7 +253,7 @@ const REPORTS = [
     results: [["Retatrutide", "30.75 mg"], ["Purity", "99.806%"]],
     image: "retatrutide-rt30-216237.jpeg" },
 
-  { product: "Tesamorelin", sample: "Tesamorelin 10mg", task: "198694", key: "PHU66TA5VC9A",
+  { product: "Tesamorelin", sample: "Tesamorelin 10mg", strength: "10 mg", task: "198694", key: "PHU66TA5VC9A",
     verifyUrl: "https://verify.janoshik.com/tests/198694_PHU66TA5VC9A",
     lab: "Janoshik", client: "XINTpeptides", manufacturer: "XINT", batch: "",
     ordered: "2026-06-22", received: "2026-07-17", tested: "2026-07-29",
@@ -256,14 +261,14 @@ const REPORTS = [
     results: [["Tesamorelin", "9.23 mg"], ["Purity", "99.421%"]],
     image: "tesamorelin-10mg-198694.jpeg" },
 
-  { product: "MOTS-C", sample: "MOTS-C 10mg", task: "216588", key: "W25M6MY3KK5H",
+  { product: "MOTS-C", sample: "MOTS-C 10mg", strength: "10 mg", task: "216588", key: "W25M6MY3KK5H",
     verifyUrl: "https://verify.janoshik.com/tests/216588_W25M6MY3KK5H",
     lab: "Janoshik", client: "XINTpeptides", manufacturer: "XINT", batch: "",
     ordered: "2026-07-31", received: "2026-08-10", tested: "2026-08-12",
     testsRequested: "MOTS-c analysis",
     results: [["MOTS-C", "10.26 mg"], ["Purity", "99.150%"]],
     image: "mots-c-10mg-216588.jpeg" },
-  { product: "MOTS-C", sample: "MS40", task: "216235", key: "RJ4VF1KGIFXD",
+  { product: "MOTS-C", sample: "MS40", strength: "40 mg", task: "216235", key: "RJ4VF1KGIFXD",
     verifyUrl: "https://verify.janoshik.com/tests/216235_RJ4VF1KGIFXD",
     lab: "Janoshik", client: "XINTpeptides", manufacturer: "XINTpeptides", batch: "CP01260704540L",
     ordered: "2026-07-25", received: "2026-08-03", tested: "2026-08-05",
@@ -271,7 +276,7 @@ const REPORTS = [
     results: [["MOTS-C", "41.06 mg"], ["Purity", "99.581%"]],
     image: "mots-c-ms40-216235.jpeg" },
 
-  { product: "BPC-157", sample: "BPC-157 10mg", task: "216587", key: "WYILPDWRYWP3",
+  { product: "BPC-157", sample: "BPC-157 10mg", strength: "10 mg", task: "216587", key: "WYILPDWRYWP3",
     verifyUrl: "https://verify.janoshik.com/tests/216587_WYILPDWRYWP3",
     lab: "Janoshik", client: "XINTpeptides", manufacturer: "XINT", batch: "",
     ordered: "2026-07-31", received: "2026-08-10", tested: "2026-08-12",
@@ -279,7 +284,7 @@ const REPORTS = [
     results: [["BPC-157", "10.95 mg"], ["Purity", "99.849%"]],
     image: "bpc-157-10mg-216587.jpeg" },
 
-  { product: "BPC-157 + TB-500", sample: "BB20", task: "216236", key: "QNN45NLKNT25",
+  { product: "BPC-157 + TB-500", sample: "BB20", strength: "20 mg", task: "216236", key: "QNN45NLKNT25",
     verifyUrl: "https://verify.janoshik.com/tests/216236_QNN45NLKNT25",
     lab: "Janoshik", client: "XINTpeptides", manufacturer: "XINTpeptides", batch: "CP012606261920L",
     ordered: "2026-07-25", received: "2026-08-03", tested: "2026-08-06",
@@ -287,7 +292,7 @@ const REPORTS = [
     results: [["BPC-157", "10.56 mg"], ["TB-500 (889 Da)", "10.37 mg"]],
     image: "bpc-157-tb-500-bb20-216236.jpeg" },
 
-  { product: "Ipamorelin", sample: "Ipamorelin 10mg", task: "216590", key: "P6TVGI2MFSCE",
+  { product: "Ipamorelin", sample: "Ipamorelin 10mg", strength: "10 mg", task: "216590", key: "P6TVGI2MFSCE",
     verifyUrl: "https://verify.janoshik.com/tests/216590_P6TVGI2MFSCE",
     lab: "Janoshik", client: "XINTpeptides", manufacturer: "XINT", batch: "",
     ordered: "2026-07-31", received: "2026-08-10", tested: "2026-08-13",
@@ -295,7 +300,7 @@ const REPORTS = [
     results: [["Ipamorelin", "9.82 mg"], ["Purity", "99.795%"]],
     image: "ipamorelin-10mg-216590.jpeg" },
 
-  { product: "Epithalon", sample: "Epithalon 10mg", task: "216592", key: "6QQ487ZCKQ6F",
+  { product: "Epithalon", sample: "Epithalon 10mg", strength: "10 mg", task: "216592", key: "6QQ487ZCKQ6F",
     verifyUrl: "https://verify.janoshik.com/tests/216592_6QQ487ZCKQ6F",
     lab: "Janoshik", client: "XINTpeptides", manufacturer: "XINT", batch: "",
     ordered: "2026-07-31", received: "2026-08-10", tested: "2026-08-12",
@@ -317,26 +322,28 @@ const webUrl = (u) => /^https?:\/\//i.test(String(u || "").trim()) ? String(u).t
 const fileUrl = (src) => !src || /^\s*(javascript|data|vbscript):/i.test(src) ? "" : (/^(https?:)?\/\//i.test(src) || src.startsWith("/") ? src : (SITE.docPath || "") + src);
 const isPurity = (name) => /^purity$/i.test(String(name).trim());
 
-/* Tidy each report once. Peptides A to Z, newest report first within each. */
+/* Tidy each report once. Peptides A to Z, then by size, newest report first. */
 const seen = new Set();
 const ALL = REPORTS.filter((r) => r && r.product && r.tested && Array.isArray(r.results)).map((r) => {
   let id = "r-" + (norm(r.task) || norm(r.batch) || norm(r.sample)) + "-" + String(r.tested).replace(/\D/g, "");
   for (let n = 2; seen.has(id); n++) id = id.replace(/(-x\d+)?$/, "-x" + n);
   seen.add(id);
   return {
-    ...r, id,
+    ...r, id, mg: parseFloat(r.strength) || 0,
+    title: r.strength ? `${r.product} ${r.strength}` : r.product,
     purity: (r.results.find(([n]) => isPurity(n)) || [])[1] || "",
     amounts: r.results.filter(([n]) => !isPurity(n)),
-    hay: norm([r.product, r.sample, r.batch, r.task, r.key, r.lab].join(" ")),
+    hay: norm([r.product, r.strength, r.sample, r.batch, r.task, r.key, r.lab].join(" ")),
     img: fileUrl(r.image), verify: webUrl(r.verifyUrl)
   };
-}).sort((a, b) => a.product.localeCompare(b.product) || b.tested.localeCompare(a.tested));
+}).sort((a, b) => a.product.localeCompare(b.product) || a.mg - b.mg || b.tested.localeCompare(a.tested));
 
 function sheetHTML(r) {
   const pair = (dt, dd) => dd ? `<div><dt>${dt}</dt><dd>${dd}</dd></div>` : "";
   const details = [
     pair("Lab", esc(r.lab)),
     pair("Task number", r.task ? `<span class="mono">#${esc(r.task)}</span>` : ""),
+    pair("Size", esc(r.strength)),
     pair("Sample", esc(r.sample)),
     pair("Batch", r.batch ? `<span class="mono">${esc(r.batch)}</span>` : "Unknown (not given to the lab)"),
     pair("Client", esc(r.client)),
@@ -347,7 +354,7 @@ function sheetHTML(r) {
     pair("Tests requested", esc(r.testsRequested))
   ].join("");
   const doc = r.img
-    ? `<button class="doc" type="button" data-doc="${r.id}" aria-label="Open the ${esc(r.lab || "lab")} report for ${esc(r.sample || r.product)}"><span class="page"><img src="${esc(r.img)}" loading="lazy" alt="${esc(`${r.lab || "Lab"} test report for ${r.sample || r.product}${r.task ? ", task " + r.task : ""}`)}"></span><span class="eyebrow">Open the report</span></button>`
+    ? `<button class="doc" type="button" data-doc="${r.id}" aria-label="Open the ${esc(r.lab || "lab")} report for ${esc(r.title)}"><span class="page"><img src="${esc(r.img)}" loading="lazy" alt="${esc(`${r.lab || "Lab"} test report for ${r.title}${r.task ? ", task " + r.task : ""}`)}"></span><span class="eyebrow">Open the report</span></button>`
     : `<p class="eyebrow">No document attached yet.</p>`;
   const check = r.key || r.verify ? `<div class="block">
       <h3 class="eyebrow">Check it with the lab</h3>
@@ -367,10 +374,10 @@ function sheetHTML(r) {
 }
 
 function rowHTML(r, open) {
-  const amount = r.amounts.map(([n, v]) => r.amounts.length > 1 ? `${esc(n)} ${esc(v)}` : esc(v)).join(" · ");
+  const amount = r.amounts.length === 1 ? `${esc(r.amounts[0][1])} measured` : r.amounts.map(([n, v]) => `${esc(n)} ${esc(v)}`).join(" · ");
   return `<details class="report" id="${r.id}"${open ? " open" : ""}>
     <summary><span class="row">
-      <span class="r-name">${esc(r.sample || r.product)}</span>
+      <span class="r-name">${esc(r.title)}</span>
       <span class="r-batch${r.batch ? "" : " none"}">${r.batch ? esc(r.batch) : "Batch not stated"}</span>
       <span class="r-date">${fmtDate(r.tested)}</span>
       <span class="r-purity">${esc(r.purity)}</span>
@@ -381,14 +388,14 @@ function rowHTML(r, open) {
   </details>`;
 }
 
-const state = { q: "", pick: "" };
+const state = { q: "", pick: "", size: "" };
 const openIds = new Set();
 const viewer = $("viewer");
 
 function render() {
-  const q = norm(state.q);
-  const list = ALL.filter((r) => (!state.pick || r.product === state.pick) && (!q || r.hay.includes(q)));
-  const filtering = state.q.trim() || state.pick;
+  const words = state.q.toLowerCase().split(/\s+/).map(norm).filter(Boolean); // every word typed has to match
+  const list = ALL.filter((r) => (!state.pick || r.product === state.pick) && (!state.size || r.strength === state.size) && words.every((w) => r.hay.includes(w)));
+  const filtering = words.length || state.pick || state.size;
   if (filtering && list.length === 1) openIds.add(list[0].id); // a single hit opens itself
   const groups = new Map();
   list.forEach((r) => { if (!groups.has(r.product)) groups.set(r.product, []); groups.get(r.product).push(r); });
@@ -396,7 +403,7 @@ function render() {
   if (!ALL.length) {
     box.innerHTML = `<div class="card empty"><p><strong>No reports have been published yet.</strong></p></div>`;
   } else if (!list.length) {
-    box.innerHTML = `<div class="card empty"><p><strong>No report matches.</strong> Check the spelling or the code, or clear the search to see every report.</p><button class="btn" type="button" id="clear">Clear search</button></div>`;
+    box.innerHTML = `<div class="card empty"><p><strong>No report matches.</strong> Check the name, size or code, or clear the filters to see every report.</p><button class="btn" type="button" id="clear">Clear filters</button></div>`;
   } else {
     box.innerHTML = [...groups].map(([name, rs]) => `<section class="group">
       <header><h2>${esc(name)}</h2><span class="eyebrow">${plural(rs.length, "report")}</span></header>
@@ -407,8 +414,8 @@ function render() {
 }
 
 function showDoc(r) {
-  $("vTitle").innerHTML = `${esc(r.sample || r.product)}<small>${esc(r.lab || "Lab")} report${r.task ? " · task #" + esc(r.task) : ""} · analysed ${fmtDate(r.tested)}</small>`;
-  $("vBody").innerHTML = `<img src="${esc(r.img)}" alt="${esc(`${r.lab || "Lab"} test report for ${r.sample || r.product}`)}">`;
+  $("vTitle").innerHTML = `${esc(r.title)}<small>${esc(r.lab || "Lab")} report${r.task ? " · task #" + esc(r.task) : ""} · analysed ${fmtDate(r.tested)}</small>`;
+  $("vBody").innerHTML = `<img src="${esc(r.img)}" alt="${esc(`${r.lab || "Lab"} test report for ${r.title}`)}">`;
   $("vOpen").href = r.img;
   $("vVerify").hidden = !r.verify;
   if (r.verify) $("vVerify").href = r.verify;
@@ -431,14 +438,23 @@ document.addEventListener("click", (e) => {
     });
     return;
   }
-  if (t.closest("#clear")) { state.q = ""; state.pick = ""; $("q").value = ""; $("product").value = ""; render(); $("q").focus(); }
+  if (t.closest("#clear")) { state.q = ""; state.pick = ""; state.size = ""; $("q").value = ""; $("product").value = ""; fillSizes(); render(); $("product").focus(); }
 });
 document.addEventListener("toggle", (e) => {
   const d = e.target;
   if (d.classList && d.classList.contains("report")) { if (d.open) openIds.add(d.id); else openIds.delete(d.id); }
 }, true);
 $("q").addEventListener("input", (e) => { state.q = e.target.value; render(); });
-$("product").addEventListener("change", (e) => { state.pick = e.target.value; render(); });
+$("product").addEventListener("change", (e) => { state.pick = e.target.value; state.size = ""; fillSizes(); render(); });
+$("size").addEventListener("change", (e) => { state.size = e.target.value; render(); });
+
+/* The Size list only offers sizes that exist for the chosen peptide. */
+function fillSizes() {
+  const pool = ALL.filter((r) => r.strength && (!state.pick || r.product === state.pick));
+  const sizes = [...new Map(pool.map((r) => [r.strength, r.mg]))].sort((a, b) => a[1] - b[1]).map(([s]) => s);
+  $("size").innerHTML = `<option value="">All sizes</option>` + sizes.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
+  $("size").value = state.size;
+}
 $("vClose").addEventListener("click", closeViewer);
 viewer.addEventListener("click", (e) => { if (e.target === viewer) closeViewer(); });
 
@@ -466,6 +482,7 @@ function drawHelix() {
 
   const names = [...new Set(ALL.map((r) => r.product))];
   $("product").insertAdjacentHTML("beforeend", names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join(""));
+  fillSizes();
   if (ALL.length) {
     const latest = ALL.reduce((m, r) => (r.tested > m ? r.tested : m), "");
     $("tally").innerHTML = [["Reports", ALL.length], ["Peptides", names.length], ["Latest analysis", fmtDate(latest)]]
