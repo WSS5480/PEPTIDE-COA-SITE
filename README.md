@@ -1,22 +1,30 @@
 # Peptide COA site
 
-A static site: product pages that carry each batch's lab certificates, a catalog,
-and a searchable COA reports page. Hosted on Render as a static site
-(publish directory: repo root, no build step).
+A static lab-report library: every report grouped by peptide, searchable by name,
+batch code or task number, with the lab's document and its verification key and link.
+Hosted on Render as a static site (publish directory: repo root, no build step).
+Every push to `main` redeploys it.
 
 ## Editing
 
-Everything you change lives in three labelled blocks inside `index.html`.
+Everything you change lives in two labelled blocks inside `index.html`.
 Search the file for `1. SITE SETTINGS` to jump to them.
 
-1. **SITE SETTINGS**: brand name, tagline, notice text, which product the site opens on.
-2. **PRODUCTS**: name, sizes and prices, volume discounts, stock.
-3. **LAB REPORTS**: one entry per lab test (batch, date, lab, results, documents).
+1. **SITE SETTINGS**: brand name, tagline, the notice line, and the intro text under the headline.
+2. **LAB REPORTS**: one entry per report, copied from the lab's document exactly as printed.
 
-Lab documents (images or PDFs) go in the `coa/` folder.
+Report images go in the `coa/` folder and are referenced by file name in the report's `image` field.
 
-## Before going live
+## Adding a report
 
-- Entries marked `sample: true` are placeholders. Delete them and add the real ones.
-- Remove the `<meta name="robots" content="noindex">` line near the top of `index.html`.
-- "Add to cart" only updates the cart total. There is no checkout behind it yet.
+1. Put the report image in `coa/`.
+2. Copy an existing entry in the LAB REPORTS block and change every field to match the new document:
+   sample, task number, key, verify link, batch, the three dates, tests requested, and each results row.
+3. Commit. Render redeploys on its own.
+
+A new peptide name in `product` creates its own section on the page automatically.
+
+## Search engines
+
+`index.html` carries `<meta name="robots" content="noindex">` near the top, so search engines
+do not list the site. Delete that line when you want it to be found.
