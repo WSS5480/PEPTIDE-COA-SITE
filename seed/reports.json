@@ -1,0 +1,164 @@
+[
+ {
+  "product": "MOTS-C",
+  "sample": "MOTS-C 10mg",
+  "strength": "10 mg",
+  "task": "216588",
+  "key": "W25M6MY3KK5H",
+  "verifyUrl": "https://verify.janoshik.com/tests/216588_W25M6MY3KK5H",
+  "lab": "Janoshik",
+  "client": "XINTpeptides",
+  "manufacturer": "XINT",
+  "batch": "",
+  "ordered": "2026-07-31",
+  "received": "2026-08-10",
+  "tested": "2026-08-12",
+  "testsRequested": "MOTS-c analysis",
+  "results": [
+   [
+    "MOTS-C",
+    "10.26 mg"
+   ],
+   [
+    "Purity",
+    "99.150%"
+   ]
+  ],
+  "image": "mots-c-10mg-216588.jpeg"
+ },
+ {
+  "product": "MOTS-C",
+  "sample": "MS40",
+  "strength": "40 mg",
+  "task": "216235",
+  "key": "RJ4VF1KGIFXD",
+  "verifyUrl": "https://verify.janoshik.com/tests/216235_RJ4VF1KGIFXD",
+  "lab": "Janoshik",
+  "client": "XINTpeptides",
+  "manufacturer": "XINTpeptides",
+  "batch": "CP01260704540L",
+  "ordered": "2026-07-25",
+  "received": "2026-08-03",
+  "tested": "2026-08-05",
+  "testsRequested": "",
+  "results": [
+   [
+    "MOTS-C",
+    "41.06 mg"
+   ],
+   [
+    "Purity",
+    "99.581%"
+   ]
+  ],
+  "image": "mots-c-ms40-216235.jpeg"
+ },
+ {
+  "product": "BPC-157",
+  "sample": "BPC-157 10mg",
+  "strength": "10 mg",
+  "task": "216587",
+  "key": "WYILPDWRYWP3",
+  "verifyUrl": "https://verify.janoshik.com/tests/216587_WYILPDWRYWP3",
+  "lab": "Janoshik",
+  "client": "XINTpeptides",
+  "manufacturer": "XINT",
+  "batch": "",
+  "ordered": "2026-07-31",
+  "received": "2026-08-10",
+  "tested": "2026-08-12",
+  "testsRequested": "BPC-157 analysis",
+  "results": [
+   [
+    "BPC-157",
+    "10.95 mg"
+   ],
+   [
+    "Purity",
+    "99.849%"
+   ]
+  ],
+  "image": "bpc-157-10mg-216587.jpeg"
+ },
+ {
+  "product": "BPC-157 + TB-500",
+  "sample": "BB20",
+  "strength": "20 mg",
+  "task": "216236",
+  "key": "QNN45NLKNT25",
+  "verifyUrl": "https://verify.janoshik.com/tests/216236_QNN45NLKNT25",
+  "lab": "Janoshik",
+  "client": "XINTpeptides",
+  "manufacturer": "XINTpeptides",
+  "batch": "CP012606261920L",
+  "ordered": "2026-07-25",
+  "received": "2026-08-03",
+  "tested": "2026-08-06",
+  "testsRequested": "",
+  "results": [
+   [
+    "BPC-157",
+    "10.56 mg"
+   ],
+   [
+    "TB-500 (889 Da)",
+    "10.37 mg"
+   ]
+  ],
+  "image": "bpc-157-tb-500-bb20-216236.jpeg"
+ },
+ {
+  "product": "Ipamorelin",
+  "sample": "Ipamorelin 10mg",
+  "strength": "10 mg",
+  "task": "216590",
+  "key": "P6TVGI2MFSCE",
+  "verifyUrl": "https://verify.janoshik.com/tests/216590_P6TVGI2MFSCE",
+  "lab": "Janoshik",
+  "client": "XINTpeptides",
+  "manufacturer": "XINT",
+  "batch": "",
+  "ordered": "2026-07-31",
+  "received": "2026-08-10",
+  "tested": "2026-08-13",
+  "testsRequested": "Ipamorelin analysis",
+  "results": [
+   [
+    "Ipamorelin",
+    "9.82 mg"
+   ],
+   [
+    "Purity",
+    "99.795%"
+   ]
+  ],
+  "image": "ipamorelin-10mg-216590.jpeg"
+ },
+ {
+  "product": "Epithalon",
+  "sample": "Epithalon 10mg",
+  "strength": "10 mg",
+  "task": "216592",
+  "key": "6QQ487ZCKQ6F",
+  "verifyUrl": "https://verify.janoshik.com/tests/216592_6QQ487ZCKQ6F",
+  "lab": "Janoshik",
+  "client": "XINTpeptides",
+  "manufacturer": "XINT",
+  "batch": "",
+  "ordered": "2026-07-31",
+  "received": "2026-08-10",
+  "tested": "2026-08-12",
+  "testsRequested": "Epithalon analysis",
+  "results": [
+   [
+    "Epithalon",
+    "10.77 mg"
+   ],
+   [
+    "Purity",
+    "99.180%"
+   ]
+  ],
+  "image": "epithalon-10mg-216592.jpeg"
+ }
+]
