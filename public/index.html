@@ -9,6 +9,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Poppins:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="/store.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0b4d96">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
 </head>
 <body>
 <div class="announce" id="announce" hidden></div>
@@ -19,6 +24,7 @@
   <div class="tools">
     <span class="eyebrow" id="topLine">Lab-tested research peptides</span>
     <button class="stoggle" type="button" id="stoggle" aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>
+    <button class="btn acctbtn" type="button" id="acctOpen"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><span id="acctLabel">Sign in</span></button>
     <button class="cartbtn" type="button" id="cartOpen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 8H6"/><circle cx="10" cy="20" r="1.3"/><circle cx="17" cy="20" r="1.3"/></svg>Cart <span class="n" id="cartN">0</span></button>
   </div>
 </div></header>
@@ -29,7 +35,7 @@
     <p class="eyebrow" id="heroEyebrow">Third-party tested</p>
     <h1 id="headline">Research peptides with the lab report on every vial</h1>
     <p class="lede" id="lede"></p>
-    <p><a class="btn solid" href="#products" style="display:inline-grid;place-items:center;height:2.8rem;padding:0 1.4rem;text-decoration:none">Shop products</a></p>
+    <p class="herobtns"><a class="btn solid" href="#products">Shop products</a><button class="btn ghost" type="button" data-install>Download app</button></p>
     <dl class="tally" id="tally"></dl>
   </div>
 </section>
@@ -103,8 +109,13 @@
     </ul></div>
   </div>
   <div class="fine" id="footFine"></div>
-  <div class="frow"><span id="footCopy"></span><a href="#track">Check an order</a></div>
+  <div class="frow"><span id="footCopy"></span><span><a href="#track">Check an order</a> · <button class="linkbtn light" type="button" data-install>Download app</button></span></div>
 </div></footer>
+
+<!-- account -->
+<dialog class="modal" id="acct" aria-labelledby="acTitle">
+  <div class="mbody" id="acBody"></div>
+</dialog>
 
 <!-- cart -->
 <dialog class="drawer" id="cart" aria-labelledby="cartTitle">
@@ -164,5 +175,6 @@
 </dialog>
 
 <script src="/store.js"></script>
+<script src="/install.js"></script>
 </body>
 </html>

@@ -107,6 +107,23 @@ create table if not exists order_events (
   who text not null default '',
   text text not null
 );
+create table if not exists customers (
+  id serial primary key,
+  email text unique not null,
+  name text not null default '',
+  phone text not null default '',
+  address jsonb not null default '{}',
+  pass_hash text not null,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create table if not exists customer_sessions (
+  token text primary key,
+  customer_id int not null references customers(id) on delete cascade,
+  expires timestamptz not null
+);
+alter table orders add column if not exists customer_id int references customers(id) on delete set null;
+create index if not exists orders_customer_idx on orders(customer_id);
 create index if not exists orders_status_idx on orders(status);
 create index if not exists orders_created_idx on orders(created_at desc);
 `;
@@ -119,6 +136,9 @@ const DEFAULT_SETTINGS = {
   contact: "",
   announcement: "",
   announcementOn: false,
+  bannerScroll: true,
+  heroEyebrow: "Third-party tested",
+  headline: "Research peptides with the lab report on every vial",
   storeOpen: true,
   minAge: 21,
   ageGate: true,
@@ -225,6 +245,7 @@ async function init() {
     await q("insert into shipping_methods(name, detail, price_cents, active, sort) values ('Standard shipping', 'Ships in 1 to 3 business days', 0, false, 0)");
   }
   await q("delete from sessions where expires < now()");
+  await q("delete from customer_sessions where expires < now()");
 }
 
 async function getSettings() {

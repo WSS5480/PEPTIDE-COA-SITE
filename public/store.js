@@ -16,6 +16,15 @@ const closeD = (d) => { if (d.close) d.close(); else d.removeAttribute("open"); 
 function toast(msg) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 1800); }
 
 let cat = "";
+/* top banner: plain, or scrolling right to left when bannerScroll is on */
+function banner(el, S) {
+  el.hidden = false;
+  if (!S.bannerScroll) { el.textContent = S.announcement; return; }
+  const item = `<span>${esc(S.announcement)}</span>`;
+  el.classList.add("scroll");
+  el.innerHTML = `<div class="track">${item.repeat(6)}</div><div class="track" aria-hidden="true">${item.repeat(6)}</div>`;
+  el.setAttribute("aria-label", S.announcement);
+}
 let S = {}, PRODUCTS = [], REPORTS = [], SHIP = [];
 let cart = store.get("cart") || [];   // [{id, qty}]
 const saveCart = () => { store.set("cart", cart); drawCartCount(); };
@@ -134,7 +143,7 @@ function openCheckout() {
   $("cfAgeText").textContent = `I am ${S.minAge} or older.`;
   $("shipField").hidden = !SHIP.length;
   $("ship").innerHTML = SHIP.map((m) => `<option value="${m.id}">${esc(m.name)}${m.detail ? " · " + esc(m.detail) : ""} · ${m.price_cents ? money(m.price_cents) : "Free"}${m.free_over_cents !== null ? ` (free over ${money(m.free_over_cents)})` : ""}</option>`).join("");
-  const saved = store.get("buyer") || {};
+  const saved = ME ? { name: ME.name, email: ME.email, phone: ME.phone, ...(ME.address || {}) } : (store.get("buyer") || {});
   [["cName", "name"], ["cEmail", "email"], ["cPhone", "phone"], ["a1", "line1"], ["a2", "line2"], ["aCity", "city"], ["aState", "state"], ["aZip", "zip"]].forEach(([id, k]) => { if (saved[k] && !$(id).value) $(id).value = saved[k]; });
   drawTotals();
   openD($("checkout"));
@@ -165,8 +174,8 @@ async function submitOrder(e) {
       <div class="okbox"><span class="eyebrow">Your order number</span><span class="num">${esc(j.number)}</span>
       <span>Estimated total ${money(j.totalCents)}</span></div>
       <p>${esc(j.paymentInstructions)}</p>
-      <p class="dist">Save your order number. You can check its status any time under "Check an order" with the email you used.</p>`;
-    load(); // refresh stock
+      <p class="dist">${ME ? "This order is saved under My account." : "Save your order number. You can check its status any time under \"Check an order\" with the email you used, or create an account to keep all your orders in one place."}</p>`;
+    load(); loadAccount(); // refresh stock and order history
   } catch (x) { err("Couldn't reach the store. Check your connection and try again."); }
   finally { $("coSubmit").disabled = false; $("coSubmit").textContent = "Submit order request"; }
 }
@@ -252,11 +261,73 @@ async function lookup(e) {
   } catch (x) { out.innerHTML = `<div class="err">Couldn't reach the store. Try again.</div>`; }
 }
 
+
+/* ---------- customer account ---------- */
+let ME = null, MY_ORDERS = [];
+async function loadAccount() {
+  try { const j = await (await fetch("/api/account", { credentials: "same-origin" })).json(); ME = j.customer; MY_ORDERS = j.orders || []; } catch (e) { ME = null; }
+  $("acctLabel").textContent = ME ? (ME.name || "Account").split(" ")[0] : "Sign in";
+}
+async function post(url, body, method = "POST") {
+  const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "That didn't work."); return j;
+}
+function acctView(mode) {
+  const b = $("acBody"), close = `<button class="btn" type="button" data-close>Close</button>`;
+  const fld = (id, label, type = "text", ac = "", val = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}" autocomplete="${ac}" value="${esc(val)}"></div>`;
+  if (!ME && mode !== "register") {
+    b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Sign in</h2>${close}</div>
+      <div class="tabs"><button class="on" type="button">Sign in</button><button type="button" data-acct="register">Create account</button></div>
+      <form id="acForm" class="stack">${fld("acE", "Email", "email", "username")}${fld("acP", "Password", "password", "current-password")}
+      <div class="err" id="acErr" hidden></div><button class="btn solid wide">Sign in</button></form>
+      <p class="dist">No account? <button class="linkbtn" type="button" data-acct="register">Create one</button> to save your address and see your orders.</p>`;
+    $("acForm").onsubmit = async (e) => { e.preventDefault(); try { await post("/api/account/login", { email: $("acE").value, password: $("acP").value }); await loadAccount(); toast("Signed in"); acctView(); } catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; } };
+    return;
+  }
+  if (!ME) {
+    b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Create account</h2>${close}</div>
+      <div class="tabs"><button type="button" data-acct="signin">Sign in</button><button class="on" type="button">Create account</button></div>
+      <form id="acForm" class="stack"><div class="grid2">${fld("rN", "Full name", "text", "name")}${fld("rE", "Email", "email", "email")}${fld("rPh", "Phone (optional)", "tel", "tel")}${fld("rP", "Password (8+ characters)", "password", "new-password")}</div>
+      <label class="check"><input type="checkbox" id="rAge"><span>I am ${esc(S.minAge || 21)} or older.</span></label>
+      <label class="check"><input type="checkbox" id="rRes"><span>I am buying for laboratory research only, not for human or animal use, and I agree to the <a href="/policy#terms" target="_blank">terms of service</a> and <a href="/policy#privacy" target="_blank">privacy policy</a>.</span></label>
+      <div class="err" id="acErr" hidden></div><button class="btn solid wide">Create account</button></form>`;
+    $("acForm").onsubmit = async (e) => {
+      e.preventDefault();
+      try { await post("/api/account/register", { name: $("rN").value, email: $("rE").value, phone: $("rPh").value, password: $("rP").value, confirmAge: $("rAge").checked, confirmResearch: $("rRes").checked }); await loadAccount(); toast("Account created"); acctView(); }
+      catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; }
+    };
+    return;
+  }
+  const a = ME.address || {};
+  const tab = mode === "details" ? "details" : "orders";
+  b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">My account</h2>${close}</div>
+    <p class="dist">Signed in as ${esc(ME.email)} · <button class="linkbtn" type="button" id="acOut">Sign out</button></p>
+    <div class="tabs"><button type="button" class="${tab === "orders" ? "on" : ""}" data-acct="orders">My orders</button><button type="button" class="${tab === "details" ? "on" : ""}" data-acct="details">Details &amp; address</button></div>
+    ${tab === "orders" ? `<div class="olist">${MY_ORDERS.length ? MY_ORDERS.map((o) => `<div class="orow"><div class="top2"><span>Order ${esc(o.number)}</span><span>${money(o.total_cents)}</span></div>
+        <span>${fmtDate(o.created_at)} · ${esc(STATUS_TEXT[o.status] || o.status)}</span>
+        <span class="dist">${(o.items || []).map((i) => `${i.qty} × ${esc(i.name)} ${esc(i.strength)}`).join(", ")}</span>
+        ${o.tracking ? `<span>${esc(o.carrier || "Tracking")}: <span class="mono">${esc(o.tracking)}</span></span>` : ""}</div>`).join("") : `<p class="dist">No orders yet.</p>`}</div>`
+    : `<form id="acForm" class="stack"><div class="grid2">${fld("mN", "Full name", "text", "name", ME.name)}${fld("mPh", "Phone", "tel", "tel", ME.phone)}</div>
+      <div class="grid2">${fld("m1", "Street address", "text", "address-line1", a.line1)}${fld("m2", "Apt, suite", "text", "address-line2", a.line2)}${fld("mC", "City", "text", "address-level2", a.city)}${fld("mS", "State", "text", "address-level1", a.state)}${fld("mZ", "ZIP", "text", "postal-code", a.zip)}</div>
+      <details><summary class="eyebrow" style="cursor:pointer">Change password</summary><div class="grid2" style="margin-top:.7rem">${fld("mPc", "Current password", "password", "current-password")}${fld("mPn", "New password", "password", "new-password")}</div></details>
+      <div class="err" id="acErr" hidden></div><button class="btn solid wide">Save</button></form>`}`;
+  $("acOut").onclick = async () => { await post("/api/account/logout", {}); await loadAccount(); toast("Signed out"); closeD($("acct")); };
+  if (tab === "details") $("acForm").onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await post("/api/account", { name: $("mN").value, phone: $("mPh").value, address: { line1: $("m1").value, line2: $("m2").value, city: $("mC").value, state: $("mS").value, zip: $("mZ").value }, currentPassword: $("mPc").value, newPassword: $("mPn").value }, "PATCH");
+      await loadAccount(); toast("Saved"); acctView("details");
+    } catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; }
+  };
+}
+
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
   const t = e.target;
   const close = t.closest("[data-close]");
   if (close) { const d = close.closest("dialog"); if (d) closeD(d); if (close.dataset.goto) $(close.dataset.goto).scrollIntoView({ behavior: "smooth" }); if (close.tagName !== "A") return; }
+  const ac = t.closest("[data-acct]");
+  if (ac) { acctView(ac.dataset.acct); return; }
   const c = t.closest("[data-cat]");
   if (c) { e.preventDefault(); cat = c.dataset.cat; drawProducts(); $("products").scrollIntoView({ behavior: "smooth" }); return; }
   const add = t.closest("[data-add]");
@@ -279,6 +350,7 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("toggle", (e) => { const d = e.target; if (d.classList && d.classList.contains("report")) { if (d.open) openIds.add(d.id); else openIds.delete(d.id); } }, true);
 document.querySelectorAll("dialog").forEach((d) => d.addEventListener("click", (e) => { if (e.target === d && d.id !== "gate") closeD(d); }));
+$("acctOpen").onclick = async () => { await loadAccount(); acctView(); openD($("acct")); };
 $("cartOpen").onclick = () => { drawCart(); openD($("cart")); };
 $("stoggle").onclick = () => { $("top").classList.toggle("searching"); if ($("top").classList.contains("searching")) $("hq").focus(); };
 $("hq").addEventListener("input", () => { drawProducts(); state.q = $("hq").value; $("q").value = $("hq").value; drawReports(); });
@@ -314,7 +386,9 @@ async function load() {
     document.title = name;
     $("brand").textContent = name; $("footBrand").textContent = name;
     if (S.tagline) { $("tagline").textContent = S.tagline; $("tagline").hidden = false; }
-    if (S.announcementOn && S.announcement) { $("announce").textContent = S.announcement; $("announce").hidden = false; }
+    if (S.announcementOn && S.announcement) banner($("announce"), S);
+    if (S.headline) $("headline").textContent = S.headline;
+    if (S.heroEyebrow) $("heroEyebrow").textContent = S.heroEyebrow; else $("heroEyebrow").hidden = true;
     if (S.intro) $("lede").textContent = S.intro; else $("lede").hidden = true;
     if (S.distributorOf) {
       $("topLine").textContent = `Authorized ${S.distributorOf} distributor`;
@@ -347,5 +421,6 @@ async function load() {
   } else drawReports();
   drawProducts(); drawCartCount();
 }
+loadAccount();
 load().catch(() => { $("pgrid").innerHTML = `<div class="card empty"><p><strong>The store couldn't load.</strong> Refresh the page to try again.</p></div>`; });
 })();

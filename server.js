@@ -28,7 +28,7 @@ const parseCookies = (h) => Object.fromEntries(String(h || "").split(/;\s*/).fil
 const SECURE = process.env.NODE_ENV === "production" || !!process.env.RENDER;
 
 function publicSettings(s) {
-  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"];
+  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"];
   return Object.fromEntries(keys.map((k) => [k, s[k]]));
 }
 const reportOut = (r) => ({
@@ -121,11 +121,12 @@ app.post("/api/orders", limit("order", 6, 15 * 60 * 1000), wrap(async (req, res)
       if (!m) throw new Error("Choose a shipping option.");
       shipName = m.name; shipCents = m.free_over_cents !== null && subtotal >= m.free_over_cents ? 0 : m.price_cents;
     }
+    const cust = await customerFrom(req);
     const number = String(Date.now()).slice(-6) + crypto.randomInt(10, 99);
     const { rows: [o] } = await client.query(
-      `insert into orders(number,name,email,phone,address,shipping_method,shipping_cents,subtotal_cents,total_cents,customer_note)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
-      [number, name, email, phone, JSON.stringify(address), shipName, shipCents, subtotal, subtotal + shipCents, str(b.note, 1000)]);
+      `insert into orders(number,name,email,phone,address,shipping_method,shipping_cents,subtotal_cents,total_cents,customer_note,customer_id)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id`,
+      [number, name, email, phone, JSON.stringify(address), shipName, shipCents, subtotal, subtotal + shipCents, str(b.note, 1000), cust ? cust.id : null]);
     for (const { p, qty } of lines) {
       await client.query("insert into order_items(order_id,product_id,name,strength,unit_cents,qty) values ($1,$2,$3,$4,$5,$6)", [o.id, p.id, p.name, p.strength, p.price_cents, qty]);
     }
@@ -146,6 +147,72 @@ app.post("/api/orders/lookup", limit("lookup", 20, 15 * 60 * 1000), wrap(async (
   const { rows: items } = await q("select name,strength,unit_cents,qty from order_items where order_id = $1 order by id", [o.id]);
   delete o.id;
   res.json({ order: o, items });
+}));
+
+/* ---------- customer accounts ---------- */
+async function customerFrom(req) {
+  const token = parseCookies(req.headers.cookie).cid;
+  if (!token) return null;
+  const { rows } = await q("select c.id, c.email, c.name, c.phone, c.address from customer_sessions s join customers c on c.id = s.customer_id where s.token = $1 and s.expires > now() and c.active", [token]);
+  return rows[0] || null;
+}
+async function startCustomerSession(res, id) {
+  const token = crypto.randomBytes(32).toString("hex");
+  await q("insert into customer_sessions(token, customer_id, expires) values ($1, $2, now() + interval '60 days')", [token, id]);
+  res.set("Set-Cookie", `cid=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 86400}${SECURE ? "; Secure" : ""}`);
+}
+const cleanAddress = (a = {}) => ({ line1: str(a.line1, 160), line2: str(a.line2, 160), city: str(a.city, 80), state: str(a.state, 40), zip: str(a.zip, 20), country: "US" });
+const jsonOnly = (req, res, next) => (req.is("application/json") ? next() : bad(res, "Bad request"));
+
+app.post("/api/account/register", jsonOnly, limit("register", 8, 60 * 60 * 1000), wrap(async (req, res) => {
+  const b = req.body || {}, email = str(b.email, 160).toLowerCase(), pass = String(b.password || "");
+  if (!str(b.name, 120) || !isEmail(email)) return bad(res, "Enter your name and a valid email.");
+  if (pass.length < 8) return bad(res, "Use a password of at least 8 characters.");
+  if (!b.confirmAge || !b.confirmResearch) return bad(res, "Please confirm both statements to create an account.");
+  const { rows: [ex] } = await q("select id from customers where lower(email) = $1", [email]);
+  if (ex) return bad(res, "An account with that email already exists. Sign in instead.");
+  const { rows: [c] } = await q("insert into customers(email, name, phone, pass_hash) values ($1,$2,$3,$4) returning id",
+    [email, str(b.name, 120), str(b.phone, 40), await bcrypt.hash(pass, 11)]);
+  // attach earlier guest orders placed with this email
+  await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
+  await startCustomerSession(res, c.id);
+  res.json({ ok: true });
+}));
+app.post("/api/account/login", jsonOnly, limit("clogin", 12, 15 * 60 * 1000), wrap(async (req, res) => {
+  const email = str(req.body?.email, 160).toLowerCase();
+  const { rows: [c] } = await q("select id, pass_hash from customers where lower(email) = $1 and active", [email]);
+  if (!c || !(await bcrypt.compare(String(req.body?.password || ""), c.pass_hash))) return bad(res, "Email or password is wrong.", 401);
+  await startCustomerSession(res, c.id);
+  res.json({ ok: true });
+}));
+app.post("/api/account/logout", wrap(async (req, res) => {
+  const token = parseCookies(req.headers.cookie).cid;
+  if (token) await q("delete from customer_sessions where token = $1", [token]);
+  res.set("Set-Cookie", `cid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${SECURE ? "; Secure" : ""}`);
+  res.json({ ok: true });
+}));
+app.get("/api/account", wrap(async (req, res) => {
+  const c = await customerFrom(req);
+  res.set("Cache-Control", "no-store");
+  if (!c) return res.json({ customer: null });
+  const { rows: orders } = await q(`select o.id, o.number, o.status, o.total_cents, o.carrier, o.tracking, o.created_at,
+      (select json_agg(json_build_object('name', i.name, 'strength', i.strength, 'qty', i.qty) order by i.id) from order_items i where i.order_id = o.id) items
+    from orders o where o.customer_id = $1 order by o.created_at desc limit 100`, [c.id]);
+  orders.forEach((o) => delete o.id);
+  res.json({ customer: c, orders });
+}));
+app.patch("/api/account", jsonOnly, wrap(async (req, res) => {
+  const c = await customerFrom(req); if (!c) return bad(res, "Sign in first", 401);
+  const b = req.body || {};
+  await q("update customers set name = $1, phone = $2, address = $3 where id = $4",
+    [str(b.name, 120) || c.name, str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), c.id]);
+  if (b.newPassword) {
+    if (String(b.newPassword).length < 8) return bad(res, "Use a password of at least 8 characters.");
+    const { rows: [x] } = await q("select pass_hash from customers where id = $1", [c.id]);
+    if (!(await bcrypt.compare(String(b.currentPassword || ""), x.pass_hash))) return bad(res, "Current password is wrong.");
+    await q("update customers set pass_hash = $1 where id = $2", [await bcrypt.hash(String(b.newPassword), 11), c.id]);
+  }
+  res.json({ ok: true });
 }));
 
 /* ---------- admin: sessions ---------- */
@@ -259,6 +326,23 @@ admin.patch("/orders/:id", wrap(async (req, res) => {
 admin.post("/orders/:id/note", wrap(async (req, res) => {
   const t = str(req.body?.text, 1000); if (!t) return bad(res, "Write a note first");
   await q("insert into order_events(order_id, who, text) values ($1,$2,$3)", [intOrNull(req.params.id), req.user.name || req.user.email, t]);
+  res.json({ ok: true });
+}));
+
+/* ---------- admin: customers ---------- */
+admin.get("/customers", wrap(async (req, res) => {
+  const term = str(req.query.q, 80).toLowerCase();
+  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.active, c.created_at,
+      count(o.id)::int orders, coalesce(sum(o.total_cents) filter (where o.status in ('paid','shipped','delivered')), 0)::int spent_cents, max(o.created_at) last_order
+    from customers c left join orders o on o.customer_id = c.id
+    where ($1 = '' or lower(c.name) like '%' || $1 || '%' or lower(c.email) like '%' || $1 || '%')
+    group by c.id order by c.created_at desc limit 500`, [term]);
+  res.json({ customers: rows });
+}));
+admin.patch("/customers/:id", owner, wrap(async (req, res) => {
+  const id = intOrNull(req.params.id), active = req.body?.active !== false;
+  await q("update customers set active = $1 where id = $2", [active, id]);
+  if (!active) await q("delete from customer_sessions where customer_id = $1", [id]);
   res.json({ ok: true });
 }));
 

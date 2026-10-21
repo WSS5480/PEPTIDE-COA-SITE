@@ -27,7 +27,7 @@ function drawLogin(msg) {
     <div class="field"><label class="eyebrow" for="le">Email</label><input id="le" type="email" autocomplete="username" required></div>
     <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>
     ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
-    <button class="btn solid wide">Sign in</button></form></div>`;
+    <button class="btn solid wide">Sign in</button><button class="btn wide" type="button" data-install>Download admin app</button></form></div>`;
   document.getElementById("lf").onsubmit = async (e) => {
     e.preventDefault();
     const res = await fetch("/api/admin/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: le.value, password: lp.value }) });
@@ -38,13 +38,13 @@ function drawLogin(msg) {
 }
 
 /* ---------- shell ---------- */
-const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["products", "Products & prices"], ["reports", "Lab reports"], ["shipping", "Shipping"], ["settings", "Site settings"], ["staff", "Staff logins", true], ["account", "My account"]];
+const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Customers"], ["products", "Products & prices"], ["reports", "Lab reports"], ["shipping", "Shipping"], ["settings", "Site settings"], ["staff", "Staff logins", true], ["account", "My account"]];
 function shell() {
   app.innerHTML = `<div class="mtop"><strong>Store admin</strong><button type="button" id="mm">Menu</button></div>
   <div class="adm" id="adm"><aside class="side">
     <div class="logo"><span>Admin</span><small>Store manager</small></div>
     <nav id="nav"></nav>
-    <div class="who"><span>${esc(me.name || me.email)} · ${esc(me.role)}</span><a href="/" target="_blank" style="color:#fff">View store ↗</a><button type="button" id="lo">Sign out</button></div>
+    <div class="who"><span>${esc(me.name || me.email)} · ${esc(me.role)}</span><a href="/" target="_blank" style="color:#fff">View store ↗</a><button type="button" data-install>Download admin app</button><button type="button" id="lo">Sign out</button></div>
   </aside><section class="pane" id="pane"></section></div>`;
   document.getElementById("lo").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };
   document.getElementById("mm").onclick = () => document.getElementById("adm").classList.toggle("menu");
@@ -59,7 +59,7 @@ function go(v, id) {
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  ({ dashboard, orders, products, reports, shipping, settings, staff, account }[v] || dashboard)();
+  ({ dashboard, orders, customers, products, reports, shipping, settings, staff, account }[v] || dashboard)();
   window.scrollTo(0, 0);
 }
 const pane = () => document.getElementById("pane");
@@ -148,6 +148,29 @@ async function orderDetail(id) {
     const txt = [o.name, a.line1, a.line2, `${a.city}, ${a.state} ${a.zip}`].filter(Boolean).join("\n");
     navigator.clipboard?.writeText(txt).then(() => toast("Address copied"), () => toast("Copy failed"));
   };
+}
+
+
+/* ---------- customers ---------- */
+async function customers() {
+  pane().innerHTML = `<header><h1>Customers</h1></header>
+    <div class="filters"><input id="cq" type="search" placeholder="Name or email"></div>
+    <div class="tblwrap" id="ct"><p class="muted">Loading…</p></div>`;
+  const load = async (term = "") => {
+    const { customers: list } = await api("/customers?q=" + encodeURIComponent(term));
+    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th></tr>
+      ${list.map((c) => `<tr data-cid="${c.id}"><td>${esc(c.name)}</td><td><a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a></td><td>${esc(c.phone)}</td><td>${when(c.created_at)}</td>
+        <td class="num">${c.orders}</td><td class="num">${money(c.spent_cents)}</td><td>${c.last_order ? when(c.last_order) : ""}</td>
+        <td><input type="checkbox" data-cact${c.active ? " checked" : ""}${ro()}></td></tr>`).join("")}</table>` : `<p class="muted">No customer accounts yet.</p>`;
+  };
+  let t; document.getElementById("cq").oninput = (e) => { clearTimeout(t); t = setTimeout(() => load(e.target.value), 250); };
+  document.getElementById("ct").onclick = async (e) => {
+    const link = e.target.closest("[data-cust-orders]");
+    if (link) { e.preventDefault(); oFilter = { status: "", q: link.dataset.custOrders }; go("orders"); return; }
+    const box = e.target.closest("[data-cact]");
+    if (box) { await api("/customers/" + box.closest("tr").dataset.cid, { method: "PATCH", body: { active: box.checked } }); toast(box.checked ? "Account turned on" : "Account turned off"); }
+  };
+  load();
 }
 
 /* ---------- products ---------- */
@@ -259,13 +282,17 @@ async function settings() {
       <label class="chk"><input type="checkbox" id="s-storeOpen"${s.storeOpen ? " checked" : ""}${ro()}> Taking orders (untick to pause checkout)</label>
       <div class="grid2">${t("brand", "Store name", "Shown top left and in the footer")}${t("tagline", "Tagline (optional)")}${t("contact", "Contact for customers", "Phone, text or email")}
       ${t("distributorOf", "Brand you distribute", 'Shows "Authorized ___ distributor"')}${t("brandUrl", "Brand's website (https)")}</div>
-      ${ta("intro", "Intro under the headline")}
       ${ta("paymentInstructions", "What customers see after ordering", "Explain how you'll confirm and how they pay")}
       <div class="grid2">${t("priceNote", "Note under products")}
         <div class="field"><label class="eyebrow" for="s-minOrder">Minimum order $</label><input id="s-minOrder" value="${dollars(s.minOrderCents) || ""}" placeholder="None" inputmode="decimal"${ro()}></div></div></div>
     <div class="panel"><h2>Banner</h2>
       <label class="chk"><input type="checkbox" id="s-announcementOn"${s.announcementOn ? " checked" : ""}${ro()}> Show the banner across the top of every page</label>
+      <label class="chk"><input type="checkbox" id="s-bannerScroll"${s.bannerScroll ? " checked" : ""}${ro()}> Scroll the text across the banner</label>
       ${t("announcement", "Banner text")}</div>
+    <div class="panel"><h2>Home page header</h2>
+      ${t("heroEyebrow", "Small line above the headline")}
+      ${t("headline", "Headline")}
+      ${ta("intro", "Text under the headline")}</div>
     <div class="panel"><h2>Age gate</h2>
       <label class="chk"><input type="checkbox" id="s-ageGate"${s.ageGate ? " checked" : ""}${ro()}> Ask visitors to confirm age and research use before entering</label>
       <div class="field" style="max-width:10rem"><label class="eyebrow" for="s-minAge">Minimum age</label><input id="s-minAge" value="${esc(s.minAge)}" inputmode="numeric"${ro()}></div></div>
@@ -277,11 +304,11 @@ async function settings() {
   document.getElementById("sSave").onclick = async () => {
     const v = (k) => document.getElementById("s-" + k);
     const body = {};
-    ["brand", "tagline", "contact", "distributorOf", "brandUrl", "announcement", "intro", "paymentInstructions", "priceNote"].forEach((k) => { body[k] = v(k).value; });
+    ["brand", "tagline", "contact", "distributorOf", "brandUrl", "announcement", "intro", "paymentInstructions", "priceNote", "heroEyebrow", "headline"].forEach((k) => { body[k] = v(k).value; });
     body.storeOpen = v("storeOpen").checked; body.ageGate = v("ageGate").checked; body.minAge = v("minAge").value;
     body.minOrderCents = Math.round(parseFloat(v("minOrder").value || 0) * 100);
     ["footerNotice", "disclaimers", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"].forEach((k) => { body[k] = v(k).value.split("\n").map((x) => x.trim()).filter(Boolean); });
-    body.announcementOn = v("announcementOn").checked;
+    body.announcementOn = v("announcementOn").checked; body.bannerScroll = v("bannerScroll").checked;
     await api("/settings", { method: "PUT", body }); toast("Settings saved");
   };
 }
