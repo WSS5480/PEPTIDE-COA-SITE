@@ -18,6 +18,7 @@ const closeD = (d) => { if (d.close) d.close(); else d.removeAttribute("open"); 
 function toast(msg) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 1800); }
 
 let cat = "";
+let coaOnly = !!store.get("coaOnly");
 /* top banner: plain, or scrolling right to left when bannerScroll is on */
 function banner(el, S) {
   el.hidden = false;
@@ -71,12 +72,14 @@ const inCart = (id) => (cart.find((c) => c.id === id) || {}).qty || 0;
 
 function drawChips() {
   const cats = [...new Set(PRODUCTS.map((p) => p.category || "Research peptide"))].sort();
-  $("chips").innerHTML = cats.length > 1 ? [["", "All"], ...cats.map((c) => [c, c])].map(([v, l]) => `<button class="chip${cat === v ? " on" : ""}" type="button" data-cat="${esc(v)}">${esc(l)}</button>`).join("") : "";
+  $("chips").innerHTML = (cats.length > 1 ? [["", "All"], ...cats.map((c) => [c, c])].map(([v, l]) => `<button class="chip${cat === v ? " on" : ""}" type="button" data-cat="${esc(v)}">${esc(l)}</button>`).join("") : "")
+    + `<label class="chip coachip${coaOnly ? " on" : ""}"><input type="checkbox" data-coaonly${coaOnly ? " checked" : ""}> Only with lab report</label>`;
+  document.querySelectorAll("[data-coaonly]").forEach((b) => { b.checked = coaOnly; });
 }
 function drawProducts() {
   drawChips();
   const words = norm($("hq").value) ? $("hq").value.toLowerCase().split(/\s+/).map(norm).filter(Boolean) : [];
-  const list = PRODUCTS.filter((p) => (!cat || (p.category || "Research peptide") === cat) && words.every((w) => norm([p.name, p.strength, p.sku, p.category, (reportFor(p) || {}).sample].join(" ")).includes(w)));
+  const list = PRODUCTS.filter((p) => (!coaOnly || reportFor(p)) && (!cat || (p.category || "Research peptide") === cat) && words.every((w) => norm([p.name, p.strength, p.sku, p.category, (reportFor(p) || {}).sample].join(" ")).includes(w)));
   $("pgrid").innerHTML = list.length ? list.map((p) => {
     const r = reportFor(p);
     const purity = r ? ((r.results || []).find(([n]) => isPurity(n)) || [])[1] : "";
@@ -97,7 +100,7 @@ function drawProducts() {
         <div class="pact">${buy}${r ? `<a class="btn" href="/lab-reports#${esc(rid(r))}" data-report="${r.id}">Lab report</a>` : `<span class="stockline">No report yet</span>`}</div>
       </div>
     </article>`;
-  }).join("") : `<div class="card empty"><p><strong>No product matches.</strong> Try another name or size.</p></div>`;
+  }).join("") : `<div class="card empty"><p><strong>No product matches.</strong> ${coaOnly ? "You're showing only products with a lab report. Untick it to see everything." : "Try another name or size."}</p></div>`;
 }
 
 /* ---------- cart ---------- */
@@ -378,6 +381,7 @@ $("q").addEventListener("input", (e) => { state.q = e.target.value; drawReports(
 $("product").addEventListener("change", (e) => { state.pick = e.target.value; state.size = ""; fillSizes(); drawReports(); });
 $("size").addEventListener("change", (e) => { state.size = e.target.value; drawReports(); });
 $("ship").addEventListener("change", drawTotals);
+document.addEventListener("change", (e) => { if (e.target.matches("[data-coaonly]")) { coaOnly = e.target.checked; store.set("coaOnly", coaOnly); if (LAB) location.href = "/#products"; else drawProducts(); } });
 $("coForm").addEventListener("submit", submitOrder);
 $("trackForm").addEventListener("submit", lookup);
 $("vClose").onclick = () => closeD($("viewer"));

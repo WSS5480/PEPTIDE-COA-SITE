@@ -148,7 +148,7 @@ const DEFAULT_SETTINGS = {
   minOrderCents: 0,
   priceNote: "Prices in US dollars, per vial.",
   paymentInstructions: "We'll review your order and reach out with the total and payment options. Your order ships once payment is received.",
-  intro: "Every product here is backed by an independent lab report. Open any listing to see the results, then check the report on the lab's own site with the key printed on it.",
+  intro: "Many of our products come with an independent lab report. Open one to see the results, then check it on the lab's own site with the key printed on it.",
   // Short notice in the footer of every page (one paragraph per line).
   footerNotice: [
     "Every product on this site is sold for laboratory research and development only and is not for human or animal consumption of any kind. Statements on this site have not been evaluated by the U.S. Food and Drug Administration, and no product or statement here is intended to diagnose, treat, cure or prevent any disease.",
