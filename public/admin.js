@@ -20,6 +20,10 @@ async function api(path, opts = {}) {
 }
 
 let unsaved = false;
+// Same rule the store uses: a report belongs to a product when name + size match, or the product code matches the report's Sample line.
+const nrm = (x) => String(x ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const szk = (x) => nrm(x).replace(/mg$/, "");
+const reportMatches = (p, r) => (nrm(p.name) === nrm(r.product) && szk(p.strength) === szk(r.strength)) || (!!p.sku && nrm(p.sku) === nrm(r.sample));
 addEventListener("beforeunload", (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ""; } });
 let me = null, view = "dashboard", orderId = null, stats = null;
 const isOwner = () => me && me.role === "owner";
@@ -74,6 +78,11 @@ const ro = () => (isOwner() ? "" : " disabled");
 /* ---------- dashboard ---------- */
 async function dashboard() {
   const s = stats || (await api("/stats"));
+  Promise.all([api("/reports"), api("/products")]).then(([{ reports: R }, { products: P }]) => {
+    const box = document.getElementById("linkCheck"); if (!box) return;
+    const lone = R.filter((r) => r.active && !P.some((p) => p.active && reportMatches(p, r)));
+    box.innerHTML = lone.length ? `<div class="panel"><strong>${lone.length} lab report${lone.length === 1 ? " isn't" : "s aren't"} attached to a product:</strong><span class="muted">${lone.map((r) => esc(`${r.product} ${r.strength}${r.sample ? " (" + r.sample + ")" : ""}`)).join(", ")}</span><div><button class="btn" data-nav="reports">Open lab reports</button></div></div>` : "";
+  }).catch(() => {});
   const b = s.byStatus;
   pane().innerHTML = `<header><h1>Dashboard</h1></header>
     <dl class="kpis">
@@ -83,6 +92,7 @@ async function dashboard() {
       <div class="kpi" data-go="orders:shipped"><dt>Shipped</dt><dd>${b.shipped || 0}</dd></div>
       <div class="kpi"><dt>Paid this month</dt><dd>${money(s.month.paid_cents)}</dd></div>
     </dl>
+    <div id="linkCheck"></div>
     ${s.unpriced ? `<div class="panel"><strong>${s.unpriced} product${s.unpriced === 1 ? " has" : "s have"} no price.</strong><span class="muted">They show "Ask for price" and can't be added to the cart.</span><div><button class="btn" data-nav="products">Set prices</button></div></div>` : ""}
     ${s.lowStock.length ? `<div class="panel"><h2>Low stock</h2><div class="tblwrap"><table class="tbl"><tr><th>Product</th><th class="num">Left</th></tr>${s.lowStock.map((p) => `<tr><td>${esc(p.name)} ${esc(p.strength)}</td><td class="num">${p.stock}</td></tr>`).join("")}</table></div></div>` : ""}
     <div class="panel"><h2>How orders flow</h2><p class="muted">New → Confirmed (you've sent the total and payment info) → Paid → Shipped (add carrier and tracking) → Delivered. Cancelling puts the stock back.</p></div>`;
@@ -181,8 +191,9 @@ async function customers() {
 
 /* ---------- products ---------- */
 async function products() {
-  const { products: list } = await api("/products");
-  const COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["sku", "Code"], ["showCode", "Show code"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
+  const [{ products: list }, { reports: reps }] = await Promise.all([api("/products"), api("/reports")]);
+  const repFor = (p) => reps.filter((r) => r.active && reportMatches(p, r));
+  const COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["sku", "Code"], ["showCode", "Show code"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"], ["report", "Lab report"]];
   const NUM = new Set(["price", "stock", "maxPerOrder", "sort"]);
   const inp = (k, v, ph = "", extra = "") => `<input data-k="${k}" value="${esc(v)}" placeholder="${ph}"${extra}${ro()}>`;
   const row = (p) => `<tr data-id="${p ? p.id : ""}"${p ? "" : ' class="dirty"'}>
@@ -197,6 +208,7 @@ async function products() {
     <td>${inp("sort", p?.sort ?? 0, "", ' inputmode="numeric" style="min-width:3.5rem"')}</td>
     <td><input type="checkbox" data-k="active"${!p || p.active ? " checked" : ""}${ro()}></td>
     <td>${inp("description", p?.description, "Short line under the name")}</td>
+    <td data-rep>${p ? (repFor(p).length ? repFor(p).map((r) => `<span class="pill st-shipped" title="Task ${esc(r.task)}">${esc(r.sample || r.product + " " + r.strength)}</span>`).join(" ") : '<span class="pill st-cancelled">No report</span>') : ""}</td>
     ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-save>Save</button><button class="btn" data-del>${p ? "Delete" : "Remove"}</button></td>` : ""}
   </tr>`;
   const cats = [...new Set(list.map((p) => p.category).filter(Boolean))];
@@ -204,6 +216,7 @@ async function products() {
   pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>` : ""}</div></header>
     <div id="impBox"></div>
     <p class="muted">Click a column name to sort. Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). "Code" is the product code (e.g. RT30); tick "Show code" to show the code instead of the name on the store; a lab report attaches when its name and size match, or when its Sample line matches the code. Untick Active to hide a product. Products match their lab report by name and size.</p>
+    ${(() => { const n = list.filter((p) => p.active && !repFor(p).length).length; return n ? `<p class="muted"><strong>${n} active product${n === 1 ? " has" : "s have"} no lab report.</strong> Sort by the Lab report column to see them.</p>` : ""; })()}
     ${saveBar}
     <datalist id="catlist">${cats.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
     <div class="tblwrap"><table class="tbl" id="pt"><thead><tr>${COLS.map(([k, l]) => `<th class="sortable" data-sort="${k}">${l}<span class="arr"></span></th>`).join("")}${isOwner() ? "<th></th>" : ""}</tr></thead>
@@ -227,7 +240,7 @@ async function products() {
   pane().querySelector("thead").onclick = (e) => {
     const th = e.target.closest("[data-sort]"); if (!th) return;
     const k = th.dataset.sort; dir = sortKey === k ? -dir : 1; sortKey = k;
-    const val = (tr) => { const i = tr.querySelector(`[data-k="${k}"]`); if (i.type === "checkbox") return i.checked ? 1 : 0; const v = i.value.trim(); return NUM.has(k) ? (v === "" ? Infinity : parseFloat(v)) : v.toLowerCase(); };
+    const val = (tr) => { if (k === "report") return tr.querySelector("[data-rep]").textContent.toLowerCase(); const i = tr.querySelector(`[data-k="${k}"]`); if (i.type === "checkbox") return i.checked ? 1 : 0; const v = i.value.trim(); return NUM.has(k) ? (v === "" ? Infinity : parseFloat(v)) : v.toLowerCase(); };
     const rows = [...pb.querySelectorAll("tr")].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
     rows.forEach((r) => pb.appendChild(r));
     pane().querySelectorAll("thead .arr").forEach((s) => { s.textContent = ""; });
@@ -329,12 +342,17 @@ function importBox(list) {
 
 /* ---------- lab reports ---------- */
 async function reports() {
-  const { reports: list } = await api("/reports");
+  const [{ reports: list }, { products: prods }] = await Promise.all([api("/reports"), api("/products")]);
+  const attached = (r) => prods.filter((p) => reportMatches(p, r));
+  const orphans = list.filter((r) => r.active && !attached(r).some((p) => p.active)).length;
   pane().innerHTML = `<header><h1>Lab reports</h1>${isOwner() ? `<button class="btn solid" id="addR">Add report</button>` : ""}</header>
-    <p class="muted">Copy each field from the lab's document exactly as printed. A report shows on a product when its peptide name and size match.</p>
+    <p class="muted">Copy each field from the lab's document exactly as printed. A report attaches to a product when the peptide name and size match, or when the product's Code matches the report's Sample line (e.g. RT30).</p>
+    ${orphans ? `<div class="err">${orphans} lab report${orphans === 1 ? " isn't" : "s aren't"} attached to any product on the store. Add the product, or give an existing product the matching name, size or code.</div>` : `<div class="okbox" style="padding:.7rem 1rem">Every lab report is attached to a product.</div>`}
     <div id="rform"></div>
-    <div class="tblwrap"><table class="tbl"><tr><th></th><th>Peptide</th><th>Size</th><th>Task</th><th>Batch</th><th>Tested</th><th>Results</th><th>Shown</th></tr>
-    ${list.map((r) => `<tr class="click" data-rid="${r.id}"><td>${r.image ? `<img class="thumbimg" src="${esc(r.image)}" alt="">` : ""}</td><td>${esc(r.product)}</td><td>${esc(r.strength)}</td><td class="mono">${esc(r.task)}</td><td class="mono">${esc(r.batch)}</td><td>${esc(r.tested)}</td><td class="muted">${(r.results || []).map(([n, v]) => esc(n + " " + v)).join(" · ")}</td><td>${r.active ? "Yes" : "Hidden"}</td></tr>`).join("")}</table></div>`;
+    <div class="tblwrap"><table class="tbl"><tr><th></th><th>Peptide</th><th>Size</th><th>Sample</th><th>Task</th><th>Tested</th><th>Attached to</th><th>Shown</th></tr>
+    ${list.map((r) => `<tr class="click" data-rid="${r.id}"><td>${r.image ? `<img class="thumbimg" src="${esc(r.image)}" alt="">` : ""}</td><td>${esc(r.product)}</td><td>${esc(r.strength)}</td><td class="mono">${esc(r.sample)}</td><td class="mono">${esc(r.task)}</td><td>${esc(r.tested)}</td>
+      <td>${(() => { const a = attached(r); if (!a.length) return '<span class="pill st-cancelled">No product</span>'; return a.map((p) => `<span class="pill ${p.active ? "st-shipped" : "st-new"}">${esc(p.name)} ${esc(p.strength)}${p.sku ? " · " + esc(p.sku) : ""}${p.active ? "" : " (hidden)"}</span>`).join(" "); })()}</td>
+      <td>${r.active ? "Yes" : "Hidden"}</td></tr>`).join("")}</table></div>`;
   const form = (r) => {
     r = r || { results: [["", ""], ["Purity", ""]], lab: "Janoshik", active: true };
     const f = (k, label, v, extra = "") => `<div class="field"><label class="eyebrow">${label}</label><input data-k="${k}" value="${esc(v)}" ${extra}${ro()}></div>`;
