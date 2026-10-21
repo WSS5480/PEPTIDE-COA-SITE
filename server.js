@@ -13,6 +13,8 @@ app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
   res.set("Referrer-Policy", "same-origin");
   res.set("X-Frame-Options", "DENY");
+  // keep every page, image and file out of search engines
+  res.set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet, noimageindex");
   next();
 });
 

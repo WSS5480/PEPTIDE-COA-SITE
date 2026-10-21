@@ -1,0 +1,5 @@
+# This store is not meant to appear in search results.
+# Crawlers are allowed to fetch pages only so they can read the "noindex" instruction
+# that every page and file carries; blocking them here would stop them seeing it.
+User-agent: *
+Allow: /
