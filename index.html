@@ -112,6 +112,19 @@ main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
 .key { padding: .3rem .55rem; background: var(--card); border: 1px solid var(--line-strong); border-radius: 6px; font: 500 .9rem/1.2 var(--mono); letter-spacing: .04em; user-select: all; }
 .btn { height: 2.3rem; padding: 0 .9rem; background: var(--card); border: 1px solid var(--line-strong); border-radius: 8px; font-size: .88rem; font-weight: 500; cursor: pointer; }
 .btn:hover { border-color: var(--blue); color: var(--blue); }
+.prices { display: grid; gap: 1rem; padding: clamp(1.1rem, 3vw, 1.75rem); }
+.prices > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .4rem 1rem; }
+.plist { display: grid; margin: 0; padding: 0; list-style: none; }
+.plist li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: .5rem 1.25rem; padding-block: .7rem; border-bottom: 1px solid var(--line); }
+.plist li:last-child { border-bottom: 0; }
+.p-name { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.p-name small { margin-left: .4rem; color: var(--ink-2); font-weight: 500; }
+.p-price { font-weight: 700; font-size: 1.05rem; font-variant-numeric: tabular-nums; text-align: right; }
+.p-price.ask { color: var(--ink-2); font-size: .88rem; font-weight: 500; }
+.p-coa { font-size: .85rem; white-space: nowrap; }
+.p-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .4rem 1.5rem; color: var(--ink-2); font-size: .85rem; }
+@media (max-width: 520px) { .plist li { grid-template-columns: minmax(0, 1fr) auto; } .p-coa { grid-column: 1 / -1; } }
+.dist { font-size: .8rem; color: var(--ink-2); }
 .empty { display: grid; gap: .75rem; justify-items: start; padding: 2rem 1.25rem; }
 .empty p { max-width: 52ch; }
 
@@ -138,7 +151,7 @@ main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
 <body>
 <header class="top"><div class="wrap">
   <div class="logo"><span id="brand">Lab Reports</span><small id="tagline" hidden></small></div>
-  <span class="eyebrow">Certificates of analysis</span>
+  <span class="eyebrow" id="topLine">Certificates of analysis</span>
 </div></header>
 
 <section class="hero">
@@ -152,6 +165,12 @@ main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
 </section>
 
 <main><div class="wrap">
+  <section class="card prices" id="prices" aria-labelledby="pTitle">
+    <header><h2 class="title" id="pTitle">Price list</h2><span class="dist" id="pDist"></span></header>
+    <ul class="plist" id="plist"></ul>
+    <div class="p-foot"><span id="pNote"></span><span id="pContact"></span></div>
+  </section>
+
   <div class="card finder">
     <div class="field">
       <label class="eyebrow" for="product">Peptide</label>
@@ -207,8 +226,25 @@ const SITE = {
   tagline: "",        // small line under the brand (optional)
   notice: "For in vitro research and laboratory use only. Not for human or veterinary use. Not a drug, food or cosmetic. These products are not FDA-approved and have not been evaluated by the FDA. Lab reports show test results only and are not an approval or a claim of safety or effectiveness.",
   intro: "Pick your peptide and its size to pull up the lab report. Each one was issued by the testing lab Janoshik and names XINT as the manufacturer. Open it for the full results and the lab's document, then check it on the lab's own site with the key printed on it.",
-  docPath: "coa/"     // folder that holds the report images
+  docPath: "coa/",    // folder that holds the report images
+  distributorOf: "XINT",                      // the brand you distribute; shows "Authorized XINT distributor"
+  brandUrl: "https://xintpeptides.com/",      // link to the brand's own site for product info
+  contact: "",        // how customers order or ask, e.g. "Text 956-555-0100" or an email. Left empty, it is hidden
+  priceNote: "Prices in US dollars, per vial."  // small line under the price list
 };
+
+/* ───────────── PRICES ─────────────
+   One line per item you sell. Matched to its lab report by product and size,
+   so use the same spelling as the LAB REPORTS block below.
+   price  "" shows "Ask for price"  */
+const PRICES = [
+  { product: "BPC-157",          strength: "10 mg", price: "" },
+  { product: "BPC-157 + TB-500", strength: "20 mg", price: "" },
+  { product: "Epithalon",        strength: "10 mg", price: "" },
+  { product: "Ipamorelin",       strength: "10 mg", price: "" },
+  { product: "MOTS-C",           strength: "10 mg", price: "" },
+  { product: "MOTS-C",           strength: "40 mg", price: "" }
+];
 
 /* ───────────── 2. LAB REPORTS ─────────────
    One entry per report, copied from the lab's document exactly as printed.
@@ -284,6 +320,13 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const webUrl = (u) => /^https?:\/\//i.test(String(u || "").trim()) ? String(u).trim() : "";
 const fileUrl = (src) => !src || /^\s*(javascript|data|vbscript):/i.test(src) ? "" : (/^(https?:)?\/\//i.test(src) || src.startsWith("/") ? src : (SITE.docPath || "") + src);
 const isPurity = (name) => /^purity$/i.test(String(name).trim());
+const sizeKey = (s) => norm(s).replace(/mg$/, "");
+const priceFor = (product, strength) => {
+  const p = PRICES.find((x) => norm(x.product) === norm(product) && sizeKey(x.strength) === sizeKey(strength));
+  if (!p || !String(p.price).trim()) return "";
+  const v = String(p.price).trim();
+  return /^\d+(\.\d+)?$/.test(v) ? "$" + Number(v).toFixed(2).replace(/\.00$/, "") : v;
+};
 
 /* Tidy each report once. Peptides A to Z, then by size, newest report first. */
 const seen = new Set();
@@ -307,6 +350,7 @@ function sheetHTML(r) {
     pair("Lab", esc(r.lab)),
     pair("Task number", r.task ? `<span class="mono">#${esc(r.task)}</span>` : ""),
     pair("Size", esc(r.strength)),
+    pair("Price", esc(priceFor(r.product, r.strength))),
     pair("Sample", esc(r.sample)),
     pair("Batch", r.batch ? `<span class="mono">${esc(r.batch)}</span>` : "Unknown (not given to the lab)"),
     pair("Client", esc(r.client)),
@@ -388,6 +432,15 @@ const closeViewer = () => { if (viewer.close) viewer.close(); else viewer.remove
 
 document.addEventListener("click", (e) => {
   const t = e.target;
+  const jump = t.closest("[data-jump]");
+  if (jump) {
+    e.preventDefault();
+    state.q = ""; state.pick = ""; state.size = ""; $("q").value = ""; $("product").value = ""; fillSizes();
+    openIds.add(jump.dataset.jump); render();
+    const el = $(jump.dataset.jump); if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    history.replaceState(null, "", "#" + jump.dataset.jump);
+    return;
+  }
   const doc = t.closest("[data-doc]");
   if (doc) { const r = ALL.find((x) => x.id === doc.dataset.doc); if (r && r.img) showDoc(r); return; }
   const copy = t.closest("[data-copy]");
@@ -442,6 +495,27 @@ function drawHelix() {
   if (SITE.notice) $("footNote").textContent = SITE.notice; else $("footNote").hidden = true;
   if (SITE.intro) $("lede").textContent = SITE.intro; else $("lede").hidden = true;
   drawHelix();
+
+  /* distributor line and price list */
+  const brandLink = webUrl(SITE.brandUrl);
+  if (SITE.distributorOf) {
+    const label = `Authorized ${esc(SITE.distributorOf)} distributor`;
+    $("topLine").textContent = `Authorized ${SITE.distributorOf} distributor`;
+    $("pDist").innerHTML = brandLink ? `${label} · <a href="${esc(brandLink)}" target="_blank" rel="noopener">Product info on ${esc(SITE.distributorOf)}'s site</a>` : label;
+  }
+  $("pNote").textContent = SITE.priceNote || "";
+  if (SITE.contact) $("pContact").innerHTML = `<strong>To order:</strong> ${esc(SITE.contact)}`;
+  const items = PRICES.filter((p) => p && p.product).slice().sort((a, b) => a.product.localeCompare(b.product) || (parseFloat(a.strength) || 0) - (parseFloat(b.strength) || 0));
+  if (!items.length) $("prices").hidden = true;
+  else $("plist").innerHTML = items.map((p) => {
+    const price = priceFor(p.product, p.strength);
+    const coa = ALL.find((r) => norm(r.product) === norm(p.product) && sizeKey(r.strength) === sizeKey(p.strength));
+    return `<li>
+      <span class="p-name">${esc(p.product)}<small>${esc(p.strength)}</small></span>
+      <span class="p-price${price ? "" : " ask"}">${price ? esc(price) : "Ask for price"}</span>
+      <span class="p-coa">${coa ? `<a href="#${esc(coa.id)}" data-jump="${esc(coa.id)}">Lab report</a>` : `<span class="dist">No report yet</span>`}</span>
+    </li>`;
+  }).join("");
 
   const names = [...new Set(ALL.map((r) => r.product))];
   $("product").insertAdjacentHTML("beforeend", names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join(""));
