@@ -22,7 +22,7 @@ function banner(el, S) {
   if (!S.bannerScroll) { el.textContent = S.announcement; return; }
   const item = `<span>${esc(S.announcement)}</span>`;
   el.classList.add("scroll");
-  el.innerHTML = `<div class="track">${item.repeat(6)}</div><div class="track" aria-hidden="true">${item.repeat(6)}</div>`;
+  el.innerHTML = `<div class="mq">${item.repeat(6)}</div><div class="mq" aria-hidden="true">${item.repeat(6)}</div>`;
   el.setAttribute("aria-label", S.announcement);
 }
 let S = {}, PRODUCTS = [], REPORTS = [], SHIP = [];
