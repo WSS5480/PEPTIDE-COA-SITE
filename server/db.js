@@ -136,6 +136,7 @@ const DEFAULT_SETTINGS = {
   contact: "",
   announcement: "",
   announcementOn: false,
+  pinOn: false,
   bannerScroll: true,
   heroEyebrow: "Third-party tested",
   headline: "Research peptides with the lab report on every vial",

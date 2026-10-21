@@ -66,6 +66,42 @@ async function auth(req, res, next) {
 }
 const owner = (req, res, next) => (req.user.role === "owner" ? next() : bad(res, "Only the owner can do that", 403));
 
+/* ---------- site PIN ---------- */
+// When the owner turns the PIN on, nothing on the store (pages, products, lab reports, orders)
+// is served until the visitor enters it. The admin, its login and the files it needs stay open.
+const PIN_OPEN = [/^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/pin(\.html)?$/, /^\/api\/pin$/,
+  /^\/store\.css$/, /^\/install\.js$/, /^\/sw\.js$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
+let pinCache = { at: 0, on: false, hash: "", secret: "" };
+async function pinState() {
+  if (Date.now() - pinCache.at < 5000) return pinCache;
+  const { rows } = await q("select key, value from settings where key in ('pinOn','pinHash','pinSecret')");
+  const m = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  let secret = m.pinSecret;
+  if (!secret) { secret = crypto.randomBytes(32).toString("hex"); await q("insert into settings(key,value) values ('pinSecret',$1) on conflict (key) do nothing", [JSON.stringify(secret)]); }
+  pinCache = { at: Date.now(), on: !!m.pinOn && !!m.pinHash, hash: m.pinHash || "", secret };
+  return pinCache;
+}
+// the pass cookie is tied to the current PIN, so changing the PIN signs everyone out
+const pinToken = (st) => crypto.createHmac("sha256", st.secret).update(st.hash).digest("hex");
+app.use(wrap(async (req, res, next) => {
+  if (PIN_OPEN.some((r) => r.test(req.path))) return next();
+  const st = await pinState();
+  if (!st.on) return next();
+  const t = parseCookies(req.headers.cookie).spin;
+  if (t && t.length === 64 && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(pinToken(st)))) return next();
+  if (req.path.startsWith("/api/") || req.path.startsWith("/coa/")) return bad(res, "PIN required", 401);
+  res.set("Cache-Control", "no-store");
+  res.sendFile(path.join(__dirname, "public", "pin.html"));
+}));
+app.post("/api/pin", limit("pin", 10, 15 * 60 * 1000), wrap(async (req, res) => {
+  const st = await pinState();
+  if (!st.on) return res.json({ ok: true });
+  const pin = String(req.body?.pin || "").replace(/\D/g, "").slice(0, 12);
+  if (!pin || !(await bcrypt.compare(pin, st.hash))) return bad(res, "Wrong PIN.", 401);
+  res.set("Set-Cookie", `spin=${pinToken(st)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`);
+  res.json({ ok: true });
+}));
+
 /* ---------- public API ---------- */
 app.get("/api/store", wrap(async (req, res) => {
   const s = await getSettings();
@@ -447,11 +483,11 @@ admin.delete("/shipping/:id", owner, wrap(async (req, res) => {
 }));
 
 /* ---------- admin: settings ---------- */
-admin.get("/settings", wrap(async (req, res) => res.json({ settings: await getSettings() })));
+admin.get("/settings", wrap(async (req, res) => { const st = await getSettings(); delete st.pinHash; delete st.pinSecret; res.json({ settings: st }); }));
 admin.put("/settings", owner, wrap(async (req, res) => {
   const b = req.body || {};
   for (const k of Object.keys(DEFAULT_SETTINGS)) {
-    if (b[k] === undefined) continue;
+    if (b[k] === undefined || k === "pinOn") continue; // the PIN has its own endpoint
     let v = b[k];
     if (typeof DEFAULT_SETTINGS[k] === "boolean") v = !!v;
     else if (typeof DEFAULT_SETTINGS[k] === "number") v = Math.max(0, intOrNull(v) ?? DEFAULT_SETTINGS[k]);
@@ -460,6 +496,22 @@ admin.put("/settings", owner, wrap(async (req, res) => {
     if (k === "brandUrl" && v && !/^https:\/\//i.test(v)) v = "";
     await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]);
   }
+  res.json({ ok: true });
+}));
+
+/* ---------- admin: site PIN ---------- */
+admin.get("/pin", owner, wrap(async (req, res) => { const st = await pinState(); res.json({ on: st.on, set: !!st.hash }); }));
+admin.put("/pin", owner, wrap(async (req, res) => {
+  const b = req.body || {};
+  if (b.pin !== undefined && b.pin !== "") {
+    const pin = String(b.pin);
+    if (!/^\d{4,8}$/.test(pin)) return bad(res, "The PIN must be 4 to 8 digits.");
+    await q("insert into settings(key,value) values ('pinHash',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(await bcrypt.hash(pin, 10))]);
+  }
+  const { rows: [h] } = await q("select value from settings where key = 'pinHash'");
+  if (b.on && !h) return bad(res, "Set a PIN first.");
+  await q("insert into settings(key,value) values ('pinOn',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(!!b.on)]);
+  pinCache.at = 0;
   res.json({ ok: true });
 }));
 

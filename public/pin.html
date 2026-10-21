@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Enter PIN</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Poppins:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/store.css">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<style>
+body { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 1rem;
+  background: radial-gradient(40rem 30rem at 70% 30%, rgba(150,214,248,.35), rgba(11,77,150,0) 60%), linear-gradient(120deg, #07173a, #0b4d96); }
+.pinbox { width: min(22rem, 100%); display: grid; gap: 1.1rem; justify-items: center; padding: 2rem 1.5rem 1.6rem; background: var(--card); border-radius: var(--radius); box-shadow: 0 30px 60px -30px rgba(0,0,0,.6); }
+.lock { width: 3rem; height: 3rem; padding: .7rem; background: var(--blue-wash); border-radius: 50%; fill: none; stroke: var(--blue); stroke-width: 2; stroke-linecap: round; }
+.pinbox h1 { font: 700 1.8rem/1 var(--display); text-transform: uppercase; letter-spacing: .02em; }
+.pinbox p { color: var(--ink-2); font-size: .88rem; text-align: center; }
+.dots { display: flex; gap: .7rem; height: 1rem; }
+.dots i { width: .9rem; height: .9rem; border: 2px solid var(--line-strong); border-radius: 50%; }
+.dots i.on { background: var(--navy); border-color: var(--navy); }
+.dots.shake { animation: shake .35s; }
+@keyframes shake { 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+.pad { display: grid; grid-template-columns: repeat(3, 4.2rem); gap: .7rem; }
+.pad button { height: 4.2rem; background: var(--ground); border: 1px solid var(--line); border-radius: 50%; font: 600 1.4rem/1 var(--body); cursor: pointer; }
+.pad button:hover { border-color: var(--blue); }
+.pad button:active { background: var(--blue-wash); }
+.pad .txt { font-size: .8rem; font-weight: 500; color: var(--ink-2); background: none; border-color: transparent; }
+.msg { min-height: 1.2rem; color: #9b1c1c; font-size: .85rem; font-weight: 500; }
+.hidden-input { position: absolute; opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<form class="pinbox" id="f" autocomplete="off">
+  <svg class="lock" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+  <h1>Enter PIN</h1>
+  <p>This site is private. Enter the PIN you were given to continue.</p>
+  <input class="hidden-input" id="pin" inputmode="numeric" maxlength="8" aria-label="PIN" autofocus>
+  <div class="dots" id="dots" aria-hidden="true"></div>
+  <div class="msg" id="msg" role="alert"></div>
+  <div class="pad" id="pad">
+    <button type="button">1</button><button type="button">2</button><button type="button">3</button>
+    <button type="button">4</button><button type="button">5</button><button type="button">6</button>
+    <button type="button">7</button><button type="button">8</button><button type="button">9</button>
+    <button type="button" class="txt" data-k="clear">Clear</button><button type="button">0</button><button type="button" class="txt" data-k="go">Enter</button>
+  </div>
+</form>
+<script>
+(() => {
+  const pin = document.getElementById("pin"), dots = document.getElementById("dots"), msg = document.getElementById("msg");
+  let busy = false;
+  const draw = () => { const n = pin.value.length; dots.innerHTML = Array.from({ length: Math.max(4, n) }, (_, i) => `<i class="${i < n ? "on" : ""}"></i>`).join(""); };
+  async function go() {
+    if (busy || pin.value.length < 4) return;
+    busy = true; msg.textContent = "";
+    try {
+      const r = await fetch("/api/pin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin: pin.value }) });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) { location.reload(); return; }
+      msg.textContent = j.error || "Wrong PIN.";
+      dots.classList.remove("shake"); void dots.offsetWidth; dots.classList.add("shake");
+      pin.value = ""; draw();
+    } catch (e) { msg.textContent = "Couldn't connect. Try again."; }
+    busy = false;
+  }
+  document.getElementById("pad").onclick = (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.k === "clear") pin.value = "";
+    else if (b.dataset.k === "go") return go();
+    else if (pin.value.length < 8) pin.value += b.textContent;
+    draw(); pin.focus();
+  };
+  pin.addEventListener("input", () => { pin.value = pin.value.replace(/\D/g, "").slice(0, 8); draw(); });
+  document.getElementById("f").onsubmit = (e) => { e.preventDefault(); go(); };
+  pin.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+  document.addEventListener("click", () => pin.focus());
+  draw();
+})();
+</script>
+</body>
+</html>

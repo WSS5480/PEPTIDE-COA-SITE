@@ -341,6 +341,12 @@ async function settings() {
       ${ta("paymentInstructions", "What customers see after ordering", "Explain how you'll confirm and how they pay")}
       <div class="grid2">${t("priceNote", "Note under products")}
         <div class="field"><label class="eyebrow" for="s-minOrder">Minimum order $</label><input id="s-minOrder" value="${dollars(s.minOrderCents) || ""}" placeholder="None" inputmode="decimal"${ro()}></div></div></div>
+    ${isOwner() ? `<div class="panel" id="pinPanel"><h2>Site PIN</h2>
+      <p class="muted">When on, nobody can see the store, products, prices or lab reports until they enter the PIN. Admin stays open to you. Changing the PIN makes everyone enter the new one.</p>
+      <label class="chk"><input type="checkbox" id="pinOn"> Require the PIN to view the store</label>
+      <div class="row2" style="align-items:end"><div class="field" style="max-width:14rem"><label class="eyebrow" for="pinNew">New PIN (4 to 8 digits)</label><input id="pinNew" type="password" inputmode="numeric" autocomplete="new-password" placeholder="Leave blank to keep"></div>
+      <button class="btn solid" type="button" id="pinSave">Save PIN setting</button></div>
+      <span class="muted" id="pinState"></span></div>` : ""}
     <div class="panel"><h2>Banner</h2>
       <label class="chk"><input type="checkbox" id="s-announcementOn"${s.announcementOn ? " checked" : ""}${ro()}> Show the banner across the top of every page</label>
       <label class="chk"><input type="checkbox" id="s-bannerScroll"${s.bannerScroll ? " checked" : ""}${ro()}> Scroll the text across the banner</label>
@@ -357,6 +363,17 @@ async function settings() {
         .map(([k, label]) => `<div class="field"><label class="eyebrow" for="s-${k}">${label}</label><textarea id="s-${k}" style="min-height:12rem"${ro()}>${esc((s[k] || []).join("\n"))}</textarea></div>`).join("")}</div>
     ${isOwner() ? `<div><button class="btn solid" id="sSave">Save settings</button></div>` : `<p class="muted">Only the owner can change settings.</p>`}`;
   if (!isOwner()) return;
+  const pin = await api("/pin");
+  const pst = () => { document.getElementById("pinState").textContent = pin.on ? "PIN is ON. The store is locked." : pin.set ? "PIN is set but turned off. The store is open." : "No PIN set yet."; };
+  document.getElementById("pinOn").checked = pin.on; pst();
+  document.getElementById("pinSave").onclick = async () => {
+    const on = document.getElementById("pinOn").checked, np = document.getElementById("pinNew").value.trim();
+    if (np && !/^\d{4,8}$/.test(np)) return toast("The PIN must be 4 to 8 digits");
+    if (on && !pin.set && !np) return toast("Type a PIN first");
+    await api("/pin", { method: "PUT", body: { on, pin: np } });
+    pin.on = on; if (np) pin.set = true; document.getElementById("pinNew").value = ""; pst();
+    toast(on ? "Store locked with PIN" : "PIN turned off");
+  };
   document.getElementById("sSave").onclick = async () => {
     const v = (k) => document.getElementById("s-" + k);
     const body = {};
