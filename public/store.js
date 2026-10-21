@@ -412,10 +412,7 @@ async function load() {
     const names = [...new Set(REPORTS.map((r) => r.product))];
     $("product").insertAdjacentHTML("beforeend", names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join(""));
     fillSizes();
-    if (REPORTS.length) {
-      const latest = REPORTS.reduce((m, r) => (r.tested > m ? r.tested : m), "");
-      $("tally").innerHTML = [["Products", PRODUCTS.length], ["Lab reports", REPORTS.length], ["Latest analysis", fmtDate(latest)]].map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
-    } else $("tally").hidden = true;
+    // (product / report counts under the headline removed at owner request)
     let hash = location.hash.slice(1); try { hash = decodeURIComponent(hash); } catch (x) { /* raw */ }
     const h = norm(hash);
     const target = h && (REPORTS.find((r) => rid(r) === hash) || REPORTS.find((r) => norm(r.task) === h) || REPORTS.find((r) => r.batch && norm(r.batch) === h));
