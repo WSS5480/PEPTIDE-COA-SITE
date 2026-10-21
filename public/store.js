@@ -1,6 +1,8 @@
 /* Storefront: products, cart, order request, lab report library, order lookup, age gate. */
 (() => {
 const $ = (id) => document.getElementById(id);
+const LAB = location.pathname.replace(/\/+$/, "") === "/lab-reports";
+document.body.classList.add(LAB ? "pg-lab" : "pg-home");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const norm = (s) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const sizeKey = (s) => norm(s).replace(/mg$/, "");
@@ -92,7 +94,7 @@ function drawProducts() {
         ${p.description ? `<p class="stockline">${esc(p.description)}</p>` : ""}
         ${price}${stock}
         <p class="research">For laboratory research use only. Not for human or animal use.</p>
-        <div class="pact">${buy}${r ? `<a class="btn" href="#${esc(rid(r))}" data-jump="${esc(rid(r))}">Lab report</a>` : `<span class="stockline">No report yet</span>`}</div>
+        <div class="pact">${buy}${r ? `<a class="btn" href="/lab-reports#${esc(rid(r))}" data-report="${r.id}">Lab report</a>` : `<span class="stockline">No report yet</span>`}</div>
       </div>
     </article>`;
   }).join("") : `<div class="card empty"><p><strong>No product matches.</strong> Try another name or size.</p></div>`;
@@ -343,6 +345,7 @@ document.addEventListener("click", (e) => {
   const ac = t.closest("[data-acct]");
   if (ac) { acctView(ac.dataset.acct); return; }
   const c = t.closest("[data-cat]");
+  if (c && LAB) { location.href = "/#products"; return; }
   if (c) { e.preventDefault(); cat = c.dataset.cat; drawProducts(); $("products").scrollIntoView({ behavior: "smooth" }); return; }
   const add = t.closest("[data-add]");
   if (add) { addToCart(+add.dataset.add); drawProducts(); toast("Added to cart"); return; }
@@ -350,6 +353,8 @@ document.addEventListener("click", (e) => {
   if (inc || dec || rm) { const id = +(inc || dec || rm).dataset[inc ? "inc" : dec ? "dec" : "rm"]; if (rm) { cart = cart.filter((c) => c.id !== id); saveCart(); } else addToCart(id, inc ? 1 : -1); drawCart(); drawProducts(); return; }
   if (t.closest("#toCheckout")) { openCheckout(); return; }
   const jump = t.closest("[data-jump]"); if (jump) { e.preventDefault(); jumpTo(jump.dataset.jump); return; }
+  const rep = t.closest("[data-report]");
+  if (rep) { const r = REPORTS.find((x) => String(x.id) === rep.dataset.report); if (r) { e.preventDefault(); $("rmTitle").textContent = `${r.product} ${r.strength}`.trim() + " · lab report"; $("rmBody").innerHTML = sheetHTML(r); openD($("repModal")); } return; }
   const doc = t.closest("[data-doc]"); if (doc) { const r = REPORTS.find((x) => String(x.id) === doc.dataset.doc); if (r && r.image) showDoc(r); return; }
   const copy = t.closest("[data-copy]");
   if (copy) {
@@ -367,8 +372,8 @@ document.querySelectorAll("dialog").forEach((d) => d.addEventListener("click", (
 $("acctOpen").onclick = async () => { await loadAccount(); acctView(); openD($("acct")); };
 $("cartOpen").onclick = () => { drawCart(); openD($("cart")); };
 $("stoggle").onclick = () => { $("top").classList.toggle("searching"); if ($("top").classList.contains("searching")) $("hq").focus(); };
-$("hq").addEventListener("input", () => { drawProducts(); state.q = $("hq").value; $("q").value = $("hq").value; drawReports(); });
-$("hq").addEventListener("keydown", (e) => { if (e.key === "Enter") $("products").scrollIntoView({ behavior: "smooth" }); });
+$("hq").addEventListener("input", () => { if (LAB) { state.q = $("hq").value; $("q").value = $("hq").value; drawReports(); } else drawProducts(); });
+$("hq").addEventListener("keydown", (e) => { if (e.key === "Enter") $(LAB ? "reports" : "products").scrollIntoView({ behavior: "smooth" }); });
 $("q").addEventListener("input", (e) => { state.q = e.target.value; drawReports(); });
 $("product").addEventListener("change", (e) => { state.pick = e.target.value; state.size = ""; fillSizes(); drawReports(); });
 $("size").addEventListener("change", (e) => { state.size = e.target.value; drawReports(); });
@@ -397,7 +402,8 @@ async function load() {
   if (first) {
     first = false;
     const name = S.brand || "Research Peptides";
-    document.title = name;
+    document.title = LAB ? `Lab reports · ${name}` : name;
+    if (LAB) $("hq").placeholder = "Search lab reports";
     $("brand").textContent = name; $("footBrand").textContent = name;
     if (S.tagline) { $("tagline").textContent = S.tagline; $("tagline").hidden = false; }
     if (S.announcementOn && S.announcement) banner($("announce"), S);

@@ -18,7 +18,7 @@
 <body>
 <div class="announce" id="announce" hidden></div>
 <header class="top" id="top"><div class="wrap">
-  <div class="logo"><span id="brand">Research Peptides</span><small id="tagline" hidden></small></div>
+  <a class="logo" href="/" style="text-decoration:none"><span id="brand">Research Peptides</span><small id="tagline" hidden></small></a>
   <label class="hsearch"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
     <span class="hp">Search products</span><input id="hq" type="search" autocomplete="off" spellcheck="false" placeholder="Search products, mg or batch"></label>
   <div class="tools">
@@ -55,7 +55,7 @@
   </section>
 
   <section class="prices" id="reports" aria-labelledby="rTitle">
-    <header class="sectionhead"><h2 class="title" id="rTitle">Lab reports</h2><span class="dist">Certificates of analysis by peptide and size</span></header>
+    <header class="sectionhead"><h2 class="title" id="rTitle">Lab reports</h2><a class="btn" href="/" style="display:inline-grid;place-items:center;text-decoration:none">← Back to products</a><span class="dist">Certificates of analysis by peptide and size</span></header>
     <div class="card finder">
       <div class="field"><label class="eyebrow" for="product">Peptide</label><select id="product"><option value="">All peptides</option></select></div>
       <div class="field"><label class="eyebrow" for="size">Size</label><select id="size"><option value="">All sizes</option></select></div>
@@ -105,6 +105,7 @@
       <li><a href="/policy#privacy">Privacy policy</a></li>
       <li><a href="/policy#contact">Contact</a></li>
       <li><a href="/policy#disclaimer">Disclaimer</a></li>
+      <li><a href="/lab-reports">Lab reports</a></li>
     </ul></div>
   </div>
   <div class="fine" id="footFine"></div>
@@ -114,6 +115,12 @@
 <!-- account -->
 <dialog class="modal" id="acct" aria-labelledby="acTitle">
   <div class="mbody" id="acBody"></div>
+</dialog>
+
+<!-- one product's lab report, opened from its card -->
+<dialog class="modal" id="repModal" aria-labelledby="rmTitle" style="width:min(56rem,calc(100vw - 1.5rem))">
+  <div class="mbody"><div class="sectionhead" style="padding:0"><h2 id="rmTitle"></h2><button class="btn" type="button" data-close>Close</button></div>
+  <div id="rmBody"></div><p class="dist"><a href="/lab-reports">See all lab reports</a></p></div>
 </dialog>
 
 <!-- cart -->

@@ -287,3 +287,9 @@ main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
 .acctbtn:hover { border-color: var(--blue); color: var(--blue); }
 .acctbtn svg, .cartbtn svg { flex: none; width: 18px; height: 18px; }
 .top .tools { flex: none; }
+
+/* the same page serves the shop (/) and the lab report library (/lab-reports) */
+.pg-home #reports, .pg-home .guide { display: none; }
+.pg-lab .hero, .pg-lab .perks, .pg-lab #products, .pg-lab #track, .pg-lab #disclaimer { display: none; }
+.pg-lab main > .wrap { padding-top: 2rem; }
+#rmBody .sheet { padding: 0; background: none; border: 0; }

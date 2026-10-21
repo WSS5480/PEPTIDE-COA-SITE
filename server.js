@@ -590,6 +590,7 @@ app.use(express.static(path.join(__dirname, "public"), {
   // pages and the service worker must never be cached, or visitors keep seeing an old version
   setHeaders: (res, file) => { if (/\.(html|webmanifest)$|[\\/]sw\.js$/.test(file)) res.set("Cache-Control", "no-cache"); }
 }));
+app.get("/lab-reports", (req, res) => res.set("Cache-Control", "no-cache").sendFile(path.join(__dirname, "public", "index.html")));
 app.get("/admin", (req, res) => res.set("Cache-Control", "no-cache").sendFile(path.join(__dirname, "public", "admin.html")));
 app.use("/api", (req, res) => bad(res, "Not found", 404));
 app.use((err, req, res, next) => { console.error(err); bad(res, "Something went wrong on our end.", 500); });
