@@ -30,7 +30,7 @@ const parseCookies = (h) => Object.fromEntries(String(h || "").split(/;\s*/).fil
 const SECURE = process.env.NODE_ENV === "production" || !!process.env.RENDER;
 
 function publicSettings(s) {
-  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"];
+  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "productLabel", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"];
   return Object.fromEntries(keys.map((k) => [k, s[k]]));
 }
 const reportOut = (r) => ({
@@ -394,7 +394,7 @@ admin.get("/products", wrap(async (req, res) => {
 }));
 function productFields(b) {
   return {
-    name: str(b.name, 120), strength: str(b.strength, 40), sku: str(b.sku, 60), category: str(b.category, 60) || "Research peptide",
+    name: str(b.name, 120), strength: str(b.strength, 40), sku: str(b.sku, 60).toUpperCase(), category: str(b.category, 60) || "Research peptide",
     description: str(b.description, 2000), price_cents: centsOrNull(b.price), stock: intOrNull(b.stock), max_per_order: intOrNull(b.maxPerOrder),
     active: b.active !== false, sort: intOrNull(b.sort) ?? 0
   };
@@ -426,7 +426,7 @@ admin.post("/products/import", owner, wrap(async (req, res) => {
     if (has(r.price) && price === null) { problems.push(`Row ${i + 2}: price "${r.price}" isn't a number`); continue; }
     const f = {};
     if (has(r.category)) f.category = str(r.category, 60);
-    if (has(r.sku)) f.sku = str(r.sku, 60);
+    if (has(r.sku)) f.sku = str(r.sku, 60).toUpperCase();
     if (has(r.description)) f.description = str(r.description, 2000);
     if (price !== undefined) f.price_cents = price;
     if (has(r.stock)) f.stock = /^(∞|unlimited|untracked|-)$/i.test(String(r.stock).trim()) ? null : intOrNull(r.stock);
@@ -530,6 +530,7 @@ admin.put("/settings", owner, wrap(async (req, res) => {
     else if (Array.isArray(DEFAULT_SETTINGS[k])) v = (Array.isArray(v) ? v : []).map((x) => str(x, 1000)).filter(Boolean).slice(0, 30);
     else v = str(v, 3000);
     if (k === "brandUrl" && v && !/^https:\/\//i.test(v)) v = "";
+    if (k === "productLabel" && !["name", "code", "both"].includes(v)) v = "name";
     await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]);
   }
   res.json({ ok: true });

@@ -180,14 +180,14 @@ async function customers() {
 /* ---------- products ---------- */
 async function products() {
   const { products: list } = await api("/products");
-  const COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["sku", "SKU"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
+  const COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["sku", "Code"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
   const NUM = new Set(["price", "stock", "maxPerOrder", "sort"]);
   const inp = (k, v, ph = "", extra = "") => `<input data-k="${k}" value="${esc(v)}" placeholder="${ph}"${extra}${ro()}>`;
   const row = (p) => `<tr data-id="${p ? p.id : ""}"${p ? "" : ' class="dirty"'}>
     <td>${inp("name", p?.name, "Name")}</td>
     <td>${inp("strength", p?.strength, "10 mg", ' style="min-width:4.5rem"')}</td>
     <td>${inp("category", p?.category ?? "Research peptide", "Category", ' list="catlist" style="min-width:9rem"')}</td>
-    <td>${inp("sku", p?.sku, "SKU")}</td>
+    <td>${inp("sku", p?.sku, "e.g. RT30", ' style="min-width:5.5rem;text-transform:uppercase"')}</td>
     <td>${inp("price", dollars(p?.price_cents), "Ask", ' inputmode="decimal" style="min-width:5rem"')}</td>
     <td>${inp("stock", p?.stock ?? "", "∞", ' inputmode="numeric" style="min-width:4rem"')}</td>
     <td>${inp("maxPerOrder", p?.max_per_order ?? "", "—", ' inputmode="numeric" style="min-width:4rem"')}</td>
@@ -200,7 +200,7 @@ async function products() {
   const saveBar = isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" data-saveall disabled>Save all changes</button><span class="muted" data-dirtycount></span></div>` : "";
   pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>` : ""}</div></header>
     <div id="impBox"></div>
-    <p class="muted">Click a column name to sort. Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). Untick Active to hide a product. Products match their lab report by name and size.</p>
+    <p class="muted">Click a column name to sort. Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). "Code" is the product code (e.g. RT30); a lab report attaches when its name and size match, or when its Sample line matches the code. Untick Active to hide a product. Products match their lab report by name and size.</p>
     ${saveBar}
     <datalist id="catlist">${cats.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
     <div class="tblwrap"><table class="tbl" id="pt"><thead><tr>${COLS.map(([k, l]) => `<th class="sortable" data-sort="${k}">${l}<span class="arr"></span></th>`).join("")}${isOwner() ? "<th></th>" : ""}</tr></thead>
@@ -264,9 +264,9 @@ async function products() {
 
 
 /* ---------- product import from Excel / CSV ---------- */
-const IMPORT_COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["sku", "SKU"], ["price", "Price"], ["stock", "Stock"], ["maxPerOrder", "Max per order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
+const IMPORT_COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["sku", "Code"], ["price", "Price"], ["stock", "Stock"], ["maxPerOrder", "Max per order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
 const HEADER_ALIASES = { name: ["name", "product", "productname", "peptide", "item"], strength: ["size", "strength", "mg", "dose", "amount", "vialsize"],
-  category: ["category", "cat", "type"], sku: ["sku", "code", "productcode", "itemcode"], price: ["price", "cost", "retail", "priceusd", "price$"],
+  category: ["category", "cat", "type"], sku: ["sku", "code", "productcode", "itemcode", "sample", "samplename"], price: ["price", "cost", "retail", "priceusd", "price$"],
   stock: ["stock", "qty", "quantity", "onhand", "inventory"], maxPerOrder: ["maxperorder", "max", "limit", "maxorder", "max/order"],
   sort: ["sort", "order", "position"], active: ["active", "show", "visible", "enabled"], description: ["description", "desc", "notes", "details"] };
 const normH = (h) => String(h || "").toLowerCase().replace(/[^a-z0-9$/]/g, "");
@@ -285,7 +285,7 @@ function importBox(list) {
   const box = document.getElementById("impBox");
   if (box.innerHTML) { box.innerHTML = ""; return; }
   box.innerHTML = `<div class="panel"><h2>Import products from a file</h2>
-    <p class="muted">Upload an Excel (.xlsx, .xls) or CSV file with a header row. Columns: <strong>Name</strong>, <strong>Size</strong>, Category, SKU, Price, Stock, Max per order, Sort, Active (Yes/No), Description. Only Name is required. A row whose Name and Size match an existing product updates it; anything else is added as a new product. Blank cells keep the current value.</p>
+    <p class="muted">Upload an Excel (.xlsx, .xls) or CSV file with a header row. Columns: <strong>Name</strong>, <strong>Size</strong>, Category, Code (e.g. RT30), Price, Stock, Max per order, Sort, Active (Yes/No), Description. Only Name is required. A row whose Name and Size match an existing product updates it; anything else is added as a new product. Blank cells keep the current value.</p>
     <div class="row2"><button class="btn" type="button" id="tpl">Download current products as a template</button>
       <label class="btn solid" style="display:inline-grid;place-items:center;cursor:pointer">Choose file<input type="file" id="impFile" accept=".xlsx,.xls,.csv,text/csv" hidden></label></div>
     <div id="impPrev"></div></div>`;
@@ -411,6 +411,10 @@ async function settings() {
       <div class="row2" style="align-items:end"><div class="field" style="max-width:14rem"><label class="eyebrow" for="pinNew">New PIN (4 to 8 digits)</label><input id="pinNew" type="password" inputmode="numeric" autocomplete="new-password" placeholder="Leave blank to keep"></div>
       <button class="btn solid" type="button" id="pinSave">Save PIN setting</button></div>
       <span class="muted" id="pinState"></span></div>` : ""}
+    <div class="panel"><h2>Product names on the store</h2>
+      <div class="field" style="max-width:24rem"><label class="eyebrow" for="s-productLabel">Show products by</label>
+      <select id="s-productLabel"${ro()}>${[["name", "Name and size (Retatrutide 30 mg)"], ["code", "Code (RT30)"], ["both", "Both (Retatrutide 30 mg · RT30)"]].map(([v, l]) => `<option value="${v}"${(s.productLabel || "name") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
+      <span class="muted">Products without a code always show their name. Search finds products by name or code either way.</span></div></div>
     <div class="panel"><h2>Banner</h2>
       <label class="chk"><input type="checkbox" id="s-announcementOn"${s.announcementOn ? " checked" : ""}${ro()}> Show the banner across the top of every page</label>
       <label class="chk"><input type="checkbox" id="s-bannerScroll"${s.bannerScroll ? " checked" : ""}${ro()}> Scroll the text across the banner</label>
@@ -445,7 +449,7 @@ async function settings() {
     body.storeOpen = v("storeOpen").checked; body.ageGate = v("ageGate").checked; body.minAge = v("minAge").value;
     body.minOrderCents = Math.round(parseFloat(v("minOrder").value || 0) * 100);
     ["footerNotice", "disclaimers", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"].forEach((k) => { body[k] = v(k).value.split("\n").map((x) => x.trim()).filter(Boolean); });
-    body.announcementOn = v("announcementOn").checked; body.bannerScroll = v("bannerScroll").checked;
+    body.announcementOn = v("announcementOn").checked; body.productLabel = v("productLabel").value; body.bannerScroll = v("bannerScroll").checked;
     await api("/settings", { method: "PUT", body }); toast("Settings saved");
   };
 }

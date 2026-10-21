@@ -137,6 +137,7 @@ const DEFAULT_SETTINGS = {
   announcement: "",
   announcementOn: false,
   pinOn: false,
+  productLabel: "name",
   bannerScroll: true,
   heroEyebrow: "Third-party tested",
   headline: "Research peptides with the lab report on every vial",
@@ -245,6 +246,11 @@ async function init() {
   if (sc === 0) {
     await q("insert into shipping_methods(name, detail, price_cents, active, sort) values ('Standard shipping', 'Ships in 1 to 3 business days', 0, false, 0)");
   }
+  // Give products a code from their lab report's Sample line when it is a code like RT30 (only fills blanks).
+  await q(`update products p set sku = upper(r.sample) from reports r
+    where p.sku = '' and lower(p.name) = lower(r.product)
+      and regexp_replace(lower(p.strength), '[^0-9.]', '', 'g') = regexp_replace(lower(r.strength), '[^0-9.]', '', 'g')
+      and r.sample ~* '^[a-z]{1,5}[0-9]{1,4}$'`);
   await q("delete from sessions where expires < now()");
   await q("delete from customer_sessions where expires < now()");
 }
