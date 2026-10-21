@@ -122,6 +122,7 @@ create table if not exists customer_sessions (
   customer_id int not null references customers(id) on delete cascade,
   expires timestamptz not null
 );
+alter table products add column if not exists show_code boolean not null default false;
 alter table orders add column if not exists customer_id int references customers(id) on delete set null;
 create index if not exists orders_customer_idx on orders(customer_id);
 create index if not exists orders_status_idx on orders(status);

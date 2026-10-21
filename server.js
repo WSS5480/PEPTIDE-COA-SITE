@@ -106,7 +106,7 @@ app.post("/api/pin", limit("pin", 10, 15 * 60 * 1000), wrap(async (req, res) => 
 app.get("/api/store", wrap(async (req, res) => {
   const s = await getSettings();
   const [{ rows: products }, { rows: reports }, { rows: shipping }] = await Promise.all([
-    q("select id,name,strength,sku,category,description,price_cents,stock,max_per_order from products where active order by sort, name, strength"),
+    q("select id,name,strength,sku,show_code,category,description,price_cents,stock,max_per_order from products where active order by sort, name, strength"),
     q(`select ${REPORT_COLS} from reports where active order by product, tested desc nulls last`),
     q("select id,name,detail,price_cents,free_over_cents from shipping_methods where active order by sort, price_cents")
   ]);
@@ -396,7 +396,7 @@ function productFields(b) {
   return {
     name: str(b.name, 120), strength: str(b.strength, 40), sku: str(b.sku, 60).toUpperCase(), category: str(b.category, 60) || "Research peptide",
     description: str(b.description, 2000), price_cents: centsOrNull(b.price), stock: intOrNull(b.stock), max_per_order: intOrNull(b.maxPerOrder),
-    active: b.active !== false, sort: intOrNull(b.sort) ?? 0
+    active: b.active !== false, sort: intOrNull(b.sort) ?? 0, show_code: b.showCode === true
   };
 }
 admin.post("/products", owner, wrap(async (req, res) => {
@@ -432,6 +432,7 @@ admin.post("/products/import", owner, wrap(async (req, res) => {
     if (has(r.stock)) f.stock = /^(∞|unlimited|untracked|-)$/i.test(String(r.stock).trim()) ? null : intOrNull(r.stock);
     if (has(r.maxPerOrder)) f.max_per_order = intOrNull(r.maxPerOrder);
     if (has(r.sort)) f.sort = intOrNull(r.sort) ?? 0;
+    if (has(r.showCode)) f.show_code = /^(yes|y|true|1|on|x)$/i.test(String(r.showCode).trim());
     if (has(r.active)) f.active = !/^(no|n|false|0|off|hidden|hide)$/i.test(String(r.active).trim());
     const match = existing.find((p) => p.name.toLowerCase() === name.toLowerCase() && sk(p.strength) === sk(strength));
     if (match) {

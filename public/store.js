@@ -59,8 +59,9 @@ function vialSVG(name, size) {
 const reportFor = (p) => REPORTS.find((r) => norm(r.product) === norm(p.name) && sizeKey(r.strength) === sizeKey(p.strength))
   || (p.sku ? REPORTS.find((r) => norm(r.sample) === norm(p.sku)) : undefined);
 // How a product is named on the store: "name" (Retatrutide 30 mg), "code" (RT30) or "both" (Retatrutide 30 mg · RT30)
+const codeMode = (p) => !!p.sku && (p.show_code || S.productLabel === "code");
 const labelOf = (p) => {
-  const nm = `${p.name} ${p.strength}`.trim(), mode = S.productLabel || "name";
+  const nm = `${p.name} ${p.strength}`.trim(), mode = p.show_code && p.sku ? "code" : S.productLabel || "name";
   if (!p.sku || mode === "name") return nm;
   return mode === "code" ? p.sku : `${nm} · ${p.sku}`;
 };
@@ -83,11 +84,11 @@ function drawProducts() {
     const buy = p.price_cents === null ? (S.contact ? `<span class="stockline">Contact us: ${esc(S.contact)}</span>` : "")
       : sold ? "" : `<button class="btn solid" type="button" data-add="${p.id}">Add to cart${inCart(p.id) ? ` (${inCart(p.id)})` : ""}</button>`;
     return `<article class="pcard">
-      <div class="thumb">${vialSVG(S.productLabel === "code" && p.sku ? p.sku : p.name, p.strength)}</div>
+      <div class="thumb">${vialSVG(codeMode(p) ? p.sku : p.name, p.strength)}</div>
       <div class="pbody">
         <span class="pcat">${esc(p.category || "Research peptide")}</span>
-        <h3 class="pname">${esc(S.productLabel === "code" && p.sku ? p.sku : p.name)}</h3>
-        <span class="pmeta">${[S.productLabel === "code" && p.sku ? `${p.name} ${p.strength}`.trim() : p.strength, S.productLabel === "both" && p.sku ? p.sku : "", purity ? `${purity} purity` : ""].filter(Boolean).map(esc).join(" · ")}</span>
+        <h3 class="pname">${esc(codeMode(p) ? p.sku : p.name)}</h3>
+        <span class="pmeta">${[codeMode(p) ? `${p.name} ${p.strength}`.trim() : p.strength, !codeMode(p) && S.productLabel === "both" && p.sku ? p.sku : "", purity ? `${purity} purity` : ""].filter(Boolean).map(esc).join(" · ")}</span>
         ${p.description ? `<p class="stockline">${esc(p.description)}</p>` : ""}
         ${price}${stock}
         <p class="research">For laboratory research use only. Not for human or animal use.</p>
