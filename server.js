@@ -411,6 +411,42 @@ admin.patch("/products/:id", owner, wrap(async (req, res) => {
   await q(`update products set ${cols.map((c, i) => `${c} = $${i + 1}`)} where id = $${cols.length + 1}`, [...Object.values(f), intOrNull(req.params.id)]);
   res.json({ ok: true });
 }));
+// Bulk import from a spreadsheet. Matches existing products by name + size; blank cells keep current values.
+admin.post("/products/import", owner, wrap(async (req, res) => {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, 1000) : [];
+  if (!rows.length) return bad(res, "The file has no product rows.");
+  const sk = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/mg$/, "");
+  const has = (v) => v !== undefined && v !== null && String(v).trim() !== "";
+  const { rows: existing } = await q("select * from products");
+  let created = 0, updated = 0; const problems = [];
+  for (const [i, r] of rows.entries()) {
+    const name = str(r.name, 120), strength = str(r.strength, 40);
+    if (!name) { problems.push(`Row ${i + 2}: no product name`); continue; }
+    const price = has(r.price) ? centsOrNull(String(r.price).replace(/[$,\s]/g, "")) : undefined;
+    if (has(r.price) && price === null) { problems.push(`Row ${i + 2}: price "${r.price}" isn't a number`); continue; }
+    const f = {};
+    if (has(r.category)) f.category = str(r.category, 60);
+    if (has(r.sku)) f.sku = str(r.sku, 60);
+    if (has(r.description)) f.description = str(r.description, 2000);
+    if (price !== undefined) f.price_cents = price;
+    if (has(r.stock)) f.stock = /^(∞|unlimited|untracked|-)$/i.test(String(r.stock).trim()) ? null : intOrNull(r.stock);
+    if (has(r.maxPerOrder)) f.max_per_order = intOrNull(r.maxPerOrder);
+    if (has(r.sort)) f.sort = intOrNull(r.sort) ?? 0;
+    if (has(r.active)) f.active = !/^(no|n|false|0|off|hidden|hide)$/i.test(String(r.active).trim());
+    const match = existing.find((p) => p.name.toLowerCase() === name.toLowerCase() && sk(p.strength) === sk(strength));
+    if (match) {
+      const cols = Object.keys(f);
+      if (cols.length) await q(`update products set ${cols.map((c, j) => `${c} = $${j + 1}`)} where id = $${cols.length + 1}`, [...Object.values(f), match.id]);
+      updated++;
+    } else {
+      const g = { name, strength, category: "Research peptide", ...f };
+      const cols = Object.keys(g);
+      const { rows: [n] } = await q(`insert into products(${cols}) values (${cols.map((_, j) => "$" + (j + 1))}) returning *`, Object.values(g));
+      existing.push(n); created++;
+    }
+  }
+  res.json({ ok: true, created, updated, problems });
+}));
 admin.delete("/products/:id", owner, wrap(async (req, res) => {
   await q("delete from products where id = $1", [intOrNull(req.params.id)]);
   res.json({ ok: true });

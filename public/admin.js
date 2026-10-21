@@ -198,7 +198,8 @@ async function products() {
   </tr>`;
   const cats = [...new Set(list.map((p) => p.category).filter(Boolean))];
   const saveBar = isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" data-saveall disabled>Save all changes</button><span class="muted" data-dirtycount></span></div>` : "";
-  pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="addP">Add product</button>` : ""}</div></header>
+  pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>` : ""}</div></header>
+    <div id="impBox"></div>
     <p class="muted">Click a column name to sort. Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). Untick Active to hide a product. Products match their lab report by name and size.</p>
     ${saveBar}
     <datalist id="catlist">${cats.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
@@ -245,6 +246,7 @@ async function products() {
     if (!fail) products();
   };
   document.querySelectorAll("[data-saveall]").forEach((b) => (b.onclick = saveAll));
+  if (document.getElementById("impP")) document.getElementById("impP").onclick = () => importBox(list);
   if (document.getElementById("addP")) document.getElementById("addP").onclick = () => { pb.insertAdjacentHTML("afterbegin", row(null)); refresh(); pb.querySelector("tr input").focus(); };
   pb.onclick = async (e) => {
     const tr = e.target.closest("tr"); if (!tr) return;
@@ -258,6 +260,68 @@ async function products() {
     await saveRow(tr); tr.classList.remove("bad"); refresh(); toast("Saved"); drawNav();
   };
   refresh();
+}
+
+
+/* ---------- product import from Excel / CSV ---------- */
+const IMPORT_COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["sku", "SKU"], ["price", "Price"], ["stock", "Stock"], ["maxPerOrder", "Max per order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
+const HEADER_ALIASES = { name: ["name", "product", "productname", "peptide", "item"], strength: ["size", "strength", "mg", "dose", "amount", "vialsize"],
+  category: ["category", "cat", "type"], sku: ["sku", "code", "productcode", "itemcode"], price: ["price", "cost", "retail", "priceusd", "price$"],
+  stock: ["stock", "qty", "quantity", "onhand", "inventory"], maxPerOrder: ["maxperorder", "max", "limit", "maxorder", "max/order"],
+  sort: ["sort", "order", "position"], active: ["active", "show", "visible", "enabled"], description: ["description", "desc", "notes", "details"] };
+const normH = (h) => String(h || "").toLowerCase().replace(/[^a-z0-9$/]/g, "");
+function loadSheetJS() {
+  if (window.XLSX) return Promise.resolve();
+  return new Promise((ok, no) => { const sc = document.createElement("script"); sc.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; sc.onload = ok; sc.onerror = () => no(new Error("Couldn't load the spreadsheet reader")); document.head.appendChild(sc); });
+}
+function downloadTemplate(list) {
+  const cell = (v) => { const x = String(v ?? ""); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
+  const lines = [IMPORT_COLS.map(([, l]) => l).join(",")];
+  list.forEach((p) => lines.push([p.name, p.strength, p.category, p.sku, p.price_cents === null ? "" : (p.price_cents / 100).toFixed(2), p.stock ?? "", p.max_per_order ?? "", p.sort, p.active ? "Yes" : "No", p.description].map(cell).join(",")));
+  if (!list.length) lines.push("BPC-157,10 mg,Tissue repair research,BPC10,45.00,25,,0,Yes,");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" })); a.download = "products.csv"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function importBox(list) {
+  const box = document.getElementById("impBox");
+  if (box.innerHTML) { box.innerHTML = ""; return; }
+  box.innerHTML = `<div class="panel"><h2>Import products from a file</h2>
+    <p class="muted">Upload an Excel (.xlsx, .xls) or CSV file with a header row. Columns: <strong>Name</strong>, <strong>Size</strong>, Category, SKU, Price, Stock, Max per order, Sort, Active (Yes/No), Description. Only Name is required. A row whose Name and Size match an existing product updates it; anything else is added as a new product. Blank cells keep the current value.</p>
+    <div class="row2"><button class="btn" type="button" id="tpl">Download current products as a template</button>
+      <label class="btn solid" style="display:inline-grid;place-items:center;cursor:pointer">Choose file<input type="file" id="impFile" accept=".xlsx,.xls,.csv,text/csv" hidden></label></div>
+    <div id="impPrev"></div></div>`;
+  document.getElementById("tpl").onclick = () => downloadTemplate(list);
+  document.getElementById("impFile").onchange = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const prev = document.getElementById("impPrev"); prev.innerHTML = `<p class="muted">Reading ${esc(file.name)}…</p>`;
+    try {
+      await loadSheetJS();
+      const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: false });
+      if (!raw.length) { prev.innerHTML = `<div class="err">That file has no rows under the header.</div>`; return; }
+      const heads = Object.keys(raw[0]);
+      const map = {};
+      heads.forEach((h) => { const n = normH(h); const k = Object.keys(HEADER_ALIASES).find((key) => HEADER_ALIASES[key].includes(n)); if (k && !map[k]) map[k] = h; });
+      if (!map.name) { prev.innerHTML = `<div class="err">Couldn't find a Name column. The columns found were: ${heads.map(esc).join(", ")}</div>`; return; }
+      const rows = raw.map((r) => Object.fromEntries(Object.entries(map).map(([k, h]) => [k, String(r[h] ?? "").trim()]))).filter((r) => r.name);
+      const sk = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/mg$/, "");
+      const isUpd = (r) => list.some((p) => p.name.toLowerCase() === r.name.toLowerCase() && sk(p.strength) === sk(r.strength));
+      const nNew = rows.filter((r) => !isUpd(r)).length, nUpd = rows.length - nNew;
+      const used = IMPORT_COLS.filter(([k]) => map[k]);
+      prev.innerHTML = `<p><strong>${rows.length} rows:</strong> ${nNew} new, ${nUpd} update existing. Columns used: ${used.map(([, l]) => l).join(", ")}.${heads.length > used.length ? ` <span class="muted">Ignored: ${heads.filter((h) => !Object.values(map).includes(h)).map(esc).join(", ")}</span>` : ""}</p>
+        <div class="tblwrap" style="max-height:22rem;overflow:auto"><table class="tbl"><tr><th></th>${used.map(([, l]) => `<th>${l}</th>`).join("")}</tr>
+        ${rows.map((r) => `<tr><td>${isUpd(r) ? '<span class="pill st-confirmed">update</span>' : '<span class="pill st-shipped">new</span>'}</td>${used.map(([k]) => `<td>${esc(r[k])}</td>`).join("")}</tr>`).join("")}</table></div>
+        <div class="row2"><button class="btn solid" type="button" id="impGo">Import ${rows.length} rows</button><button class="btn" type="button" id="impCancel">Cancel</button></div>`;
+      document.getElementById("impCancel").onclick = () => { box.innerHTML = ""; };
+      document.getElementById("impGo").onclick = async () => {
+        const r = await api("/products/import", { method: "POST", body: { rows } });
+        unsaved = false;
+        toast(`Imported: ${r.created} new, ${r.updated} updated`);
+        await products();
+        if (r.problems.length) document.getElementById("impBox").innerHTML = `<div class="panel"><h2>Some rows were skipped</h2><ul class="muted">${r.problems.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`;
+        drawNav();
+      };
+    } catch (x) { prev.innerHTML = `<div class="err">${esc(x.message || "Couldn't read that file.")}</div>`; }
+  };
 }
 
 /* ---------- lab reports ---------- */
