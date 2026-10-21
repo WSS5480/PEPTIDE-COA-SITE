@@ -501,7 +501,7 @@ function drawHelix() {
   if (SITE.distributorOf) {
     const label = `Authorized ${esc(SITE.distributorOf)} distributor`;
     $("topLine").textContent = `Authorized ${SITE.distributorOf} distributor`;
-    $("pDist").innerHTML = brandLink ? `${label} · <a href="${esc(brandLink)}" target="_blank" rel="noopener">Product info on ${esc(SITE.distributorOf)}'s site</a>` : label;
+    // distributor line above the price list removed at owner request
   }
   $("pNote").textContent = SITE.priceNote || "";
   if (SITE.contact) $("pContact").innerHTML = `<strong>To order:</strong> ${esc(SITE.contact)}`;
