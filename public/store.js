@@ -8,12 +8,14 @@ const money = (c) => "$" + (c / 100).toFixed(2);
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const fmtDate = (iso) => { const [y, m, d] = String(iso || "").slice(0, 10).split("-").map(Number); return y && m && d ? `${MONTHS[m - 1]} ${d}, ${y}` : ""; };
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+const para = (t) => { const m = /^([^:]{2,40}):\s+(.*)$/.exec(String(t)); return m ? `<strong>${esc(m[1])}.</strong> ${esc(m[2])}` : esc(t); };
 const isPurity = (n) => /^purity$/i.test(String(n).trim());
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage off */ } } };
 const openD = (d) => { if (d.showModal) { if (!d.open) d.showModal(); } else d.setAttribute("open", ""); };
 const closeD = (d) => { if (d.close) d.close(); else d.removeAttribute("open"); };
 function toast(msg) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 1800); }
 
+let cat = "";
 let S = {}, PRODUCTS = [], REPORTS = [], SHIP = [];
 let cart = store.get("cart") || [];   // [{id, qty}]
 const saveCart = () => { store.set("cart", cart); drawCartCount(); };
@@ -47,9 +49,14 @@ function vialSVG(name, size) {
 const reportFor = (p) => REPORTS.find((r) => norm(r.product) === norm(p.name) && sizeKey(r.strength) === sizeKey(p.strength));
 const inCart = (id) => (cart.find((c) => c.id === id) || {}).qty || 0;
 
+function drawChips() {
+  const cats = [...new Set(PRODUCTS.map((p) => p.category || "Research peptide"))].sort();
+  $("chips").innerHTML = cats.length > 1 ? [["", "All"], ...cats.map((c) => [c, c])].map(([v, l]) => `<button class="chip${cat === v ? " on" : ""}" type="button" data-cat="${esc(v)}">${esc(l)}</button>`).join("") : "";
+}
 function drawProducts() {
+  drawChips();
   const words = norm($("hq").value) ? $("hq").value.toLowerCase().split(/\s+/).map(norm).filter(Boolean) : [];
-  const list = PRODUCTS.filter((p) => words.every((w) => norm([p.name, p.strength, p.sku, p.category].join(" ")).includes(w)));
+  const list = PRODUCTS.filter((p) => (!cat || (p.category || "Research peptide") === cat) && words.every((w) => norm([p.name, p.strength, p.sku, p.category].join(" ")).includes(w)));
   $("pgrid").innerHTML = list.length ? list.map((p) => {
     const r = reportFor(p);
     const purity = r ? ((r.results || []).find(([n]) => isPurity(n)) || [])[1] : "";
@@ -66,6 +73,7 @@ function drawProducts() {
         <span class="pmeta">${esc(p.strength)}${purity ? ` · ${esc(purity)} purity` : ""}${p.sku ? ` · ${esc(p.sku)}` : ""}</span>
         ${p.description ? `<p class="stockline">${esc(p.description)}</p>` : ""}
         ${price}${stock}
+        <p class="research">For laboratory research use only. Not for human or animal use.</p>
         <div class="pact">${buy}${r ? `<a class="btn" href="#${esc(rid(r))}" data-jump="${esc(rid(r))}">Lab report</a>` : `<span class="stockline">No report yet</span>`}</div>
       </div>
     </article>`;
@@ -96,6 +104,7 @@ function drawCart() {
   const min = S.minOrderCents || 0;
   $("cartFoot").innerHTML = `<div class="totals"><div class="big"><span>Subtotal</span><span>${money(sub)}</span></div>
     <div class="dist"><span>Shipping is added at checkout.</span></div></div>
+    <p class="research">All items are sold for laboratory research only and are not for human or animal use.</p>
     ${min && sub < min ? `<div class="err">The minimum order is ${money(min)}.</div>` : ""}
     ${S.storeOpen ? `<button class="btn solid wide" type="button" id="toCheckout" ${min && sub < min ? "disabled" : ""}>Checkout</button>` : `<div class="err">Ordering is paused right now. Please check back soon.</div>`}`;
 }
@@ -248,6 +257,8 @@ document.addEventListener("click", (e) => {
   const t = e.target;
   const close = t.closest("[data-close]");
   if (close) { const d = close.closest("dialog"); if (d) closeD(d); if (close.dataset.goto) $(close.dataset.goto).scrollIntoView({ behavior: "smooth" }); if (close.tagName !== "A") return; }
+  const c = t.closest("[data-cat]");
+  if (c) { e.preventDefault(); cat = c.dataset.cat; drawProducts(); $("products").scrollIntoView({ behavior: "smooth" }); return; }
   const add = t.closest("[data-add]");
   if (add) { addToCart(+add.dataset.add); drawProducts(); toast("Added to cart"); return; }
   const inc = t.closest("[data-inc]"), dec = t.closest("[data-dec]"), rm = t.closest("[data-rm]");
@@ -303,17 +314,20 @@ async function load() {
     document.title = name;
     $("brand").textContent = name; $("footBrand").textContent = name;
     if (S.tagline) { $("tagline").textContent = S.tagline; $("tagline").hidden = false; }
-    if (S.announcement) { $("announce").textContent = S.announcement; $("announce").hidden = false; }
+    if (S.announcementOn && S.announcement) { $("announce").textContent = S.announcement; $("announce").hidden = false; }
     if (S.intro) $("lede").textContent = S.intro; else $("lede").hidden = true;
     if (S.distributorOf) {
       $("topLine").textContent = `Authorized ${S.distributorOf} distributor`;
       $("perkDist").textContent = `Authorized ${S.distributorOf} distributor`;
-      $("pDist").innerHTML = S.brandUrl ? `Authorized ${esc(S.distributorOf)} distributor · <a href="${esc(S.brandUrl)}" target="_blank" rel="noopener">Product info on ${esc(S.distributorOf)}'s site</a>` : `Authorized ${esc(S.distributorOf)} distributor`;
+      // (distributor line above the product grid removed at owner request)
     }
     $("pNote").textContent = S.priceNote || "";
     if (S.contact) { $("pContact").innerHTML = `<strong>Questions:</strong> ${esc(S.contact)}`; $("footContact").textContent = S.contact; }
-    $("legalList").innerHTML = (S.disclaimers || []).map((d) => `<li>${esc(d)}</li>`).join("");
-    $("footFine").textContent = (S.disclaimers || []).slice(0, 3).join(" ");
+    if (S.distributorOf) $("footContact").insertAdjacentText("afterbegin", `Authorized ${S.distributorOf} distributor. `);
+    $("legalList").innerHTML = (S.disclaimers || []).map(para).map((h) => `<li>${h}</li>`).join("");
+    $("footFine").innerHTML = (S.footerNotice || []).map((t) => `<p>${esc(t)}</p>`).join("");
+    const cats = [...new Set(PRODUCTS.map((p) => p.category || "Research peptide"))].sort();
+    $("footCats").innerHTML = cats.map((c) => `<li><a href="#products" data-cat="${esc(c)}">${esc(c)}</a></li>`).join("");
     $("footCopy").textContent = `© ${new Date().getFullYear()} ${name}`;
     drawHelix();
     const names = [...new Set(REPORTS.map((r) => r.product))];

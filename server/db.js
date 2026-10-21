@@ -118,6 +118,7 @@ const DEFAULT_SETTINGS = {
   brandUrl: "https://xintpeptides.com/",
   contact: "",
   announcement: "",
+  announcementOn: false,
   storeOpen: true,
   minAge: 21,
   ageGate: true,
@@ -125,16 +126,65 @@ const DEFAULT_SETTINGS = {
   priceNote: "Prices in US dollars, per vial.",
   paymentInstructions: "We'll review your order and reach out with the total and payment options. Your order ships once payment is received.",
   intro: "Every product here is backed by an independent lab report. Open any listing to see the results, then check the report on the lab's own site with the key printed on it.",
+  // Short notice in the footer of every page (one paragraph per line).
+  footerNotice: [
+    "Every product on this site is sold for laboratory research and development only and is not for human or animal consumption of any kind. Statements on this site have not been evaluated by the U.S. Food and Drug Administration, and no product or statement here is intended to diagnose, treat, cure or prevent any disease.",
+    "We supply research chemicals. We are not a compounding pharmacy or chemical compounding facility under Section 503A of the Federal Food, Drug, and Cosmetic Act, and not an outsourcing facility under Section 503B of that Act."
+  ],
+  // Full policy pages. One paragraph per line; "Heading: text" shows the heading in bold.
   disclaimers: [
-    "All products are sold strictly for in vitro research and laboratory use only. They are not for human or veterinary use, and must not be consumed, injected, inhaled, applied to the body or given to animals.",
-    "These products are not drugs, foods, dietary supplements or cosmetics. They have not been approved or evaluated by the U.S. Food and Drug Administration (FDA).",
-    "Nothing on this site is intended to diagnose, treat, cure, mitigate or prevent any disease or condition, and nothing here is medical advice.",
-    "We are not a pharmacy, compounding pharmacy or outsourcing facility, and we do not fill prescriptions or provide dosing guidance.",
-    "You must be 21 or older to enter this site or buy from it. By ordering you confirm you are a qualified researcher purchasing for lawful laboratory research.",
-    "The buyer is responsible for knowing and following all laws that apply where they are. We may cancel any order where the intended use does not appear to be research.",
-    "Lab reports show results for the tested sample only. They are not an approval, and not a claim of safety or effectiveness.",
-    "We are an independent authorized distributor. Brand names belong to their owners. Prices on this site are set by us."
+    "Research use only: All products are sold strictly for in vitro research, laboratory and analytical use. They are not for human or veterinary use and must not be consumed, injected, inhaled, implanted, applied to the skin or given to animals.",
+    "Not a drug, food or supplement: These products are not drugs, foods, dietary supplements, cosmetics or medical devices, and they are not labeled for any of those uses.",
+    "FDA status: These products have not been approved, cleared or evaluated by the U.S. Food and Drug Administration (FDA). Some compounds sold here are also the active ingredient in prescription medicines; the products sold here are not those medicines and are not a substitute for them.",
+    "No medical claims or advice: Nothing on this site is intended to diagnose, treat, cure, mitigate or prevent any disease or condition. Nothing here is medical, dosing or health advice. Talk to a licensed healthcare professional about any medical question.",
+    "Chemical supplier, not a pharmacy: We are a research chemical supplier. We are not a pharmacy, not a compounding pharmacy or chemical compounding facility under Section 503A of the Federal Food, Drug, and Cosmetic Act, and not an outsourcing facility under Section 503B. We do not fill prescriptions, compound products or give dosing, reconstitution or administration guidance.",
+    "Age and qualified buyers: You must be 21 or older to enter this site or buy from it. Products are intended for qualified researchers and trained laboratory personnel who know how to handle research chemicals safely.",
+    "Handling and storage: Handle every product as a potentially hazardous chemical, using proper protective equipment, in a suitable laboratory setting. Store as directed and keep away from children and pets.",
+    "Lab reports: Certificates of analysis are issued by an independent testing lab and show results only for the sample tested. They are not an approval, and not a guarantee of safety, effectiveness or fitness for any purpose. Results may vary between batches.",
+    "Product information: Descriptions, images and specifications are for identification only. Vial and label images on this site are illustrations. We try to keep information accurate but do not warrant that it is complete or error-free.",
+    "Distributor: We are an independent authorized distributor. Brand names and trademarks belong to their owners. Prices on this site are set by us, not by the brand."
+  ],
+  policyTerms: [
+    "Agreement: By using this site or placing an order you agree to these terms, the Disclaimer, and our Shipping, Refund and Returns, and Privacy policies.",
+    "Eligibility: You must be at least 21 years old and buying for lawful laboratory research. You may not buy for resale to anyone you know or suspect intends human or animal use.",
+    "Buyer responsibility: You confirm the products are for research only, and you are responsible for knowing and following all federal, state and local laws that apply to buying, owning, storing, using and disposing of them where you are.",
+    "Orders: Submitting a cart is a request, not a completed sale. An order is accepted only when we confirm it with you and receive payment. Prices, stock and product offerings may change without notice, and obvious pricing errors may be corrected before we accept an order.",
+    "Right to refuse: We may refuse or cancel any order, at any time and without explanation, including where anything suggests human or animal use, possible illegality, or a buyer we cannot verify. Any payment received for a cancelled order is refunded.",
+    "No warranty: Products are provided as is, without any warranty, express or implied, including any warranty of merchantability or fitness for a particular purpose, except where the law does not allow this to be excluded.",
+    "Limitation of liability: To the fullest extent allowed by law, we are not liable for any injury, loss or damage arising from misuse of any product, from use contrary to these terms, or from reliance on information on this site. Our total liability for any order is limited to the amount paid for it.",
+    "Indemnity: You agree to hold us harmless from any claim, loss or expense arising from your purchase, handling or use of products, or from your breach of these terms.",
+    "Changes: We may update these terms at any time. The version posted when you place an order applies to that order."
+  ],
+  policyReturns: [
+    "Research products: Because of their nature and to protect product integrity, opened, used or improperly stored products cannot be returned or refunded.",
+    "Problems with an order: If an item arrives damaged, missing or different from what you ordered, contact us within 48 hours of delivery with your order number and photos of the package and vials. We will replace the item or refund it once we confirm the problem.",
+    "Unopened items: Unopened, sealed items in their original condition may be returned within 14 days of delivery with our approval first. Contact us before sending anything back; returns sent without approval may not be accepted. Return shipping is paid by the buyer unless the error was ours.",
+    "Refunds: Approved refunds are sent back by the same method used to pay, normally within 5 business days of approval. Original shipping charges are not refunded unless the error was ours.",
+    "Cancellations: You may cancel an order any time before it ships. Once it ships, the returns rules above apply."
+  ],
+  policyShipping: [
+    "Where we ship: We ship within the United States only. We may decline to ship to any address or region where we believe the products may not be legally received.",
+    "Processing: Orders ship after payment is received and confirmed, usually within 1 to 3 business days. Orders are not processed on weekends or holidays.",
+    "Rates and tracking: Shipping options and costs are shown at checkout and confirmed with your order. A tracking number is added to your order when it ships; check it any time under Check an order.",
+    "Address: You are responsible for giving a correct, complete address. We are not responsible for packages delivered to an incorrect address you supplied. Address changes are only possible before the order ships.",
+    "Risk of loss: Risk of loss passes to you once the package is handed to the carrier. We are not responsible for carrier delays, weather or other events outside our control, but we will help you file a claim with the carrier for a lost package.",
+    "Storage on arrival: Products ship in lyophilized (freeze-dried) form unless stated otherwise. Store them as directed as soon as they arrive."
+  ],
+  policyPrivacy: [
+    "What we collect: When you order we collect your name, email, phone number (optional), shipping address and order details. We do not collect or store card numbers on this site.",
+    "How we use it: Only to process, ship and support your orders, contact you about them, and keep records the law requires.",
+    "Sharing: We share your details only with the carrier that delivers your order and with service providers who host this site, or where the law requires it. We do not sell or rent your information.",
+    "On your device: The site remembers your cart, your checkout details and your age confirmation in your own browser so you don't retype them. Clearing your browser data removes them.",
+    "Security and retention: Your details are stored on secured servers and kept only as long as needed for orders, support and legal records.",
+    "Your choices: Contact us to see, correct or delete the personal information we hold about you, except records we must keep by law."
   ]
+};
+
+const CATEGORY = {
+  "Tirzepatide": "Metabolic research", "Retatrutide": "Metabolic research", "MOTS-C": "Metabolic research",
+  "BPC-157": "Tissue repair research", "BPC-157 + TB-500": "Tissue repair research",
+  "Tesamorelin": "Growth hormone research", "Ipamorelin": "Growth hormone research",
+  "Epithalon": "Longevity research"
 };
 
 function readSeedReports() {
@@ -167,7 +217,7 @@ async function init() {
     for (const r of readSeedReports()) {
       const k = r.product + "|" + r.strength;
       if (seen.has(k)) continue; seen.add(k);
-      await q("insert into products(name, strength, sort) values ($1,$2,$3)", [r.product, r.strength, i++]);
+      await q("insert into products(name, strength, category, sort) values ($1,$2,$3,$4)", [r.product, r.strength, CATEGORY[r.product] || "Research peptide", i++]);
     }
   }
   const { rows: [{ n: sc }] } = await q("select count(*)::int n from shipping_methods");

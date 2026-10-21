@@ -44,6 +44,7 @@
 
   <section class="prices" id="products" aria-labelledby="pTitle">
     <header class="sectionhead"><h2 class="title" id="pTitle">Products</h2><span class="dist" id="pDist"></span></header>
+    <div class="chips" id="chips"></div>
     <div class="pgrid" id="pgrid"></div>
     <div class="p-foot"><span id="pNote"></span><span id="pContact"></span></div>
   </section>
@@ -82,15 +83,27 @@
   </section>
 
   <section class="card legal" id="disclaimer" aria-labelledby="lTitle">
-    <h2 class="title" id="lTitle">Disclaimer and terms of sale</h2>
+    <h2 class="title" id="lTitle">Disclaimer</h2>
     <ul id="legalList"></ul>
+    <p><a href="/policy#terms">Terms of service</a> · <a href="/policy#returns">Refunds and returns</a> · <a href="/policy#shipping">Shipping</a> · <a href="/policy#privacy">Privacy</a></p>
   </section>
 </div></main>
 
-<footer class="foot"><div class="wrap">
-  <div class="frow"><strong id="footBrand">Research Peptides</strong><span id="footContact"></span></div>
-  <p class="fine" id="footFine"></p>
-  <div class="frow"><span id="footCopy"></span><a href="#disclaimer">Full disclaimer</a></div>
+<footer class="foot dark"><div class="wrap">
+  <div class="fcols">
+    <div><strong class="fbrand" id="footBrand">Research Peptides</strong><p id="footContact"></p></div>
+    <div><h3>Product categories</h3><ul id="footCats"></ul></div>
+    <div><h3>Useful links</h3><ul>
+      <li><a href="/policy#terms">Terms of service</a></li>
+      <li><a href="/policy#returns">Refund and returns policy</a></li>
+      <li><a href="/policy#shipping">Shipping policy</a></li>
+      <li><a href="/policy#privacy">Privacy policy</a></li>
+      <li><a href="/policy#contact">Contact</a></li>
+      <li><a href="/policy#disclaimer">Disclaimer</a></li>
+    </ul></div>
+  </div>
+  <div class="fine" id="footFine"></div>
+  <div class="frow"><span id="footCopy"></span><a href="#track">Check an order</a></div>
 </div></footer>
 
 <!-- cart -->
@@ -122,7 +135,7 @@
     <label class="hp">Leave this empty <input id="website" tabindex="-1" autocomplete="off"></label>
     <div class="totals" id="coTotals"></div>
     <label class="check"><input type="checkbox" id="cfAge"><span id="cfAgeText">I am 21 or older.</span></label>
-    <label class="check"><input type="checkbox" id="cfRes"><span>I am buying for laboratory research only. These products are not for human or animal use, and I have read the <a href="#disclaimer" data-close>disclaimer and terms of sale</a>.</span></label>
+    <label class="check"><input type="checkbox" id="cfRes"><span>I am buying for laboratory research only. These products are not for human or animal use, and I agree to the <a href="/policy#terms" target="_blank">terms of service</a> and <a href="/policy#disclaimer" target="_blank">disclaimer</a>.</span></label>
     <div class="err" id="coErr" hidden></div>
     <button class="btn solid wide" id="coSubmit">Submit order request</button>
   </form>

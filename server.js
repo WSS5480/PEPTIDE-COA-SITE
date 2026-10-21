@@ -28,7 +28,7 @@ const parseCookies = (h) => Object.fromEntries(String(h || "").split(/;\s*/).fil
 const SECURE = process.env.NODE_ENV === "production" || !!process.env.RENDER;
 
 function publicSettings(s) {
-  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions"];
+  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"];
   return Object.fromEntries(keys.map((k) => [k, s[k]]));
 }
 const reportOut = (r) => ({

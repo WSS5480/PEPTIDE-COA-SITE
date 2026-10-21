@@ -258,16 +258,20 @@ async function settings() {
     <div class="panel"><h2>Store</h2>
       <label class="chk"><input type="checkbox" id="s-storeOpen"${s.storeOpen ? " checked" : ""}${ro()}> Taking orders (untick to pause checkout)</label>
       <div class="grid2">${t("brand", "Store name", "Shown top left and in the footer")}${t("tagline", "Tagline (optional)")}${t("contact", "Contact for customers", "Phone, text or email")}
-      ${t("distributorOf", "Brand you distribute", 'Shows "Authorized ___ distributor"')}${t("brandUrl", "Brand's website (https)")}${t("announcement", "Banner at the very top (optional)", "e.g. Orders ship Monday to Friday")}</div>
+      ${t("distributorOf", "Brand you distribute", 'Shows "Authorized ___ distributor"')}${t("brandUrl", "Brand's website (https)")}</div>
       ${ta("intro", "Intro under the headline")}
       ${ta("paymentInstructions", "What customers see after ordering", "Explain how you'll confirm and how they pay")}
       <div class="grid2">${t("priceNote", "Note under products")}
         <div class="field"><label class="eyebrow" for="s-minOrder">Minimum order $</label><input id="s-minOrder" value="${dollars(s.minOrderCents) || ""}" placeholder="None" inputmode="decimal"${ro()}></div></div></div>
+    <div class="panel"><h2>Banner</h2>
+      <label class="chk"><input type="checkbox" id="s-announcementOn"${s.announcementOn ? " checked" : ""}${ro()}> Show the banner across the top of every page</label>
+      ${t("announcement", "Banner text")}</div>
     <div class="panel"><h2>Age gate</h2>
       <label class="chk"><input type="checkbox" id="s-ageGate"${s.ageGate ? " checked" : ""}${ro()}> Ask visitors to confirm age and research use before entering</label>
       <div class="field" style="max-width:10rem"><label class="eyebrow" for="s-minAge">Minimum age</label><input id="s-minAge" value="${esc(s.minAge)}" inputmode="numeric"${ro()}></div></div>
-    <div class="panel"><h2>Disclaimers</h2><p class="muted">One per line. All show in the Disclaimer section; the first three also show in the footer. Have your attorney review these before you rely on them.</p>
-      <textarea id="s-disclaimers" style="min-height:16rem"${ro()}>${esc((s.disclaimers || []).join("\n"))}</textarea></div>
+    <div class="panel"><h2>Disclaimers &amp; policies</h2><p class="muted">One paragraph per line. Start a line with "Heading: " to show a bold heading. Have your attorney review these before you rely on them.</p>
+      ${[["footerNotice", "Footer notice (every page)"], ["disclaimers", "Disclaimer"], ["policyTerms", "Terms of service"], ["policyReturns", "Refund and returns policy"], ["policyShipping", "Shipping policy"], ["policyPrivacy", "Privacy policy"]]
+        .map(([k, label]) => `<div class="field"><label class="eyebrow" for="s-${k}">${label}</label><textarea id="s-${k}" style="min-height:12rem"${ro()}>${esc((s[k] || []).join("\n"))}</textarea></div>`).join("")}</div>
     ${isOwner() ? `<div><button class="btn solid" id="sSave">Save settings</button></div>` : `<p class="muted">Only the owner can change settings.</p>`}`;
   if (!isOwner()) return;
   document.getElementById("sSave").onclick = async () => {
@@ -276,7 +280,8 @@ async function settings() {
     ["brand", "tagline", "contact", "distributorOf", "brandUrl", "announcement", "intro", "paymentInstructions", "priceNote"].forEach((k) => { body[k] = v(k).value; });
     body.storeOpen = v("storeOpen").checked; body.ageGate = v("ageGate").checked; body.minAge = v("minAge").value;
     body.minOrderCents = Math.round(parseFloat(v("minOrder").value || 0) * 100);
-    body.disclaimers = v("disclaimers").value.split("\n").map((x) => x.trim()).filter(Boolean);
+    ["footerNotice", "disclaimers", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"].forEach((k) => { body[k] = v(k).value.split("\n").map((x) => x.trim()).filter(Boolean); });
+    body.announcementOn = v("announcementOn").checked;
     await api("/settings", { method: "PUT", body }); toast("Settings saved");
   };
 }
