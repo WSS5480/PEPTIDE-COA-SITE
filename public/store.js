@@ -287,13 +287,18 @@ function acctView(mode) {
   if (!ME) {
     b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Create account</h2>${close}</div>
       <div class="tabs"><button type="button" data-acct="signin">Sign in</button><button class="on" type="button">Create account</button></div>
-      <form id="acForm" class="stack"><div class="grid2">${fld("rN", "Full name", "text", "name")}${fld("rE", "Email", "email", "email")}${fld("rPh", "Phone (optional)", "tel", "tel")}${fld("rP", "Password (8+ characters)", "password", "new-password")}</div>
+      <form id="acForm" class="stack"><div class="grid2">${fld("rN", "Full name", "text", "name")}${fld("rE", "Email", "email", "email")}${fld("rPh", "Phone number", "tel", "tel")}${fld("rP", "Password (8+ characters)", "password", "new-password")}</div>
+      <span class="eyebrow">Shipping address</span>
+      <div class="grid2"><div class="field" style="grid-column:1/-1"><label class="eyebrow" for="r1">Street address</label><input id="r1" autocomplete="address-line1"></div>
+      ${fld("r2", "Apt, suite (optional)", "text", "address-line2")}${fld("rC", "City", "text", "address-level2")}${fld("rS", "State", "text", "address-level1")}${fld("rZ", "ZIP", "text", "postal-code")}</div>
       <label class="check"><input type="checkbox" id="rAge"><span>I am ${esc(S.minAge || 21)} or older.</span></label>
       <label class="check"><input type="checkbox" id="rRes"><span>I am buying for laboratory research only, not for human or animal use, and I agree to the <a href="/policy#terms" target="_blank">terms of service</a> and <a href="/policy#privacy" target="_blank">privacy policy</a>.</span></label>
       <div class="err" id="acErr" hidden></div><button class="btn solid wide">Create account</button></form>`;
     $("acForm").onsubmit = async (e) => {
       e.preventDefault();
-      try { await post("/api/account/register", { name: $("rN").value, email: $("rE").value, phone: $("rPh").value, password: $("rP").value, confirmAge: $("rAge").checked, confirmResearch: $("rRes").checked }); await loadAccount(); toast("Account created"); acctView(); }
+      if (!$("r1").value.trim() || !$("rC").value.trim() || !$("rS").value.trim() || !$("rZ").value.trim()) { $("acErr").textContent = "Enter your full shipping address."; $("acErr").hidden = false; return; }
+      if ($("rPh").value.replace(/\D/g, "").length < 10) { $("acErr").textContent = "Enter a phone number with area code."; $("acErr").hidden = false; return; }
+      try { await post("/api/account/register", { name: $("rN").value, email: $("rE").value, phone: $("rPh").value, password: $("rP").value, address: { line1: $("r1").value, line2: $("r2").value, city: $("rC").value, state: $("rS").value, zip: $("rZ").value }, confirmAge: $("rAge").checked, confirmResearch: $("rRes").checked }); await loadAccount(); toast("Account created"); acctView(); }
       catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; }
     };
     return;

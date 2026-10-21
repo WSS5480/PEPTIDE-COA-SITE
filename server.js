@@ -167,12 +167,15 @@ const jsonOnly = (req, res, next) => (req.is("application/json") ? next() : bad(
 app.post("/api/account/register", jsonOnly, limit("register", 8, 60 * 60 * 1000), wrap(async (req, res) => {
   const b = req.body || {}, email = str(b.email, 160).toLowerCase(), pass = String(b.password || "");
   if (!str(b.name, 120) || !isEmail(email)) return bad(res, "Enter your name and a valid email.");
+  if (String(b.phone || "").replace(/\D/g, "").length < 10) return bad(res, "Enter a phone number with area code.");
+  const addr = cleanAddress(b.address);
+  if (!addr.line1 || !addr.city || !addr.state || !addr.zip) return bad(res, "Enter your full shipping address.");
   if (pass.length < 8) return bad(res, "Use a password of at least 8 characters.");
   if (!b.confirmAge || !b.confirmResearch) return bad(res, "Please confirm both statements to create an account.");
   const { rows: [ex] } = await q("select id from customers where lower(email) = $1", [email]);
   if (ex) return bad(res, "An account with that email already exists. Sign in instead.");
-  const { rows: [c] } = await q("insert into customers(email, name, phone, pass_hash) values ($1,$2,$3,$4) returning id",
-    [email, str(b.name, 120), str(b.phone, 40), await bcrypt.hash(pass, 11)]);
+  const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash) values ($1,$2,$3,$4,$5) returning id",
+    [email, str(b.name, 120), str(b.phone, 40), JSON.stringify(addr), await bcrypt.hash(pass, 11)]);
   // attach earlier guest orders placed with this email
   await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
   await startCustomerSession(res, c.id);
