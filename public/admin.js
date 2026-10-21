@@ -31,7 +31,7 @@ const isOwner = () => me && me.role === "owner";
 /* ---------- login ---------- */
 function drawLogin(msg) {
   app.innerHTML = `<div class="login"><form id="lf">
-    <h1>Store admin</h1><p class="muted">Sign in to manage orders, prices and the site.</p>
+    <h1>Peptide Admin</h1><p class="muted">Sign in to manage orders, prices and the site.</p>
     <div class="field"><label class="eyebrow" for="le">Email</label><input id="le" type="email" autocomplete="username" required></div>
     <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>
     ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
@@ -48,9 +48,9 @@ function drawLogin(msg) {
 /* ---------- shell ---------- */
 const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Customers"], ["products", "Products & prices"], ["reports", "Lab reports"], ["shipping", "Shipping"], ["settings", "Site settings"], ["staff", "Staff logins", true], ["account", "My account"]];
 function shell() {
-  app.innerHTML = `<div class="mtop"><strong>Store admin</strong><button type="button" id="mm">Menu</button></div>
+  app.innerHTML = `<div class="mtop"><strong>Peptide Admin</strong><button type="button" id="mm">Menu</button></div>
   <div class="adm" id="adm"><aside class="side">
-    <div class="logo"><span>Admin</span><small>Store manager</small></div>
+    <div class="logo"><span>Peptide Admin</span><small>Store manager</small></div>
     <nav id="nav"></nav>
     <div class="who"><span>${esc(me.name || me.email)} · ${esc(me.role)}</span><a href="/" target="_blank" style="color:#fff">View store ↗</a><button type="button" data-install>Download admin app</button><button type="button" id="lo">Sign out</button></div>
   </aside><section class="pane" id="pane"></section></div>`;
