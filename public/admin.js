@@ -10,7 +10,9 @@ const pill = (s) => `<span class="pill st-${esc(s)}">${esc(s)}</span>`;
 function toast(msg) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 1800); }
 
 async function api(path, opts = {}) {
-  const res = await fetch("/api/admin" + path, { method: opts.method || "GET", headers: opts.body ? { "Content-Type": "application/json" } : {}, body: opts.body ? JSON.stringify(opts.body) : undefined, credentials: "same-origin" });
+  const method = opts.method || "GET", send = method !== "GET";
+  // every change (including deletes) goes as JSON; the server rejects anything else as a safety check
+  const res = await fetch("/api/admin" + path, { method, headers: send ? { "Content-Type": "application/json" } : {}, body: send ? JSON.stringify(opts.body || {}) : undefined, credentials: "same-origin" });
   if (res.status === 401) { me = null; drawLogin(); throw new Error("signed out"); }
   const j = await res.json().catch(() => ({}));
   if (!res.ok) { toast(j.error || "That didn't work"); throw new Error(j.error || "error"); }
