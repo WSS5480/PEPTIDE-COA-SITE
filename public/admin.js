@@ -17,6 +17,8 @@ async function api(path, opts = {}) {
   return j;
 }
 
+let unsaved = false;
+addEventListener("beforeunload", (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ""; } });
 let me = null, view = "dashboard", orderId = null, stats = null;
 const isOwner = () => me && me.role === "owner";
 
@@ -56,6 +58,8 @@ async function drawNav() {
   document.getElementById("nav").innerHTML = NAV.filter(([, , o]) => !o || isOwner()).map(([k, label]) => `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}</button>`).join("");
 }
 function go(v, id) {
+  if (unsaved && !confirm("You have unsaved product changes. Leave without saving?")) return;
+  unsaved = false;
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
@@ -176,32 +180,84 @@ async function customers() {
 /* ---------- products ---------- */
 async function products() {
   const { products: list } = await api("/products");
-  const row = (p) => `<tr data-id="${p ? p.id : ""}">
-    <td><input data-k="name" value="${esc(p?.name)}" placeholder="Name"${ro()}></td>
-    <td><input data-k="strength" value="${esc(p?.strength)}" placeholder="10 mg" style="min-width:4.5rem"${ro()}></td>
-    <td><input data-k="sku" value="${esc(p?.sku)}" placeholder="SKU"${ro()}></td>
-    <td><input data-k="price" value="${dollars(p?.price_cents)}" placeholder="Ask" inputmode="decimal" style="min-width:5rem"${ro()}></td>
-    <td><input data-k="stock" value="${p?.stock ?? ""}" placeholder="∞" inputmode="numeric" style="min-width:4rem"${ro()}></td>
-    <td><input data-k="maxPerOrder" value="${p?.max_per_order ?? ""}" placeholder="—" inputmode="numeric" style="min-width:4rem"${ro()}></td>
-    <td><input data-k="sort" value="${p?.sort ?? 0}" inputmode="numeric" style="min-width:3.5rem"${ro()}></td>
+  const COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["sku", "SKU"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
+  const NUM = new Set(["price", "stock", "maxPerOrder", "sort"]);
+  const inp = (k, v, ph = "", extra = "") => `<input data-k="${k}" value="${esc(v)}" placeholder="${ph}"${extra}${ro()}>`;
+  const row = (p) => `<tr data-id="${p ? p.id : ""}"${p ? "" : ' class="dirty"'}>
+    <td>${inp("name", p?.name, "Name")}</td>
+    <td>${inp("strength", p?.strength, "10 mg", ' style="min-width:4.5rem"')}</td>
+    <td>${inp("category", p?.category ?? "Research peptide", "Category", ' list="catlist" style="min-width:9rem"')}</td>
+    <td>${inp("sku", p?.sku, "SKU")}</td>
+    <td>${inp("price", dollars(p?.price_cents), "Ask", ' inputmode="decimal" style="min-width:5rem"')}</td>
+    <td>${inp("stock", p?.stock ?? "", "∞", ' inputmode="numeric" style="min-width:4rem"')}</td>
+    <td>${inp("maxPerOrder", p?.max_per_order ?? "", "—", ' inputmode="numeric" style="min-width:4rem"')}</td>
+    <td>${inp("sort", p?.sort ?? 0, "", ' inputmode="numeric" style="min-width:3.5rem"')}</td>
     <td><input type="checkbox" data-k="active"${!p || p.active ? " checked" : ""}${ro()}></td>
-    <td><input data-k="description" value="${esc(p?.description)}" placeholder="Short line under the name"${ro()}></td>
-    ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-save>Save</button>${p ? `<button class="btn" data-del>Delete</button>` : ""}</td>` : ""}
+    <td>${inp("description", p?.description, "Short line under the name")}</td>
+    ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-save>Save</button><button class="btn" data-del>${p ? "Delete" : "Remove"}</button></td>` : ""}
   </tr>`;
-  pane().innerHTML = `<header><h1>Products &amp; prices</h1>${isOwner() ? `<button class="btn solid" id="addP">Add product</button>` : ""}</header>
-    <p class="muted">Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. Lower sort number shows first. Untick Active to hide a product. Products match their lab report by name and size.</p>
-    <div class="tblwrap"><table class="tbl" id="pt"><tr><th>Name</th><th>Size</th><th>SKU</th><th>Price $</th><th>Stock</th><th>Max/order</th><th>Sort</th><th>Active</th><th>Description</th>${isOwner() ? "<th></th>" : ""}</tr>${list.map(row).join("")}</table></div>`;
-  const pt = document.getElementById("pt");
-  if (document.getElementById("addP")) document.getElementById("addP").onclick = () => pt.insertAdjacentHTML("beforeend", row(null));
-  pt.onclick = async (e) => {
+  const cats = [...new Set(list.map((p) => p.category).filter(Boolean))];
+  const saveBar = isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" data-saveall disabled>Save all changes</button><span class="muted" data-dirtycount></span></div>` : "";
+  pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="addP">Add product</button>` : ""}</div></header>
+    <p class="muted">Click a column name to sort. Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). Untick Active to hide a product. Products match their lab report by name and size.</p>
+    ${saveBar}
+    <datalist id="catlist">${cats.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
+    <div class="tblwrap"><table class="tbl" id="pt"><thead><tr>${COLS.map(([k, l]) => `<th class="sortable" data-sort="${k}">${l}<span class="arr"></span></th>`).join("")}${isOwner() ? "<th></th>" : ""}</tr></thead>
+    <tbody id="pb">${list.map(row).join("")}</tbody></table></div>
+    ${saveBar}`;
+  const pb = document.getElementById("pb");
+  const bodyOf = (tr) => { const b = {}; tr.querySelectorAll("[data-k]").forEach((i) => { b[i.dataset.k] = i.type === "checkbox" ? i.checked : i.value; }); return b; };
+  pb.querySelectorAll("tr").forEach((tr) => { tr.dataset.orig = JSON.stringify(bodyOf(tr)); });
+  const dirtyRows = () => [...pb.querySelectorAll("tr")].filter((tr) => !tr.dataset.id || JSON.stringify(bodyOf(tr)) !== tr.dataset.orig);
+  const refresh = () => {
+    const d = dirtyRows();
+    pb.querySelectorAll("tr").forEach((tr) => tr.classList.toggle("dirty", d.includes(tr)));
+    document.querySelectorAll("[data-saveall]").forEach((b) => { b.disabled = !d.length; b.textContent = d.length ? `Save all changes (${d.length})` : "Save all changes"; });
+    document.querySelectorAll("[data-dirtycount]").forEach((x) => { x.textContent = d.length ? "Unsaved rows are highlighted." : ""; });
+    unsaved = d.length > 0;
+  };
+  pb.addEventListener("input", refresh); pb.addEventListener("change", refresh);
+
+  // sort rows in place, so unsaved edits are kept
+  let sortKey = "", dir = 1;
+  pane().querySelector("thead").onclick = (e) => {
+    const th = e.target.closest("[data-sort]"); if (!th) return;
+    const k = th.dataset.sort; dir = sortKey === k ? -dir : 1; sortKey = k;
+    const val = (tr) => { const i = tr.querySelector(`[data-k="${k}"]`); if (i.type === "checkbox") return i.checked ? 1 : 0; const v = i.value.trim(); return NUM.has(k) ? (v === "" ? Infinity : parseFloat(v)) : v.toLowerCase(); };
+    const rows = [...pb.querySelectorAll("tr")].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
+    rows.forEach((r) => pb.appendChild(r));
+    pane().querySelectorAll("thead .arr").forEach((s) => { s.textContent = ""; });
+    th.querySelector(".arr").textContent = dir > 0 ? " ▲" : " ▼";
+  };
+
+  const saveRow = async (tr) => {
+    const id = tr.dataset.id, body = bodyOf(tr);
+    const r = await api(id ? "/products/" + id : "/products", { method: id ? "PATCH" : "POST", body });
+    if (!id && r.id) tr.dataset.id = r.id;
+    tr.dataset.orig = JSON.stringify(body);
+  };
+  const saveAll = async () => {
+    const d = dirtyRows(); if (!d.length) return;
+    let ok = 0, fail = 0;
+    for (const tr of d) { try { await saveRow(tr); ok++; } catch (e) { fail++; tr.classList.add("bad"); } }
+    refresh(); drawNav();
+    toast(fail ? `Saved ${ok}, ${fail} need fixing` : `Saved ${ok} product${ok === 1 ? "" : "s"}`);
+    if (!fail) products();
+  };
+  document.querySelectorAll("[data-saveall]").forEach((b) => (b.onclick = saveAll));
+  if (document.getElementById("addP")) document.getElementById("addP").onclick = () => { pb.insertAdjacentHTML("afterbegin", row(null)); refresh(); pb.querySelector("tr input").focus(); };
+  pb.onclick = async (e) => {
     const tr = e.target.closest("tr"); if (!tr) return;
     const id = tr.dataset.id;
-    if (e.target.closest("[data-del]")) { if (!confirm("Delete this product? Past orders keep their line items.")) return; await api("/products/" + id, { method: "DELETE" }); toast("Deleted"); return products(); }
+    if (e.target.closest("[data-del]")) {
+      if (!id) { tr.remove(); return refresh(); }
+      if (!confirm("Delete this product? Past orders keep their line items.")) return;
+      await api("/products/" + id, { method: "DELETE" }); toast("Deleted"); tr.remove(); return refresh();
+    }
     if (!e.target.closest("[data-save]")) return;
-    const body = {}; tr.querySelectorAll("[data-k]").forEach((i) => { body[i.dataset.k] = i.type === "checkbox" ? i.checked : i.value; });
-    await api(id ? "/products/" + id : "/products", { method: id ? "PATCH" : "POST", body });
-    toast("Saved"); products(); drawNav();
+    await saveRow(tr); tr.classList.remove("bad"); refresh(); toast("Saved"); drawNav();
   };
+  refresh();
 }
 
 /* ---------- lab reports ---------- */
