@@ -169,20 +169,79 @@ async function orderDetail(id) {
 
 /* ---------- customers ---------- */
 async function customers() {
-  pane().innerHTML = `<header><h1>Customers</h1></header>
+  pane().innerHTML = `<header><h1>Customers</h1>${isOwner() ? `<button class="btn solid" id="addC">Add customer</button>` : ""}</header>
+    <p class="muted">Give a customer their own PIN to let them into the site. Their PIN works only for them: it unlocks the store and signs them into their account. Changing or revoking it, or turning the account off, ends their access right away. Turn the lock on under Site settings → Site PIN.</p>
+    <div id="cNew"></div><div id="pinShow"></div>
     <div class="filters"><input id="cq" type="search" placeholder="Name or email"></div>
     <div class="tblwrap" id="ct"><p class="muted">Loading…</p></div>`;
-  const load = async (term = "") => {
-    const { customers: list } = await api("/customers?q=" + encodeURIComponent(term));
-    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th></tr>
-      ${list.map((c) => `<tr data-cid="${c.id}"><td>${esc(c.name)}</td><td><a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a></td><td>${esc(c.phone)}</td><td>${when(c.created_at)}</td>
-        <td class="num">${c.orders}</td><td class="num">${money(c.spent_cents)}</td><td>${c.last_order ? when(c.last_order) : ""}</td>
-        <td><input type="checkbox" data-cact${c.active ? " checked" : ""}${ro()}></td></tr>`).join("")}</table>` : `<p class="muted">No customer accounts yet.</p>`;
+  let term = "";
+  const pinCell = (c) => {
+    if (!isOwner()) return c.has_pin ? "Set" : "";
+    return c.has_pin
+      ? `<span class="pill st-shipped">PIN set</span><div class="muted" style="font-size:.75rem">${c.pin_used_at ? "Last used " + when(c.pin_used_at) : "Not used yet"}</div>
+         <div class="row2" style="flex-wrap:nowrap;margin-top:.3rem"><button class="btn" data-pin="set">Change</button><button class="btn" data-pin="revoke">Revoke</button></div>`
+      : `<button class="btn" data-pin="set">Give PIN</button>`;
   };
-  let t; document.getElementById("cq").oninput = (e) => { clearTimeout(t); t = setTimeout(() => load(e.target.value), 250); };
+  const load = async () => {
+    const { customers: list } = await api("/customers?q=" + encodeURIComponent(term));
+    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Site PIN</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th></tr>
+      ${list.map((c) => `<tr data-cid="${c.id}" data-cname="${esc(c.name || c.email)}"><td>${esc(c.name)}</td><td><a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a></td><td>${esc(c.phone)}</td>
+        <td>${pinCell(c)}</td><td>${when(c.created_at)}</td>
+        <td class="num">${c.orders}</td><td class="num">${money(c.spent_cents)}</td><td>${c.last_order ? when(c.last_order) : ""}</td>
+        <td><input type="checkbox" data-cact${c.active ? " checked" : ""}${ro()}></td></tr>`).join("")}</table>` : `<p class="muted">No customers yet.${isOwner() ? " Use Add customer to set one up and give them a PIN." : ""}</p>`;
+  };
+  const showPin = (name, pin) => {
+    document.getElementById("pinShow").innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>PIN for ${esc(name)}</h2>
+      <p style="font:700 2rem/1 var(--mono);letter-spacing:.2em">${esc(pin)}</p>
+      <p class="muted">Send this to the customer now. For security it isn't shown again. If it's lost, click Change to give them a new one.</p>
+      <div class="row2"><button class="btn" type="button" id="pinCopy">Copy PIN</button><button class="btn" type="button" id="pinHide">Done</button></div></div>`;
+    document.getElementById("pinCopy").onclick = () => navigator.clipboard?.writeText(pin).then(() => toast("PIN copied"), () => toast("Copy failed"));
+    document.getElementById("pinHide").onclick = () => { document.getElementById("pinShow").innerHTML = ""; };
+    window.scrollTo(0, 0);
+  };
+  const askPin = (name) => new Promise((done) => {
+    document.getElementById("pinShow").innerHTML = `<div class="panel"><h2>PIN for ${esc(name)}</h2>
+      <div class="row2" style="align-items:end"><div class="field" style="max-width:16rem"><label class="eyebrow" for="pinIn">Type a 6 to 8 digit PIN, or leave blank to make one up</label><input id="pinIn" inputmode="numeric" maxlength="8" autocomplete="off"></div>
+      <button class="btn solid" type="button" id="pinOk">Save PIN</button><button class="btn" type="button" id="pinNo">Cancel</button></div></div>`;
+    window.scrollTo(0, 0); document.getElementById("pinIn").focus();
+    document.getElementById("pinOk").onclick = () => done(document.getElementById("pinIn").value.trim());
+    document.getElementById("pinNo").onclick = () => { document.getElementById("pinShow").innerHTML = ""; done(null); };
+  });
+  const givePin = async (id, name) => {
+    const typed = await askPin(name); if (typed === null) return;
+    if (typed && !/^\d{6,8}$/.test(typed)) { toast("Use 6 to 8 digits"); return givePin(id, name); }
+    try { const r = await api(`/customers/${id}/pin`, { method: "POST", body: { pin: typed } }); showPin(name, r.pin); load(); } catch (e) { /* toast shown */ }
+  };
+  let t; document.getElementById("cq").oninput = (e) => { clearTimeout(t); t = setTimeout(() => { term = e.target.value; load(); }, 250); };
+  if (document.getElementById("addC")) document.getElementById("addC").onclick = () => {
+    const box = document.getElementById("cNew");
+    if (box.innerHTML) { box.innerHTML = ""; return; }
+    const f = (id, label, type = "text") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}"></div>`;
+    box.innerHTML = `<div class="panel"><h2>Add customer</h2><div class="grid2">${f("nc-n", "Name")}${f("nc-e", "Email", "email")}${f("nc-p", "Phone", "tel")}</div>
+      <div class="grid2">${f("nc-1", "Street address")}${f("nc-2", "Apt, suite")}${f("nc-c", "City")}${f("nc-s", "State")}${f("nc-z", "ZIP")}</div>
+      <label class="chk"><input type="checkbox" id="nc-pin" checked> Give them a PIN now</label>
+      <div class="row2"><button class="btn solid" type="button" id="ncSave">Add customer</button><button class="btn" type="button" id="ncCancel">Cancel</button></div></div>`;
+    document.getElementById("ncCancel").onclick = () => { box.innerHTML = ""; };
+    document.getElementById("ncSave").onclick = async () => {
+      const g = (x) => document.getElementById(x).value;
+      const r = await api("/customers", { method: "POST", body: { name: g("nc-n"), email: g("nc-e"), phone: g("nc-p"), address: { line1: g("nc-1"), line2: g("nc-2"), city: g("nc-c"), state: g("nc-s"), zip: g("nc-z") } } });
+      const wantPin = document.getElementById("nc-pin").checked, name = g("nc-n");
+      box.innerHTML = ""; toast("Customer added"); await load();
+      if (wantPin) givePin(r.id, name);
+    };
+  };
   document.getElementById("ct").onclick = async (e) => {
     const link = e.target.closest("[data-cust-orders]");
     if (link) { e.preventDefault(); oFilter = { status: "", q: link.dataset.custOrders }; go("orders"); return; }
+    const tr = e.target.closest("tr[data-cid]");
+    const pb = e.target.closest("[data-pin]");
+    if (pb && tr) {
+      if (pb.dataset.pin === "revoke") {
+        if (!confirm(`Revoke ${tr.dataset.cname}'s PIN? They lose access to the site right away.`)) return;
+        await api(`/customers/${tr.dataset.cid}/pin`, { method: "DELETE" }); toast("PIN revoked"); return load();
+      }
+      return givePin(tr.dataset.cid, tr.dataset.cname);
+    }
     const box = e.target.closest("[data-cact]");
     if (box) { await api("/customers/" + box.closest("tr").dataset.cid, { method: "PATCH", body: { active: box.checked } }); toast(box.checked ? "Account turned on" : "Account turned off"); }
   };
@@ -427,11 +486,12 @@ async function settings() {
       <div class="grid2">${t("priceNote", "Note under products")}
         <div class="field"><label class="eyebrow" for="s-minOrder">Minimum order $</label><input id="s-minOrder" value="${dollars(s.minOrderCents) || ""}" placeholder="None" inputmode="decimal"${ro()}></div></div></div>
     ${isOwner() ? `<div class="panel" id="pinPanel"><h2>Site PIN</h2>
-      <p class="muted">When on, nobody can see the store, products, prices or lab reports until they enter the PIN. Admin stays open to you. Changing the PIN makes everyone enter the new one.</p>
+      <p class="muted">When on, nobody can see the store, products, prices or lab reports until they enter a PIN. Two kinds work: the <strong>shared PIN</strong> below, which anyone can use, and each customer's <strong>own PIN</strong>, which you give out under Customers. Admin stays open to you. Changing the shared PIN makes everyone using it enter the new one.</p>
       <label class="chk"><input type="checkbox" id="pinOn"> Require the PIN to view the store</label>
       <div class="row2" style="align-items:end"><div class="field" style="max-width:14rem"><label class="eyebrow" for="pinNew">New PIN (4 to 8 digits)</label><input id="pinNew" type="password" inputmode="numeric" autocomplete="new-password" placeholder="Leave blank to keep"></div>
       <button class="btn solid" type="button" id="pinSave">Save PIN setting</button></div>
-      <span class="muted" id="pinState"></span></div>` : ""}
+      <span class="muted" id="pinState"></span>
+      <div><button class="linkbtn" type="button" id="pinClear">Remove the shared PIN (only customers' own PINs will work)</button></div></div>` : ""}
     <div class="panel"><h2>Product names on the store</h2>
       <div class="field" style="max-width:24rem"><label class="eyebrow" for="s-productLabel">Show products by</label>
       <select id="s-productLabel"${ro()}>${[["name", "Name and size (Retatrutide 30 mg)"], ["code", "Code (RT30)"], ["both", "Both (Retatrutide 30 mg · RT30)"]].map(([v, l]) => `<option value="${v}"${(s.productLabel || "name") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
@@ -453,14 +513,23 @@ async function settings() {
     ${isOwner() ? `<div><button class="btn solid" id="sSave">Save settings</button></div>` : `<p class="muted">Only the owner can change settings.</p>`}`;
   if (!isOwner()) return;
   const pin = await api("/pin");
-  const pst = () => { document.getElementById("pinState").textContent = pin.on ? "PIN is ON. The store is locked." : pin.set ? "PIN is set but turned off. The store is open." : "No PIN set yet."; };
+  const pst = () => {
+    const kinds = [pin.set ? "the shared PIN" : "", pin.customerPins ? `${pin.customerPins} customer PIN${pin.customerPins === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
+    document.getElementById("pinState").textContent = pin.on ? (kinds ? `Locked. Visitors can get in with ${kinds}.` : "Locked, and no PINs are active, so nobody can get in. Give a customer a PIN or set a shared one.") : kinds ? `Turned off, so the store is open. Ready to use: ${kinds}.` : "No PINs yet. Set a shared PIN here, or give customers their own under Customers.";
+    document.getElementById("pinClear").hidden = !pin.set;
+  };
+  document.getElementById("pinClear").onclick = async () => {
+    if (!confirm("Remove the shared PIN? Only customers with their own PIN will be able to get in.")) return;
+    await api("/pin", { method: "PUT", body: { on: document.getElementById("pinOn").checked && pin.customerPins > 0, clearShared: true } });
+    Object.assign(pin, await api("/pin")); document.getElementById("pinOn").checked = pin.on; pst(); toast("Shared PIN removed");
+  };
   document.getElementById("pinOn").checked = pin.on; pst();
   document.getElementById("pinSave").onclick = async () => {
     const on = document.getElementById("pinOn").checked, np = document.getElementById("pinNew").value.trim();
     if (np && !/^\d{4,8}$/.test(np)) return toast("The PIN must be 4 to 8 digits");
-    if (on && !pin.set && !np) return toast("Type a PIN first");
+    if (on && !pin.set && !np && !pin.customerPins) return toast("Type a shared PIN, or give a customer a PIN first");
     await api("/pin", { method: "PUT", body: { on, pin: np } });
-    pin.on = on; if (np) pin.set = true; document.getElementById("pinNew").value = ""; pst();
+    Object.assign(pin, await api("/pin")); document.getElementById("pinNew").value = ""; pst();
     toast(on ? "Store locked with PIN" : "PIN turned off");
   };
   document.getElementById("sSave").onclick = async () => {

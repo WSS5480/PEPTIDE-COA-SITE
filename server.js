@@ -71,24 +71,38 @@ const owner = (req, res, next) => (req.user.role === "owner" ? next() : bad(res,
 // is served until the visitor enters it. The admin, its login and the files it needs stay open.
 const PIN_OPEN = [/^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/pin(\.html)?$/, /^\/api\/pin$/,
   /^\/store\.css$/, /^\/install\.js$/, /^\/sw\.js$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
-let pinCache = { at: 0, on: false, hash: "", secret: "" };
+let pinCache = { at: 0, on: false, hash: "", secret: "", customerPins: 0 };
 async function pinState() {
   if (Date.now() - pinCache.at < 5000) return pinCache;
   const { rows } = await q("select key, value from settings where key in ('pinOn','pinHash','pinSecret')");
   const m = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   let secret = m.pinSecret;
   if (!secret) { secret = crypto.randomBytes(32).toString("hex"); await q("insert into settings(key,value) values ('pinSecret',$1) on conflict (key) do nothing", [JSON.stringify(secret)]); }
-  pinCache = { at: Date.now(), on: !!m.pinOn && !!m.pinHash, hash: m.pinHash || "", secret };
+  const { rows: [c] } = await q("select count(*)::int n from customers where access_pin_key is not null and active");
+  // once the owner turns the lock on it stays on, even if every PIN is later revoked (then nobody gets in)
+  pinCache = { at: Date.now(), on: !!m.pinOn, hash: m.pinHash || "", secret, customerPins: c.n };
   return pinCache;
 }
-// the pass cookie is tied to the current PIN, so changing the PIN signs everyone out
-const pinToken = (st) => crypto.createHmac("sha256", st.secret).update(st.hash).digest("hex");
+const hmac = (secret, text) => crypto.createHmac("sha256", secret).update(text).digest("hex");
+// shared-PIN pass: tied to the current shared PIN, so changing it signs everyone out
+const pinToken = (st) => hmac(st.secret, st.hash);
+// a customer's personal pass: tied to that customer and their PIN version, so changing or revoking it ends their access
+const customerPinKey = (st, pin) => hmac(st.secret, "pin:" + pin);
+const customerPass = (st, id, ver) => `c${id}.${ver}.${hmac(st.secret, `c:${id}:${ver}`)}`;
+const sameStr = (a, b) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+async function passOk(st, t) {
+  if (!t) return false;
+  if (st.hash && sameStr(t, pinToken(st))) return true;
+  const m = /^c(\d+)\.(\d+)\.[0-9a-f]{64}$/.exec(t);
+  if (!m || !sameStr(t, customerPass(st, m[1], m[2]))) return false;
+  const { rows: [c] } = await q("select 1 from customers where id = $1 and active and access_pin_key is not null and pin_version = $2", [+m[1], +m[2]]);
+  return !!c;
+}
 app.use(wrap(async (req, res, next) => {
   if (PIN_OPEN.some((r) => r.test(req.path))) return next();
   const st = await pinState();
   if (!st.on) return next();
-  const t = parseCookies(req.headers.cookie).spin;
-  if (t && t.length === 64 && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(pinToken(st)))) return next();
+  if (await passOk(st, parseCookies(req.headers.cookie).spin)) return next();
   if (req.path.startsWith("/api/") || req.path.startsWith("/coa/")) return bad(res, "PIN required", 401);
   res.set("Cache-Control", "no-store");
   res.sendFile(path.join(__dirname, "public", "pin.html"));
@@ -97,8 +111,15 @@ app.post("/api/pin", limit("pin", 10, 15 * 60 * 1000), wrap(async (req, res) => 
   const st = await pinState();
   if (!st.on) return res.json({ ok: true });
   const pin = String(req.body?.pin || "").replace(/\D/g, "").slice(0, 12);
-  if (!pin || !(await bcrypt.compare(pin, st.hash))) return bad(res, "Wrong PIN.", 401);
-  res.set("Set-Cookie", `spin=${pinToken(st)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`);
+  if (!pin) return bad(res, "Wrong PIN.", 401);
+  const passCookie = (v) => `spin=${v}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`;
+  if (st.hash && (await bcrypt.compare(pin, st.hash))) { res.append("Set-Cookie", passCookie(pinToken(st))); return res.json({ ok: true }); }
+  // a customer's own PIN unlocks the site and signs them into their account
+  const { rows: [c] } = await q("select id, pin_version from customers where access_pin_key = $1 and active", [customerPinKey(st, pin)]);
+  if (!c) return bad(res, "Wrong PIN.", 401);
+  await q("update customers set pin_used_at = now() where id = $1", [c.id]);
+  res.append("Set-Cookie", passCookie(customerPass(st, c.id, c.pin_version)));
+  await startCustomerSession(res, c.id);
   res.json({ ok: true });
 }));
 
@@ -197,7 +218,7 @@ async function customerFrom(req) {
 async function startCustomerSession(res, id) {
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into customer_sessions(token, customer_id, expires) values ($1, $2, now() + interval '60 days')", [token, id]);
-  res.set("Set-Cookie", `cid=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 86400}${SECURE ? "; Secure" : ""}`);
+  res.append("Set-Cookie", `cid=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 86400}${SECURE ? "; Secure" : ""}`);
 }
 const cleanAddress = (a = {}) => ({ line1: str(a.line1, 160), line2: str(a.line2, 160), city: str(a.city, 80), state: str(a.state, 40), zip: str(a.zip, 20), country: "US" });
 const jsonOnly = (req, res, next) => (req.is("application/json") ? next() : bad(res, "Bad request"));
@@ -373,17 +394,52 @@ admin.post("/orders/:id/note", wrap(async (req, res) => {
 /* ---------- admin: customers ---------- */
 admin.get("/customers", wrap(async (req, res) => {
   const term = str(req.query.q, 80).toLowerCase();
-  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.active, c.created_at,
+  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.active, c.created_at, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at,
       count(o.id)::int orders, coalesce(sum(o.total_cents) filter (where o.status in ('paid','shipped','delivered')), 0)::int spent_cents, max(o.created_at) last_order
     from customers c left join orders o on o.customer_id = c.id
     where ($1 = '' or lower(c.name) like '%' || $1 || '%' or lower(c.email) like '%' || $1 || '%')
     group by c.id order by c.created_at desc limit 500`, [term]);
   res.json({ customers: rows });
 }));
+admin.post("/customers", owner, wrap(async (req, res) => {
+  const b = req.body || {}, email = str(b.email, 160).toLowerCase();
+  if (!str(b.name, 120) || !isEmail(email)) return bad(res, "Enter a name and a valid email.");
+  const { rows: [ex] } = await q("select id from customers where lower(email) = $1", [email]);
+  if (ex) return bad(res, "A customer with that email already exists.");
+  // they sign in with the PIN you give them; this random password is never shown to anyone
+  const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash) values ($1,$2,$3,$4,$5) returning id",
+    [email, str(b.name, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10)]);
+  await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
+  res.json({ ok: true, id: c.id });
+}));
+admin.post("/customers/:id/pin", owner, wrap(async (req, res) => {
+  const id = intOrNull(req.params.id), st = await pinState();
+  let pin = String(req.body?.pin || "").trim();
+  const taken = async (p) => (await q("select 1 from customers where access_pin_key = $1 and id <> $2", [customerPinKey(st, p), id])).rows.length > 0 || (st.hash && (await bcrypt.compare(p, st.hash)));
+  if (pin) {
+    if (!/^\d{6,8}$/.test(pin)) return bad(res, "Customer PINs must be 6 to 8 digits.");
+    if (await taken(pin)) return bad(res, "That PIN is already in use. Pick another.");
+  } else {
+    do { pin = String(crypto.randomInt(100000, 1000000)); } while (await taken(pin));
+  }
+  const { rowCount } = await q("update customers set access_pin_key = $1, pin_version = pin_version + 1, pin_set_at = now() where id = $2", [customerPinKey(st, pin), id]);
+  if (!rowCount) return bad(res, "Customer not found", 404);
+  await q("delete from customer_sessions where customer_id = $1", [id]);
+  pinCache.at = 0;
+  res.json({ ok: true, pin }); // shown once to the owner so it can be given to the customer
+}));
+admin.delete("/customers/:id/pin", owner, wrap(async (req, res) => {
+  const id = intOrNull(req.params.id);
+  await q("update customers set access_pin_key = null, pin_version = pin_version + 1, pin_set_at = null where id = $1", [id]);
+  await q("delete from customer_sessions where customer_id = $1", [id]);
+  pinCache.at = 0;
+  res.json({ ok: true });
+}));
 admin.patch("/customers/:id", owner, wrap(async (req, res) => {
   const id = intOrNull(req.params.id), active = req.body?.active !== false;
   await q("update customers set active = $1 where id = $2", [active, id]);
   if (!active) await q("delete from customer_sessions where customer_id = $1", [id]);
+  pinCache.at = 0;
   res.json({ ok: true });
 }));
 
@@ -538,16 +594,20 @@ admin.put("/settings", owner, wrap(async (req, res) => {
 }));
 
 /* ---------- admin: site PIN ---------- */
-admin.get("/pin", owner, wrap(async (req, res) => { const st = await pinState(); res.json({ on: st.on, set: !!st.hash }); }));
+admin.get("/pin", owner, wrap(async (req, res) => { pinCache.at = 0; const st = await pinState(); res.json({ on: st.on, set: !!st.hash, customerPins: st.customerPins }); }));
 admin.put("/pin", owner, wrap(async (req, res) => {
   const b = req.body || {};
+  if (b.clearShared) await q("delete from settings where key = 'pinHash'");
   if (b.pin !== undefined && b.pin !== "") {
     const pin = String(b.pin);
     if (!/^\d{4,8}$/.test(pin)) return bad(res, "The PIN must be 4 to 8 digits.");
+    const st0 = await pinState();
+    if ((await q("select 1 from customers where access_pin_key = $1", [customerPinKey(st0, pin)])).rows.length) return bad(res, "A customer already uses that PIN. Pick another.");
     await q("insert into settings(key,value) values ('pinHash',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(await bcrypt.hash(pin, 10))]);
   }
   const { rows: [h] } = await q("select value from settings where key = 'pinHash'");
-  if (b.on && !h) return bad(res, "Set a PIN first.");
+  const { rows: [cp] } = await q("select count(*)::int n from customers where access_pin_key is not null and active");
+  if (b.on && !h && !cp.n) return bad(res, "Set a shared PIN or give at least one customer a PIN first.");
   await q("insert into settings(key,value) values ('pinOn',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(!!b.on)]);
   pinCache.at = 0;
   res.json({ ok: true });
