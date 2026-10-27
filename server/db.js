@@ -122,6 +122,20 @@ create table if not exists customer_sessions (
   customer_id int not null references customers(id) on delete cascade,
   expires timestamptz not null
 );
+create table if not exists documents (
+  id serial primary key,
+  product_id int references products(id) on delete cascade,
+  title text not null,
+  kind text not null default 'Other',
+  file_name text not null default '',
+  file_type text not null,
+  file bytea not null,
+  size int not null default 0,
+  public boolean not null default true,
+  sort int not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists documents_product_idx on documents(product_id);
 alter table customers add column if not exists access_pin_key text unique;
 alter table customers add column if not exists pin_version int not null default 0;
 alter table customers add column if not exists pin_set_at timestamptz;
@@ -226,8 +240,14 @@ async function init() {
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
     await q("insert into settings(key, value) values ($1, $2) on conflict (key) do nothing", [k, JSON.stringify(v)]);
   }
+  // Starter COAs and products are loaded once, on the very first start. After that, an empty
+  // catalog stays empty (the owner can clear everything and rebuild by CSV or by hand).
+  const { rows: [seeded] } = await q("select 1 from settings where key = 'catalogSeeded'");
   const { rows: [{ n: rc }] } = await q("select count(*)::int n from reports");
-  if (rc === 0) {
+  const { rows: [{ n: pc0 }] } = await q("select count(*)::int n from products");
+  const firstRun = !seeded && rc === 0 && pc0 === 0;
+  await q("insert into settings(key, value) values ('catalogSeeded', 'true') on conflict (key) do nothing");
+  if (firstRun) {
     for (const r of readSeedReports()) {
       const imgPath = path.join(__dirname, "..", "coa", r.image || "");
       const img = r.image && fs.existsSync(imgPath) ? fs.readFileSync(imgPath) : null;
@@ -238,8 +258,7 @@ async function init() {
          img ? "image/jpeg" : null, img]);
     }
   }
-  const { rows: [{ n: pc }] } = await q("select count(*)::int n from products");
-  if (pc === 0) {
+  if (firstRun) {
     const seen = new Set(); let i = 0;
     for (const r of readSeedReports()) {
       const k = r.product + "|" + r.strength;

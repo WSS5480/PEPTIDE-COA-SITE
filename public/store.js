@@ -28,7 +28,7 @@ function banner(el, S) {
   el.innerHTML = `<div class="mq">${item.repeat(6)}</div><div class="mq" aria-hidden="true">${item.repeat(6)}</div>`;
   el.setAttribute("aria-label", S.announcement);
 }
-let S = {}, PRODUCTS = [], REPORTS = [], SHIP = [];
+let S = {}, PRODUCTS = [], REPORTS = [], SHIP = [], DOCS = [];
 let cart = store.get("cart") || [];   // [{id, qty}]
 const saveCart = () => { store.set("cart", cart); drawCartCount(); };
 
@@ -97,7 +97,7 @@ function drawProducts() {
         ${p.description ? `<p class="stockline">${esc(p.description)}</p>` : ""}
         ${price}${stock}
         <p class="research">For laboratory research use only. Not for human or animal use.</p>
-        <div class="pact">${buy}${r ? `<a class="btn" href="/lab-reports#${esc(rid(r))}" data-report="${r.id}">Lab report</a>` : `<span class="stockline">No report yet</span>`}</div>
+        <div class="pact">${buy}${r ? `<a class="btn" href="/lab-reports#${esc(rid(r))}" data-report="${r.id}" data-pid="${p.id}">Lab report</a>` : `<span class="stockline">No report yet</span>`}${docsFor(p).length ? `<button class="btn" type="button" data-docs="${p.id}">Documents (${docsFor(p).length})</button>` : ""}</div>
       </div>
     </article>`;
   }).join("") : `<div class="card empty"><p><strong>No product matches.</strong> ${coaOnly ? "You're showing only products with a lab report. Untick it to see everything." : "Try another name or size."}</p></div>`;
@@ -205,7 +205,9 @@ function sheetHTML(r) {
     pair("Sample", esc(r.sample)), pair("Batch", r.batch ? `<span class="mono">${esc(r.batch)}</span>` : "Unknown (not given to the lab)"),
     pair("Client", esc(r.client)), pair("Manufacturer", esc(r.manufacturer)), pair("Testing ordered", fmtDate(r.ordered)),
     pair("Sample received", fmtDate(r.received)), pair("Analysis conducted", fmtDate(r.tested)), pair("Tests requested", esc(r.testsRequested))].join("");
-  const doc = r.image ? `<button class="doc" type="button" data-doc="${r.id}" aria-label="Open the report for ${esc(title)}"><span class="page"><img src="${esc(r.image)}" loading="lazy" alt="${esc(`${r.lab || "Lab"} test report for ${title}`)}"></span><span class="eyebrow">Open the report</span></button>` : `<p class="eyebrow">No document attached yet.</p>`;
+  const doc = !r.image ? `<p class="eyebrow">No document attached yet.</p>`
+    : r.isPdf ? `<a class="doc" href="${esc(r.image)}" target="_blank" rel="noopener" aria-label="Open the PDF report for ${esc(title)}"><span class="page pdfpage"><span>PDF</span></span><span class="eyebrow">Open the report (PDF)</span></a>`
+    : `<button class="doc" type="button" data-doc="${r.id}" aria-label="Open the report for ${esc(title)}"><span class="page"><img src="${esc(r.image)}" loading="lazy" alt="${esc(`${r.lab || "Lab"} test report for ${title}`)}"></span><span class="eyebrow">Open the report</span></button>`;
   const check = r.key || r.verifyUrl ? `<div class="block"><h3 class="eyebrow">Check it with the lab</h3>
     ${r.key ? `<p class="keyline"><span>Unique key</span><code class="key">${esc(r.key)}</code><button class="btn" type="button" data-copy="${esc(r.key)}">Copy key</button></p>` : ""}
     ${r.verifyUrl ? `<p><a href="${esc(r.verifyUrl)}" target="_blank" rel="noopener">Open this report on the lab's own site</a></p>` : ""}</div>` : "";
@@ -213,6 +215,12 @@ function sheetHTML(r) {
     <div class="block"><h3 class="eyebrow">Results</h3><dl class="pairs lab">${(r.results || []).map(([n, v]) => pair(esc(n), esc(v))).join("")}</dl></div>
     <div class="block"><h3 class="eyebrow">Report details</h3><dl class="pairs">${details}</dl></div></div>
     <div><div class="block"><h3 class="eyebrow">Lab document</h3>${doc}</div>${check}</div></div>`;
+}
+const docsFor = (p) => (p ? DOCS.filter((d) => d.product_id === p.id) : []);
+function docsHTML(list) {
+  if (!list.length) return "";
+  return `<div class="block"><h3 class="eyebrow">Documents</h3><ul class="doclist">${list.map((d) => `<li><a href="/doc/${d.id}" target="_blank" rel="noopener">
+    <span class="dtype">${d.file_type === "application/pdf" ? "PDF" : "IMG"}</span><span><strong>${esc(d.title)}</strong><small>${esc(d.kind)}</small></span></a></li>`).join("")}</ul></div>`;
 }
 function drawReports() {
   const words = state.q.toLowerCase().split(/\s+/).map(norm).filter(Boolean);
@@ -357,7 +365,9 @@ document.addEventListener("click", (e) => {
   if (t.closest("#toCheckout")) { openCheckout(); return; }
   const jump = t.closest("[data-jump]"); if (jump) { e.preventDefault(); jumpTo(jump.dataset.jump); return; }
   const rep = t.closest("[data-report]");
-  if (rep) { const r = REPORTS.find((x) => String(x.id) === rep.dataset.report); if (r) { e.preventDefault(); $("rmTitle").textContent = `${r.product} ${r.strength}`.trim() + " · lab report"; $("rmBody").innerHTML = sheetHTML(r); openD($("repModal")); } return; }
+  if (rep) { const r = REPORTS.find((x) => String(x.id) === rep.dataset.report); if (r) { e.preventDefault(); const pr = PRODUCTS.find((x) => String(x.id) === rep.dataset.pid); $("rmTitle").textContent = `${r.product} ${r.strength}`.trim() + " · lab report"; $("rmBody").innerHTML = sheetHTML(r) + docsHTML(docsFor(pr)); openD($("repModal")); } return; }
+  const dk = t.closest("[data-docs]");
+  if (dk) { const pr = PRODUCTS.find((x) => String(x.id) === dk.dataset.docs); if (pr) { $("rmTitle").textContent = `${pr.name} ${pr.strength}`.trim() + " · documents"; $("rmBody").innerHTML = docsHTML(docsFor(pr)); openD($("repModal")); } return; }
   const doc = t.closest("[data-doc]"); if (doc) { const r = REPORTS.find((x) => String(x.id) === doc.dataset.doc); if (r && r.image) showDoc(r); return; }
   const copy = t.closest("[data-copy]");
   if (copy) {
@@ -402,7 +412,7 @@ function drawHelix() {
 let first = true;
 async function load() {
   const res = await fetch("/api/store"); const j = await res.json();
-  S = j.settings; PRODUCTS = j.products; REPORTS = j.reports; SHIP = j.shipping;
+  S = j.settings; PRODUCTS = j.products; REPORTS = j.reports; SHIP = j.shipping; DOCS = j.documents || [];
   if (first) {
     first = false;
     const name = S.brand || "Research Peptides";

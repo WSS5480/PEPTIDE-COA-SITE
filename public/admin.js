@@ -252,7 +252,7 @@ async function customers() {
 async function products() {
   const [{ products: list }, { reports: reps }] = await Promise.all([api("/products"), api("/reports")]);
   const repFor = (p) => reps.filter((r) => r.active && reportMatches(p, r));
-  const COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["sku", "Code"], ["showCode", "Show code"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"], ["report", "Lab report"]];
+  const COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["sku", "Code"], ["showCode", "Show code"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"], ["report", "Lab report"], ["docs", "Docs"]];
   const NUM = new Set(["price", "stock", "maxPerOrder", "sort"]);
   const inp = (k, v, ph = "", extra = "") => `<input data-k="${k}" value="${esc(v)}" placeholder="${ph}"${extra}${ro()}>`;
   const row = (p) => `<tr data-id="${p ? p.id : ""}"${p ? "" : ' class="dirty"'}>
@@ -268,12 +268,13 @@ async function products() {
     <td><input type="checkbox" data-k="active"${!p || p.active ? " checked" : ""}${ro()}></td>
     <td>${inp("description", p?.description, "Short line under the name")}</td>
     <td data-rep>${p ? (repFor(p).length ? repFor(p).map((r) => `<span class="pill st-shipped" title="Task ${esc(r.task)}">${esc(r.sample || r.product + " " + r.strength)}</span>`).join(" ") : '<span class="pill st-cancelled">No report</span>') : ""}</td>
+    <td data-docs>${p ? `<button class="btn" type="button" data-manage="${p.id}" title="COA and documents for this peptide">${p.doc_count ? `${p.doc_count} doc${p.doc_count === 1 ? "" : "s"} · ` : ""}Manage</button>` : '<span class="muted">Save first</span>'}</td>
     ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-save>Save</button><button class="btn" data-del>${p ? "Delete" : "Remove"}</button></td>` : ""}
   </tr>`;
   const cats = [...new Set(list.map((p) => p.category).filter(Boolean))];
   const saveBar = isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" data-saveall disabled>Save all changes</button><span class="muted" data-dirtycount></span></div>` : "";
-  pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>` : ""}</div></header>
-    <div id="impBox"></div>
+  pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>${list.length ? `<button class="btn danger" id="clrP">Remove all products</button>` : ""}` : ""}</div></header>
+    <div id="impBox"></div><div id="manageBox"></div>
     <p class="muted">Click a column name to sort. Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). "Code" is the product code (e.g. RT30); tick "Show code" to show the code instead of the name on the store; a lab report attaches when its name and size match, or when its Sample line matches the code. Untick Active to hide a product. Products match their lab report by name and size.</p>
     ${(() => { const n = list.filter((p) => p.active && !repFor(p).length).length; return n ? `<p class="muted"><strong>${n} active product${n === 1 ? " has" : "s have"} no lab report.</strong> Sort by the Lab report column to see them.</p>` : ""; })()}
     ${saveBar}
@@ -299,7 +300,7 @@ async function products() {
   pane().querySelector("thead").onclick = (e) => {
     const th = e.target.closest("[data-sort]"); if (!th) return;
     const k = th.dataset.sort; dir = sortKey === k ? -dir : 1; sortKey = k;
-    const val = (tr) => { if (k === "report") return tr.querySelector("[data-rep]").textContent.toLowerCase(); const i = tr.querySelector(`[data-k="${k}"]`); if (i.type === "checkbox") return i.checked ? 1 : 0; const v = i.value.trim(); return NUM.has(k) ? (v === "" ? Infinity : parseFloat(v)) : v.toLowerCase(); };
+    const val = (tr) => { if (k === "report") return tr.querySelector("[data-rep]").textContent.toLowerCase(); if (k === "docs") return parseInt(tr.querySelector("[data-docs]").textContent) || 0; const i = tr.querySelector(`[data-k="${k}"]`); if (i.type === "checkbox") return i.checked ? 1 : 0; const v = i.value.trim(); return NUM.has(k) ? (v === "" ? Infinity : parseFloat(v)) : v.toLowerCase(); };
     const rows = [...pb.querySelectorAll("tr")].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
     rows.forEach((r) => pb.appendChild(r));
     pane().querySelectorAll("thead .arr").forEach((s) => { s.textContent = ""; });
@@ -323,7 +324,17 @@ async function products() {
   document.querySelectorAll("[data-saveall]").forEach((b) => (b.onclick = saveAll));
   if (document.getElementById("impP")) document.getElementById("impP").onclick = () => importBox(list);
   if (document.getElementById("addP")) document.getElementById("addP").onclick = () => { pb.insertAdjacentHTML("afterbegin", row(null)); refresh(); pb.querySelector("tr input").focus(); };
+  if (document.getElementById("clrP")) document.getElementById("clrP").onclick = async () => {
+    const typed = prompt(`This removes all ${list.length} products, their prices and their documents from the store. Past orders keep their own copy of what was bought. Lab reports are not touched.\n\nType DELETE to confirm.`);
+    if (typed === null) return;
+    if (typed.trim() !== "DELETE") return toast("Not removed. Type DELETE exactly.");
+    unsaved = false;
+    const r = await api("/products/clear", { method: "POST", body: { confirm: "DELETE" } });
+    toast(`Removed ${r.removed} products`); products(); drawNav();
+  };
   pb.onclick = async (e) => {
+    const mg = e.target.closest("[data-manage]");
+    if (mg) { const p = list.find((x) => String(x.id) === mg.dataset.manage); if (p) manageProduct(p, repFor(p)); return; }
     const tr = e.target.closest("tr"); if (!tr) return;
     const id = tr.dataset.id;
     if (e.target.closest("[data-del]")) {
@@ -337,6 +348,62 @@ async function products() {
   refresh();
 }
 
+
+/* ---------- one peptide: its lab reports (COAs) and other documents ---------- */
+const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
+const readFile = (file) => new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => no(new Error("Couldn't read the file")); fr.readAsDataURL(file); });
+const OK_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+let pendingReport = null; // opens the Lab reports form already filled in for a product
+async function manageProduct(p, reps) {
+  const box = document.getElementById("manageBox");
+  const label = `${p.name} ${p.strength}`.trim() + (p.sku ? ` · ${p.sku}` : "");
+  const { documents: docs, kinds } = await api("/documents?productId=" + p.id);
+  box.innerHTML = `<div class="panel" style="border-color:var(--blue)">
+    <div class="row2" style="justify-content:space-between;align-items:center"><h2>${esc(label)}</h2><button class="btn" type="button" id="mgClose">Close</button></div>
+    <div class="two">
+      <div class="stack"><h3 class="eyebrow">Lab reports (COA)</h3>
+        ${reps.length ? `<ul class="hist">${reps.map((r) => `<li><strong>${esc(r.sample || `${r.product} ${r.strength}`)}</strong>${r.task ? ` · task #${esc(r.task)}` : ""}${r.tested ? ` · tested ${esc(r.tested)}` : ""}
+          <small>${r.image ? `<a href="${esc(r.image)}" target="_blank" rel="noopener">${r.isPdf ? "Open PDF" : "Open image"}</a> · ` : "No file attached · "}<a href="#" data-editrep="${r.id}">Edit</a></small></li>`).join("")}</ul>`
+          : `<p class="muted">No lab report attached yet.</p>`}
+        ${isOwner() ? `<div><button class="btn solid" type="button" id="mgAddCoa">Add a COA for this peptide</button></div>` : ""}
+        <p class="muted" style="font-size:.8rem">A COA attaches when its peptide name and size match this product, or its Sample line matches the code${p.sku ? ` (${esc(p.sku)})` : ""}.</p></div>
+      <div class="stack"><h3 class="eyebrow">Other documents</h3>
+        ${docs.length ? `<ul class="hist" id="docList">${docs.map((d) => `<li data-doc="${d.id}"><div class="row2" style="justify-content:space-between;align-items:center">
+            <span><strong>${esc(d.title)}</strong> <span class="pill st-confirmed">${esc(d.kind)}</span>${d.public ? "" : ' <span class="pill st-new">Hidden</span>'}</span>
+            <span class="row2" style="flex-wrap:nowrap"><a class="btn" href="/doc/${d.id}" target="_blank" rel="noopener">Open</a>${isOwner() ? `<button class="btn" type="button" data-dtog>${d.public ? "Hide" : "Show"}</button><button class="btn" type="button" data-ddel>Delete</button>` : ""}</span></div>
+            <small>${d.file_type === "application/pdf" ? "PDF" : "Image"} · ${fmtSize(d.size)} · added ${when(d.created_at)}</small></li>`).join("")}</ul>`
+          : `<p class="muted">No other documents yet.</p>`}
+        ${isOwner() ? `<div class="panel" style="padding:.9rem;background:var(--ground)"><strong>Add a document</strong>
+          <div class="grid2"><div class="field"><label class="eyebrow" for="dTitle">Title</label><input id="dTitle" placeholder="e.g. Safety data sheet"></div>
+          <div class="field"><label class="eyebrow" for="dKind">Type</label><select id="dKind">${kinds.map((k) => `<option>${esc(k)}</option>`).join("")}</select></div></div>
+          <div class="field"><label class="eyebrow" for="dFile">File (PDF, JPG or PNG, under 10 MB)</label><input type="file" id="dFile" accept="application/pdf,image/jpeg,image/png,image/webp"></div>
+          <label class="chk"><input type="checkbox" id="dPub" checked> Show on the store with this product</label>
+          <div><button class="btn solid" type="button" id="dUp">Upload document</button></div></div>` : ""}
+      </div>
+    </div></div>`;
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+  const $ = (x) => document.getElementById(x);
+  $("mgClose").onclick = () => { box.innerHTML = ""; };
+  box.querySelectorAll("[data-editrep]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); pendingReport = { id: +a.dataset.editrep }; go("reports"); }));
+  if ($("mgAddCoa")) $("mgAddCoa").onclick = () => { pendingReport = { product: p.name, strength: p.strength, sample: p.sku || `${p.name} ${p.strength}`.trim() }; go("reports"); };
+  if ($("dUp")) $("dUp").onclick = async () => {
+    const file = $("dFile").files[0];
+    if (!file) return toast("Choose a file first");
+    if (!OK_TYPES.includes(file.type)) return toast("Use a PDF, JPG or PNG");
+    if (file.size > 10 * 1024 * 1024) return toast("That file is over 10 MB");
+    $("dUp").disabled = true; $("dUp").textContent = "Uploading…";
+    try {
+      await api("/documents", { method: "POST", body: { productId: p.id, title: $("dTitle").value.trim() || file.name.replace(/\.[a-z0-9]+$/i, ""), kind: $("dKind").value, public: $("dPub").checked, fileName: file.name, fileData: await readFile(file) } });
+      toast("Document added"); p.doc_count = (p.doc_count || 0) + 1; manageProduct(p, reps);
+    } catch (e) { $("dUp").disabled = false; $("dUp").textContent = "Upload document"; }
+  };
+  box.querySelectorAll("[data-doc]").forEach((li) => {
+    const d = docs.find((x) => String(x.id) === li.dataset.doc);
+    const tog = li.querySelector("[data-dtog]"), del = li.querySelector("[data-ddel]");
+    if (tog) tog.onclick = async () => { await api("/documents/" + d.id, { method: "PATCH", body: { title: d.title, kind: d.kind, public: !d.public } }); manageProduct(p, reps); };
+    if (del) del.onclick = async () => { if (!confirm(`Delete "${d.title}"?`)) return; await api("/documents/" + d.id, { method: "DELETE" }); p.doc_count = Math.max(0, (p.doc_count || 1) - 1); toast("Deleted"); manageProduct(p, reps); };
+  });
+}
 
 /* ---------- product import from Excel / CSV ---------- */
 const IMPORT_COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["sku", "Code"], ["showCode", "Show code"], ["price", "Price"], ["stock", "Stock"], ["maxPerOrder", "Max per order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
@@ -404,12 +471,12 @@ async function reports() {
   const [{ reports: list }, { products: prods }] = await Promise.all([api("/reports"), api("/products")]);
   const attached = (r) => prods.filter((p) => reportMatches(p, r));
   const orphans = list.filter((r) => r.active && !attached(r).some((p) => p.active)).length;
-  pane().innerHTML = `<header><h1>Lab reports</h1>${isOwner() ? `<button class="btn solid" id="addR">Add report</button>` : ""}</header>
+  pane().innerHTML = `<header><h1>Lab reports</h1><div class="row2">${isOwner() ? `<button class="btn solid" id="addR">Add report</button>${list.length ? `<button class="btn danger" id="clrR">Remove all lab reports</button>` : ""}` : ""}</div></header>
     <p class="muted">Copy each field from the lab's document exactly as printed. A report attaches to a product when the peptide name and size match, or when the product's Code matches the report's Sample line (e.g. RT30).</p>
-    ${orphans ? `<div class="err">${orphans} lab report${orphans === 1 ? " isn't" : "s aren't"} attached to any product on the store. Add the product, or give an existing product the matching name, size or code.</div>` : `<div class="okbox" style="padding:.7rem 1rem">Every lab report is attached to a product.</div>`}
+    ${!list.length ? `<div class="okbox" style="padding:.7rem 1rem">No lab reports yet. Click Add report, or open a product's Manage button under Products &amp; prices.</div>` : orphans ? `<div class="err">${orphans} lab report${orphans === 1 ? " isn't" : "s aren't"} attached to any product on the store. Add the product, or give an existing product the matching name, size or code.</div>` : `<div class="okbox" style="padding:.7rem 1rem">Every lab report is attached to a product.</div>`}
     <div id="rform"></div>
     <div class="tblwrap"><table class="tbl"><tr><th></th><th>Peptide</th><th>Size</th><th>Sample</th><th>Task</th><th>Tested</th><th>Attached to</th><th>Shown</th></tr>
-    ${list.map((r) => `<tr class="click" data-rid="${r.id}"><td>${r.image ? `<img class="thumbimg" src="${esc(r.image)}" alt="">` : ""}</td><td>${esc(r.product)}</td><td>${esc(r.strength)}</td><td class="mono">${esc(r.sample)}</td><td class="mono">${esc(r.task)}</td><td>${esc(r.tested)}</td>
+    ${list.map((r) => `<tr class="click" data-rid="${r.id}"><td>${r.image ? (r.isPdf ? '<span class="pdfthumb">PDF</span>' : `<img class="thumbimg" src="${esc(r.image)}" alt="">`) : ""}</td><td>${esc(r.product)}</td><td>${esc(r.strength)}</td><td class="mono">${esc(r.sample)}</td><td class="mono">${esc(r.task)}</td><td>${esc(r.tested)}</td>
       <td>${(() => { const a = attached(r); if (!a.length) return '<span class="pill st-cancelled">No product</span>'; return a.map((p) => `<span class="pill ${p.active ? "st-shipped" : "st-new"}">${esc(p.name)} ${esc(p.strength)}${p.sku ? " · " + esc(p.sku) : ""}${p.active ? "" : " (hidden)"}</span>`).join(" "); })()}</td>
       <td>${r.active ? "Yes" : "Hidden"}</td></tr>`).join("")}</table></div>`;
   const form = (r) => {
@@ -423,7 +490,7 @@ async function reports() {
       ${f("testsRequested", "Tests requested", r.testsRequested)}</div>
       <div class="field"><label class="eyebrow">Results rows (name, value)</label><div id="rres" class="stack">${(r.results || []).map(([n, v]) => `<div class="row2"><input value="${esc(n)}" placeholder="BPC-157 or Purity" style="flex:1;height:2.4rem;padding:0 .7rem;border:1px solid var(--line-strong);border-radius:8px"${ro()}><input value="${esc(v)}" placeholder="10.95 mg" style="flex:1;height:2.4rem;padding:0 .7rem;border:1px solid var(--line-strong);border-radius:8px"${ro()}></div>`).join("")}</div>
       ${isOwner() ? `<button class="linkbtn" type="button" id="addRow" style="justify-self:start">+ Add a results row</button>` : ""}</div>
-      <div class="field"><label class="eyebrow">Report image (JPG/PNG, under 6 MB)${r.image ? " — leave empty to keep the current one" : ""}</label><input type="file" id="rimg" accept="image/jpeg,image/png,image/webp"${ro()}></div>
+      <div class="field"><label class="eyebrow">Report file (PDF, JPG or PNG, under 10 MB)${r.image ? ` — leave empty to keep the current one (<a href="${esc(r.image)}" target="_blank" rel="noopener">open current</a>)` : ""}</label><input type="file" id="rimg" accept="application/pdf,image/jpeg,image/png,image/webp"${ro()}></div>
       <label class="chk"><input type="checkbox" id="ract"${r.active ? " checked" : ""}${ro()}> Show on the site</label>
       ${isOwner() ? `<div class="row2"><button class="btn solid" id="rsave">Save report</button>${r.id ? `<button class="btn" id="rdel">Delete</button>` : ""}<button class="btn" id="rcancel">Cancel</button></div>` : ""}</div>`;
     const $ = (x) => document.getElementById(x);
@@ -436,14 +503,27 @@ async function reports() {
       document.querySelectorAll("#rform [data-k]").forEach((i) => { body[i.dataset.k] = i.value; });
       const file = $("rimg").files[0];
       if (file) {
-        if (file.size > 6 * 1024 * 1024) return toast("Image is over 6 MB");
-        body.imageData = await new Promise((ok) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.readAsDataURL(file); });
+        if (!OK_TYPES.includes(file.type)) return toast("Use a PDF, JPG or PNG");
+        if (file.size > 10 * 1024 * 1024) return toast("That file is over 10 MB");
+        body.imageData = await readFile(file);
       }
       await api(r.id ? "/reports/" + r.id : "/reports", { method: r.id ? "PATCH" : "POST", body });
       toast("Report saved"); reports();
     };
   };
   if (document.getElementById("addR")) document.getElementById("addR").onclick = () => form(null);
+  if (document.getElementById("clrR")) document.getElementById("clrR").onclick = async () => {
+    const typed = prompt(`This removes all ${list.length} lab reports and their files from the site. Products stay.\n\nType DELETE to confirm.`);
+    if (typed === null) return;
+    if (typed.trim() !== "DELETE") return toast("Not removed. Type DELETE exactly.");
+    const r = await api("/reports/clear", { method: "POST", body: { confirm: "DELETE" } });
+    toast(`Removed ${r.removed} lab reports`); reports();
+  };
+  if (pendingReport) {
+    const pr = pendingReport; pendingReport = null;
+    if (pr.id) { const r = list.find((x) => x.id === pr.id); if (r) form(r); }
+    else form({ results: [[pr.product, ""], ["Purity", ""]], lab: "Janoshik", active: true, product: pr.product, strength: pr.strength, sample: pr.sample });
+  }
   pane().querySelector(".tbl").onclick = (e) => { const tr = e.target.closest("[data-rid]"); if (tr) { form(list.find((x) => String(x.id) === tr.dataset.rid)); window.scrollTo(0, 0); } };
 }
 

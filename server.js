@@ -8,7 +8,7 @@ const { q, init, getSettings, DEFAULT_SETTINGS } = require("./server/db");
 const app = express();
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
-app.use(express.json({ limit: "8mb" }));
+app.use(express.json({ limit: "16mb" }));
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
   res.set("Referrer-Policy", "same-origin");
@@ -38,9 +38,9 @@ const reportOut = (r) => ({
   lab: r.lab, client: r.client, manufacturer: r.manufacturer, batch: r.batch,
   ordered: r.ordered ? r.ordered.toISOString().slice(0, 10) : "", received: r.received ? r.received.toISOString().slice(0, 10) : "",
   tested: r.tested ? r.tested.toISOString().slice(0, 10) : "", testsRequested: r.tests_requested, results: r.results,
-  image: r.has_image ? `/coa/${r.id}` : "", active: r.active
+  image: r.has_image ? `/coa/${r.id}` : "", isPdf: r.image_type === "application/pdf", active: r.active
 });
-const REPORT_COLS = "id,product,strength,sample,task,key,verify_url,lab,client,manufacturer,batch,ordered,received,tested,tests_requested,results,active,(image is not null) has_image";
+const REPORT_COLS = "id,product,strength,sample,task,key,verify_url,lab,client,manufacturer,batch,ordered,received,tested,tests_requested,results,active,image_type,(image is not null) has_image";
 
 /* tiny in-memory rate limit */
 const hits = new Map();
@@ -103,7 +103,7 @@ app.use(wrap(async (req, res, next) => {
   const st = await pinState();
   if (!st.on) return next();
   if (await passOk(st, parseCookies(req.headers.cookie).spin)) return next();
-  if (req.path.startsWith("/api/") || req.path.startsWith("/coa/")) return bad(res, "PIN required", 401);
+  if (req.path.startsWith("/api/") || req.path.startsWith("/coa/") || req.path.startsWith("/doc/")) return bad(res, "PIN required", 401);
   res.set("Cache-Control", "no-store");
   res.sendFile(path.join(__dirname, "public", "pin.html"));
 }));
@@ -131,16 +131,32 @@ app.get("/api/store", wrap(async (req, res) => {
     q(`select ${REPORT_COLS} from reports where active order by product, tested desc nulls last`),
     q("select id,name,detail,price_cents,free_over_cents from shipping_methods where active order by sort, price_cents")
   ]);
+  const { rows: documents } = await q("select d.id, d.product_id, d.title, d.kind, d.file_type, d.size from documents d join products p on p.id = d.product_id where d.public and p.active order by d.sort, d.created_at");
   res.set("Cache-Control", "no-store");
-  res.json({ settings: publicSettings(s), products, reports: reports.map(reportOut), shipping });
+  res.json({ settings: publicSettings(s), products, reports: reports.map(reportOut), shipping, documents });
 }));
 
 app.get("/coa/:id", wrap(async (req, res) => {
   const { rows } = await q("select image, image_type from reports where id = $1 and image is not null", [intOrNull(req.params.id)]);
   if (!rows[0]) return res.status(404).send("Not found");
   res.set("Content-Type", rows[0].image_type || "image/jpeg");
-  res.set("Cache-Control", "public, max-age=3600");
+  res.set("Content-Disposition", "inline");
+  res.set("Cache-Control", "private, max-age=600");
   res.send(rows[0].image);
+}));
+// a product document (SDS, spec sheet, certificate…); hidden ones open only for signed-in admins
+app.get("/doc/:id", wrap(async (req, res) => {
+  const { rows: [d] } = await q("select d.file, d.file_type, d.file_name, d.public, p.active from documents d left join products p on p.id = d.product_id where d.id = $1", [intOrNull(req.params.id)]);
+  if (!d) return res.status(404).send("Not found");
+  if (!d.public || !d.active) {
+    const token = parseCookies(req.headers.cookie).sid;
+    const { rows: [u] } = token ? await q("select 1 from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]) : { rows: [] };
+    if (!u) return res.status(404).send("Not found");
+  }
+  res.set("Content-Type", d.file_type);
+  res.set("Content-Disposition", `inline; filename="${String(d.file_name || "document").replace(/[^\w.\- ]/g, "_")}"`);
+  res.set("Cache-Control", "private, max-age=600");
+  res.send(d.file);
 }));
 
 app.post("/api/orders", limit("order", 6, 15 * 60 * 1000), wrap(async (req, res) => {
@@ -445,7 +461,7 @@ admin.patch("/customers/:id", owner, wrap(async (req, res) => {
 
 /* ---------- admin: products ---------- */
 admin.get("/products", wrap(async (req, res) => {
-  const { rows } = await q("select * from products order by sort, name, strength");
+  const { rows } = await q("select p.*, (select count(*)::int from documents d where d.product_id = p.id) doc_count from products p order by sort, name, strength");
   res.json({ products: rows });
 }));
 function productFields(b) {
@@ -504,6 +520,11 @@ admin.post("/products/import", owner, wrap(async (req, res) => {
   }
   res.json({ ok: true, created, updated, problems });
 }));
+admin.post("/products/clear", owner, wrap(async (req, res) => {
+  if (req.body?.confirm !== "DELETE") return bad(res, "Type DELETE to confirm.");
+  const { rowCount } = await q("delete from products");
+  res.json({ ok: true, removed: rowCount });
+}));
 admin.delete("/products/:id", owner, wrap(async (req, res) => {
   await q("delete from products where id = $1", [intOrNull(req.params.id)]);
   res.json({ ok: true });
@@ -524,12 +545,17 @@ function reportFields(b) {
     tests_requested: str(b.testsRequested, 200), results: JSON.stringify(results), active: b.active !== false
   };
 }
-function imageFrom(b) {
-  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(b.imageData || ""));
+const MAX_FILE = 10 * 1024 * 1024;
+// accepts a JPG, PNG, WEBP or PDF sent from the admin as a data: URL
+function fileFrom(data) {
+  const m = /^data:(image\/(?:jpeg|png|webp)|application\/pdf);base64,([A-Za-z0-9+/=]+)$/.exec(String(data || ""));
   if (!m) return null;
   const buf = Buffer.from(m[2], "base64");
-  return buf.length && buf.length <= 6 * 1024 * 1024 ? { type: m[1], buf } : null;
+  if (!buf.length || buf.length > MAX_FILE) return null;
+  if (m[1] === "application/pdf" && buf.subarray(0, 5).toString() !== "%PDF-") return null;
+  return { type: m[1], buf };
 }
+const imageFrom = (b) => fileFrom(b.imageData);
 admin.post("/reports", owner, wrap(async (req, res) => {
   const f = reportFields(req.body || {}); if (!f.product) return bad(res, "Peptide name is required");
   const img = imageFrom(req.body || {});
@@ -549,6 +575,42 @@ admin.patch("/reports/:id", owner, wrap(async (req, res) => {
 }));
 admin.delete("/reports/:id", owner, wrap(async (req, res) => {
   await q("delete from reports where id = $1", [intOrNull(req.params.id)]);
+  res.json({ ok: true });
+}));
+
+admin.post("/reports/clear", owner, wrap(async (req, res) => {
+  if (req.body?.confirm !== "DELETE") return bad(res, "Type DELETE to confirm.");
+  const { rowCount } = await q("delete from reports");
+  res.json({ ok: true, removed: rowCount });
+}));
+
+/* ---------- admin: product documents ---------- */
+const DOC_KINDS = ["COA", "SDS / safety sheet", "Spec sheet", "Certificate", "Storage & handling", "Other"];
+admin.get("/documents", wrap(async (req, res) => {
+  const pid = intOrNull(req.query.productId);
+  const { rows } = await q(`select id, product_id, title, kind, file_name, file_type, size, public, sort, created_at from documents
+    ${pid ? "where product_id = $1" : ""} order by sort, created_at`, pid ? [pid] : []);
+  res.json({ documents: rows, kinds: DOC_KINDS });
+}));
+admin.post("/documents", owner, wrap(async (req, res) => {
+  const b = req.body || {}, pid = intOrNull(b.productId);
+  if (!pid || !(await q("select 1 from products where id = $1", [pid])).rows.length) return bad(res, "Pick a product first.");
+  const f = fileFrom(b.fileData);
+  if (!f) return bad(res, "Attach a PDF, JPG or PNG under 10 MB.");
+  const title = str(b.title, 140) || str(b.fileName, 140) || "Document";
+  const kind = DOC_KINDS.includes(b.kind) ? b.kind : "Other";
+  const { rows: [d] } = await q("insert into documents(product_id, title, kind, file_name, file_type, file, size, public) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id",
+    [pid, title, kind, str(b.fileName, 200), f.type, f.buf, f.buf.length, b.public !== false]);
+  res.json({ ok: true, id: d.id });
+}));
+admin.patch("/documents/:id", owner, wrap(async (req, res) => {
+  const b = req.body || {};
+  await q("update documents set title = coalesce(nullif($1, ''), title), kind = $2, public = $3 where id = $4",
+    [str(b.title, 140), DOC_KINDS.includes(b.kind) ? b.kind : "Other", b.public !== false, intOrNull(req.params.id)]);
+  res.json({ ok: true });
+}));
+admin.delete("/documents/:id", owner, wrap(async (req, res) => {
+  await q("delete from documents where id = $1", [intOrNull(req.params.id)]);
   res.json({ ok: true });
 }));
 

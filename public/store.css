@@ -302,3 +302,15 @@ main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
 .coachip.on { background: var(--blue-wash); border-color: var(--blue); color: var(--blue); }
 @media (min-width: 761px) { .coachip { display: none; } }
 @media (max-width: 760px) { .coaonly { display: none; } }
+
+/* PDF lab reports and product documents */
+.page.pdfpage { display: grid; place-items: center; background: #fff5f5; }
+.page.pdfpage span { padding: .4rem .7rem; background: #b42318; color: #fff; border-radius: 6px; font: 700 .95rem/1 var(--body); letter-spacing: .05em; }
+a.doc { text-decoration: none; color: inherit; }
+.doclist { display: grid; gap: .5rem; margin: 0; padding: 0; list-style: none; }
+.doclist a { display: flex; align-items: center; gap: .75rem; padding: .65rem .8rem; background: var(--card); border: 1px solid var(--line); border-radius: 10px; color: var(--ink); text-decoration: none; }
+.doclist a:hover { border-color: var(--blue); }
+.doclist strong { display: block; font-size: .9rem; }
+.doclist small { color: var(--ink-2); font-size: .78rem; }
+.dtype { flex: none; display: grid; place-items: center; width: 2.4rem; height: 2.4rem; background: var(--blue-wash); color: var(--blue); border-radius: 8px; font: 700 .7rem/1 var(--body); }
+#rmBody > .block { margin-top: 1.25rem; }
