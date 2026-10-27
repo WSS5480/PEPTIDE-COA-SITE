@@ -141,7 +141,7 @@ async function orderDetail(id) {
     <div class="stack">
       <div class="panel"><h2>Items</h2><div class="tblwrap"><table class="tbl"><tr><th>Product</th><th class="num">Qty</th><th class="num">Each</th><th class="num">Line</th></tr>
         ${items.map((i) => `<tr><td class="namecol">${esc(i.name)} ${esc(i.strength)}</td><td class="num">${i.qty}</td><td class="num">${money(i.unit_cents)}</td><td class="num">${money(i.unit_cents * i.qty)}</td></tr>`).join("")}
-        <tr><td colspan="3">Subtotal</td><td class="num">${money(o.subtotal_cents)}</td></tr>
+        <tr><td colspan="3">Subtotal${o.price_markup !== null && o.price_markup !== undefined ? ` <span class="muted">(customer pricing: cost +${esc(Number(o.price_markup))}%)</span>` : ""}</td><td class="num">${money(o.subtotal_cents)}</td></tr>
         <tr><td colspan="3">Discount${o.discount_code ? ` (code <span class="mono">${esc(o.discount_code)}</span>)` : ""}</td><td class="num">${isOwner() ? `<input id="odisc" value="${dollars(o.discount_cents)}" inputmode="decimal" style="max-width:7rem;margin-left:auto">` : money(o.discount_cents)}</td></tr>
         <tr><td colspan="3">${esc(o.shipping_method || (delivery ? "Local delivery" : "Shipping"))}</td><td class="num">${isOwner() ? `<input id="oship" value="${dollars(o.shipping_cents)}" inputmode="decimal" style="max-width:7rem;margin-left:auto">` : money(o.shipping_cents)}</td></tr>
         <tr><td colspan="3"><strong>Total</strong></td><td class="num"><strong>${money(o.total_cents)}</strong></td></tr></table></div>
@@ -215,6 +215,7 @@ async function orderDetail(id) {
 async function customers() {
   pane().innerHTML = `<header><h1>Customers</h1>${isOwner() ? `<button class="btn solid" id="addC">Add customer</button>` : ""}</header>
     <p class="muted">Give a customer their own PIN to let them into the site. Their PIN works only for them: it unlocks the store and signs them into their account. Changing or revoking it, or turning the account off, ends their access right away. Turn the lock on under Site settings → Site PIN.</p>
+    <p class="muted"><strong>Pricing:</strong> a customer with a markup pays our cost plus that percent on every product that has a cost (products without a cost stay at the store price). They see their prices as soon as they sign in; sales reps see them when they place that customer's order. "Store prices" = the normal Products &amp; prices list.</p>
     <div id="cNew"></div><div id="pinShow"></div>
     <div class="filters"><input id="cq" type="search" placeholder="Name or email"></div>
     <div class="tblwrap" id="ct"><p class="muted">Loading…</p></div>`;
@@ -224,6 +225,13 @@ async function customers() {
   const repCell = (c) => isOwner()
     ? `<select data-rep style="min-width:8rem"><option value="">— none —</option>${repList.filter((r) => r.active || r.id === c.rep_id).map((r) => `<option value="${r.id}"${r.id === c.rep_id ? " selected" : ""}>${esc(r.name)}${r.active ? "" : " (off)"}</option>`).join("")}</select>`
     : esc(c.rep_name || "");
+  const MK = ["25", "50", "75", "100"];
+  const markupCell = (c) => {
+    const cur = c.markup === null || c.markup === undefined ? "" : String(Number(c.markup));
+    const custom = cur !== "" && !MK.includes(cur);
+    if (!isOwner()) return cur ? `+${esc(cur)}% over cost` : "Store prices";
+    return `<div class="row2" style="flex-wrap:nowrap"><select data-markup style="min-width:7.5rem" title="What this customer pays: our cost plus this markup"><option value="">Store prices</option>${MK.map((m) => `<option value="${m}"${cur === m ? " selected" : ""}>+${m}%</option>`).join("")}<option value="custom"${custom ? " selected" : ""}>Custom…</option></select><input data-markup-custom inputmode="decimal" value="${custom ? esc(cur) : ""}" placeholder="%" style="width:4.5rem"${custom ? "" : " hidden"}></div>`;
+  };
   const pinCell = (c) => {
     if (!isOwner()) return c.has_pin ? "Set" : "";
     return c.has_pin
@@ -233,9 +241,9 @@ async function customers() {
   };
   const load = async () => {
     const { customers: list } = await api("/customers?q=" + encodeURIComponent(term));
-    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Sales rep</th><th>Site PIN</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th>${isOwner() ? "<th></th>" : ""}</tr>
+    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Pricing</th><th>Sales rep</th><th>Site PIN</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th>${isOwner() ? "<th></th>" : ""}</tr>
       ${list.map((c) => `<tr data-cid="${c.id}" data-cname="${esc(c.name || c.email)}"><td>${esc(c.name)}</td><td><a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a></td><td>${esc(c.phone)}</td>
-        <td>${repCell(c)}</td><td>${pinCell(c)}</td><td>${when(c.created_at)}</td>
+        <td>${markupCell(c)}</td><td>${repCell(c)}</td><td>${pinCell(c)}</td><td>${when(c.created_at)}</td>
         <td class="num">${c.orders}</td><td class="num">${money(c.spent_cents)}</td><td>${c.last_order ? when(c.last_order) : ""}</td>
         <td><input type="checkbox" data-cact${c.active ? " checked" : ""}${ro()}></td>
         ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-cedit>Edit</button><button class="btn" data-cdel>Delete</button></td>` : ""}</tr>`).join("")}</table>` : `<p class="muted">No customers yet.${isOwner() ? " Use Add customer to set one up and give them a PIN." : ""}</p>`;
@@ -285,13 +293,17 @@ async function customers() {
     const f = (id, label, type = "text") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}"></div>`;
     box.innerHTML = `<div class="panel"><h2>Add customer</h2><div class="grid2">${f("nc-n", "Name")}${f("nc-e", "Email", "email")}${f("nc-p", "Phone", "tel")}</div>
       <div class="grid2">${f("nc-1", "Street address")}${f("nc-2", "Apt, suite")}${f("nc-c", "City")}${f("nc-s", "State")}${f("nc-z", "ZIP")}</div>
-      <div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-rep">Sales rep (for commission)</label><select id="nc-rep"><option value="">— none —</option>${activeReps.map((r) => `<option value="${r.id}">${esc(r.name)} · ${r.commission_rate}%</option>`).join("")}</select></div>
+      <div class="grid2"><div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-rep">Sales rep (for commission)</label><select id="nc-rep"><option value="">— none —</option>${activeReps.map((r) => `<option value="${r.id}">${esc(r.name)} · ${r.commission_rate}%</option>`).join("")}</select></div>
+      <div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-mk">Pricing (markup over our cost)</label><div class="row2" style="flex-wrap:nowrap"><select id="nc-mk" style="flex:1"><option value="">Store prices</option>${MK.map((m) => `<option value="${m}">+${m}%</option>`).join("")}<option value="custom">Custom…</option></select><input id="nc-mkc" inputmode="decimal" placeholder="%" style="width:5rem" hidden></div></div></div>
       <label class="chk"><input type="checkbox" id="nc-pin" checked> Give them a PIN now</label>
       <div class="row2"><button class="btn solid" type="button" id="ncSave">Add customer</button><button class="btn" type="button" id="ncCancel">Cancel</button></div></div>`;
     document.getElementById("ncCancel").onclick = () => { box.innerHTML = ""; };
+    document.getElementById("nc-mk").onchange = (e) => { const c = document.getElementById("nc-mkc"); c.hidden = e.target.value !== "custom"; if (!c.hidden) c.focus(); };
     document.getElementById("ncSave").onclick = async () => {
       const g = (x) => document.getElementById(x).value;
-      const r = await api("/customers", { method: "POST", body: { name: g("nc-n"), email: g("nc-e"), phone: g("nc-p"), repId: g("nc-rep") || null, address: { line1: g("nc-1"), line2: g("nc-2"), city: g("nc-c"), state: g("nc-s"), zip: g("nc-z") } } });
+      const mk = g("nc-mk") === "custom" ? g("nc-mkc") : g("nc-mk");
+      if (g("nc-mk") === "custom" && !(parseFloat(mk) >= 0)) return toast("Enter the custom markup as a percent, like 35");
+      const r = await api("/customers", { method: "POST", body: { name: g("nc-n"), email: g("nc-e"), phone: g("nc-p"), repId: g("nc-rep") || null, markup: mk, address: { line1: g("nc-1"), line2: g("nc-2"), city: g("nc-c"), state: g("nc-s"), zip: g("nc-z") } } });
       const wantPin = document.getElementById("nc-pin").checked, name = g("nc-n");
       box.innerHTML = ""; toast("Customer added"); await load();
       if (wantPin) givePin(r.id, name);
@@ -319,6 +331,21 @@ async function customers() {
     if (box) { await api("/customers/" + box.closest("tr").dataset.cid, { method: "PATCH", body: { active: box.checked } }); toast(box.checked ? "Account turned on" : "Account turned off"); }
   };
   document.getElementById("ct").onchange = async (e) => {
+    const mk = e.target.closest("[data-markup]");
+    if (mk) {
+      const inp = mk.parentElement.querySelector("[data-markup-custom]");
+      if (mk.value === "custom") { inp.hidden = false; inp.focus(); return; }
+      inp.hidden = true;
+      await api("/customers/" + mk.closest("tr").dataset.cid, { method: "PATCH", body: { markup: mk.value } });
+      toast(mk.value ? `Pays cost +${mk.value}% from now on` : "Pays store prices"); return;
+    }
+    const mc = e.target.closest("[data-markup-custom]");
+    if (mc) {
+      const v = parseFloat(mc.value);
+      if (!(v >= 0)) return toast("Enter the markup as a percent, like 35");
+      await api("/customers/" + mc.closest("tr").dataset.cid, { method: "PATCH", body: { markup: v } });
+      toast(`Pays cost +${v}% from now on`); return;
+    }
     const sel = e.target.closest("[data-rep]"); if (!sel) return;
     await api("/customers/" + sel.closest("tr").dataset.cid, { method: "PATCH", body: { repId: sel.value || null } });
     toast(sel.value ? "Sales rep assigned. New orders from this customer earn them commission." : "Sales rep removed");

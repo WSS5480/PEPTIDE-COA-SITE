@@ -43,6 +43,9 @@ function publicSettings(s) {
   // card payments only work once the Stripe key is on the host, so the store is told the effective state
   return { ...Object.fromEntries(keys.map((k) => [k, s[k]])), cardPayments: !!(s.cardPayments && stripe) };
 }
+// Customer pricing: a customer with a markup pays cost + markup on every product that has a cost; otherwise the store price.
+const markupOf = (v) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 && n <= 1000 ? Math.round(n * 100) / 100 : null; };
+const priceFor = (p, markup) => (markup !== null && markup !== undefined && p.cost_cents !== null && p.cost_cents !== undefined ? Math.round(p.cost_cents * (1 + Number(markup) / 100)) : p.price_cents);
 // The two ways to get an order, as the store, the rep app and order creation see them.
 function fulfillmentOptions(s) {
   const out = [];
@@ -178,13 +181,17 @@ app.get("/api/version", wrap(async (req, res) => {
 }));
 app.get("/api/store", wrap(async (req, res) => {
   const s = await getSettings();
-  const [{ rows: products }, { rows: reports }] = await Promise.all([
-    q("select id,name,strength,manufacturer,category,description,price_cents,stock,max_per_order,vial_label,media_v,(image is not null) has_image,(logo is not null) has_logo from products where active order by sort, name, strength, manufacturer, id"),
-    q(`select ${REPORT_COLS} from reports where active order by product, tested desc nulls last`)
+  const [{ rows: products }, { rows: reports }, cust] = await Promise.all([
+    q("select id,name,strength,manufacturer,category,description,price_cents,cost_cents,stock,max_per_order,vial_label,media_v,(image is not null) has_image,(logo is not null) has_logo from products where active order by sort, name, strength, manufacturer, id"),
+    q(`select ${REPORT_COLS} from reports where active order by product, tested desc nulls last`),
+    customerFrom(req)
   ]);
   const { rows: documents } = await q("select d.id, d.product_id, d.title, d.kind, d.file_type, d.size from documents d join products p on p.id = d.product_id where d.public and p.active order by d.sort, d.created_at");
+  // a signed-in customer with their own markup sees their prices; our cost never leaves the server
+  const markup = cust && cust.markup !== null ? Number(cust.markup) : null;
+  const out = products.map(({ cost_cents, ...p }) => ({ ...p, price_cents: priceFor({ ...p, cost_cents }, markup) }));
   res.set("Cache-Control", "no-store");
-  res.json({ settings: publicSettings(s), products, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents });
+  res.json({ settings: publicSettings(s), products: out, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents, pricing: markup !== null ? { markup } : null });
 }));
 
 app.get("/coa/:id", wrap(async (req, res) => {
@@ -244,12 +251,13 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
   if (!items.length) return bad(res, "Your cart is empty.");
   // the order belongs to the signed-in customer, or to a customer with the same email; their sales rep gets the commission
   let cust = await customerFrom(req);
+  const markup = cust && cust.markup !== null ? Number(cust.markup) : null; // only a signed-in customer gets their own prices (that's what they saw)
   if (!cust) cust = (await q("select id, rep_id from customers where lower(email) = $1 and active", [email])).rows[0] || null;
   else cust.rep_id = (await q("select rep_id from customers where id = $1", [cust.id])).rows[0]?.rep_id ?? null;
   const payCard = b.pay === "card";
   if (payCard && !(s.cardPayments && stripe)) return bad(res, "Card payments aren't available right now. Please submit the order as a request instead.");
   try {
-    const r = await createOrder({ name, email, phone, address, items, fulfillment: b.fulfillment, payMethod: payCard ? "card" : "request", discountCode: b.discountCode, note: b.note, customerId: cust ? cust.id : null, repId: cust ? cust.rep_id : null,
+    const r = await createOrder({ name, email, phone, address, items, fulfillment: b.fulfillment, payMethod: payCard ? "card" : "request", discountCode: b.discountCode, markup, note: b.note, customerId: cust ? cust.id : null, repId: cust ? cust.rep_id : null,
       placedBy: "Customer", event: `Order placed; customer confirmed research use and age${payCard ? "; paying by card" : ""}`, settings: s });
     if (payCard) {
       // the customer pays on Stripe's page; the order is marked paid when they come back (and by the webhook)
@@ -263,15 +271,16 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
 
 // Creates an order in one transaction: checks price, limits and stock, takes the stock, records the rep and their rate.
 // fulfillment: "ship" (charged) or "delivery" (free), from Site settings.
-async function createOrder({ name, email, phone, address, items, fulfillment, payMethod = "request", discountCode, note, customerId, repId, placedBy, event, settings }) {
+async function createOrder({ name, email, phone, address, items, fulfillment, payMethod = "request", discountCode, markup = null, note, customerId, repId, placedBy, event, settings }) {
   const client = await pool.connect();
   try {
     await client.query("begin");
     let subtotal = 0; const lines = [];
     for (const it of items) {
       const qty = Math.max(1, Math.min(999, intOrNull(it.qty) || 1));
-      const { rows: [p] } = await client.query("select id, name, strength, manufacturer, price_cents, stock, max_per_order from products where id = $1 and active for update", [intOrNull(it.id)]);
+      const { rows: [p] } = await client.query("select id, name, strength, manufacturer, price_cents, cost_cents, stock, max_per_order from products where id = $1 and active for update", [intOrNull(it.id)]);
       if (!p) throw new Error("An item in the order is no longer available. Remove it and try again.");
+      p.price_cents = priceFor(p, markup); // the customer's own price when they have a markup
       if (p.price_cents === null) throw new Error(`${p.name} ${p.strength} has no price yet. Remove it or set a price first.`);
       if (p.max_per_order && qty > p.max_per_order) throw new Error(`${p.name} ${p.strength} is limited to ${p.max_per_order} per order.`);
       if (p.stock !== null && qty > p.stock) throw new Error(p.stock > 0 ? `Only ${p.stock} of ${p.name} ${p.strength} left.` : `${p.name} ${p.strength} is sold out.`);
@@ -299,9 +308,9 @@ async function createOrder({ name, email, phone, address, items, fulfillment, pa
     const number = String(Date.now()).slice(-6) + crypto.randomInt(10, 99);
     const total = subtotal - discount + shipCents;
     const { rows: [o] } = await client.query(
-      `insert into orders(number,name,email,phone,address,shipping_method,shipping_cents,subtotal_cents,discount_cents,discount_code,total_cents,customer_note,customer_id,rep_id,commission_rate,placed_by,fulfillment,pay_method)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) returning id`,
-      [number, name, email, phone, JSON.stringify(address), shipName, shipCents, subtotal, discount, codeUsed, total, str(note, 1000), customerId, repId, rate, placedBy, fulfil, payMethod === "card" ? "card" : "request"]);
+      `insert into orders(number,name,email,phone,address,shipping_method,shipping_cents,subtotal_cents,discount_cents,discount_code,total_cents,customer_note,customer_id,rep_id,commission_rate,placed_by,fulfillment,pay_method,price_markup)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) returning id`,
+      [number, name, email, phone, JSON.stringify(address), shipName, shipCents, subtotal, discount, codeUsed, total, str(note, 1000), customerId, repId, rate, placedBy, fulfil, payMethod === "card" ? "card" : "request", markup]);
     for (const { p, qty } of lines) {
       // the maker goes into the line name so orders show which one was bought
       await client.query("insert into order_items(order_id,product_id,name,strength,unit_cents,qty) values ($1,$2,$3,$4,$5,$6)", [o.id, p.id, p.manufacturer ? `${p.name} (${p.manufacturer})` : p.name, p.strength, p.price_cents, qty]);
@@ -565,7 +574,7 @@ async function notifyOrder(orderId, kind) {
 async function customerFrom(req) {
   const token = parseCookies(req.headers.cookie).cid;
   if (!token) return null;
-  const { rows } = await q("select c.id, c.email, c.name, c.phone, c.address from customer_sessions s join customers c on c.id = s.customer_id where s.token = $1 and s.expires > now() and c.active", [token]);
+  const { rows } = await q("select c.id, c.email, c.name, c.phone, c.address, c.markup from customer_sessions s join customers c on c.id = s.customer_id where s.token = $1 and s.expires > now() and c.active", [token]);
   return rows[0] || null;
 }
 async function startCustomerSession(res, id) {
@@ -810,7 +819,7 @@ admin.post("/orders/:id/note", wrap(async (req, res) => {
 /* ---------- admin: customers ---------- */
 admin.get("/customers", wrap(async (req, res) => {
   const term = str(req.query.q, 80).toLowerCase();
-  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.active, c.created_at, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.rep_id, (select name from users where id = c.rep_id) rep_name,
+  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.active, c.created_at, c.markup, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.rep_id, (select name from users where id = c.rep_id) rep_name,
       count(o.id)::int orders, coalesce(sum(o.total_cents) filter (where o.status in ('paid','shipped','delivered')), 0)::int spent_cents, max(o.created_at) last_order
     from customers c left join orders o on o.customer_id = c.id
     where ($1 = '' or lower(c.name) like '%' || $1 || '%' or lower(c.email) like '%' || $1 || '%')
@@ -824,8 +833,8 @@ admin.post("/customers", owner, wrap(async (req, res) => {
   if (ex) return bad(res, "A customer with that email already exists.");
   // they sign in with the PIN you give them; this random password is never shown to anyone
   const repId = intOrNull(b.repId) && (await q("select 1 from users where id = $1 and role = 'rep'", [intOrNull(b.repId)])).rows.length ? intOrNull(b.repId) : null;
-  const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash, rep_id) values ($1,$2,$3,$4,$5,$6) returning id",
-    [email, str(b.name, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId]);
+  const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash, rep_id, markup) values ($1,$2,$3,$4,$5,$6,$7) returning id",
+    [email, str(b.name, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId, b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup)]);
   await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
   res.json({ ok: true, id: c.id });
 }));
@@ -867,6 +876,12 @@ admin.patch("/customers/:id", owner, wrap(async (req, res) => {
     if (rid && !(await q("select 1 from users where id = $1 and role = 'rep'", [rid])).rows.length) return bad(res, "Rep not found");
     await q("update customers set rep_id = $1 where id = $2", [rid, id]);
     return res.json({ ok: true });
+  }
+  if (req.body?.markup !== undefined) {
+    const m = req.body.markup === "" || req.body.markup === null ? null : markupOf(req.body.markup);
+    if (req.body.markup !== "" && req.body.markup !== null && m === null) return bad(res, "Enter the markup as a percent, like 35");
+    await q("update customers set markup = $1 where id = $2", [m, id]);
+    return res.json({ ok: true, markup: m });
   }
   const active = req.body?.active !== false;
   await q("update customers set active = $1 where id = $2", [active, id]);
@@ -1424,7 +1439,7 @@ rep.get("/me", wrap(async (req, res) => {
   res.json({ rep: u, customers: c.n, totals: commTotals(rows), month: { orders: month.length, sales: month.reduce((t, r) => t + r.subtotal_cents - r.discount_cents, 0), commission: month.reduce((t, r) => t + r.commission_cents, 0) }, brand: s.brand });
 }));
 rep.get("/customers", wrap(async (req, res) => {
-  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.address, c.created_at, c.active,
+  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.address, c.created_at, c.active, c.markup,
       (select count(*)::int from orders o where o.customer_id = c.id and o.status <> 'cancelled') orders,
       coalesce((select sum(o.subtotal_cents - o.discount_cents) from orders o where o.customer_id = c.id and o.status <> 'cancelled'), 0)::int sales_cents,
       (select max(created_at) from orders o where o.customer_id = c.id) last_order
@@ -1453,21 +1468,24 @@ rep.patch("/customers/:id", wrap(async (req, res) => {
 }));
 rep.get("/catalog", wrap(async (req, res) => {
   const [{ rows: products }, s] = await Promise.all([
-    q("select id, name, strength, manufacturer, category, price_cents, stock, max_per_order from products where active order by sort, name, strength, manufacturer, id"),
+    q("select id, name, strength, manufacturer, category, price_cents, cost_cents, stock, max_per_order from products where active order by sort, name, strength, manufacturer, id"),
     getSettings()
   ]);
-  res.json({ products, fulfillment: fulfillmentOptions(s), cardPayments: !!(s.cardPayments && stripe) });
+  // priced for one of the rep's customers when asked (their markup); our cost never leaves the server
+  let markup = null;
+  if (intOrNull(req.query.customerId)) { const { rows: [c] } = await q("select markup from customers where id = $1 and rep_id = $2", [intOrNull(req.query.customerId), req.user.id]); if (c && c.markup !== null) markup = Number(c.markup); }
+  res.json({ products: products.map(({ cost_cents, ...p }) => ({ ...p, price_cents: priceFor({ ...p, cost_cents }, markup) })), fulfillment: fulfillmentOptions(s), cardPayments: !!(s.cardPayments && stripe), markup });
 }));
 rep.post("/orders", wrap(async (req, res) => {
   const b = req.body || {};
-  const { rows: [c] } = await q("select id, name, email, phone, address from customers where id = $1 and rep_id = $2 and active", [intOrNull(b.customerId), req.user.id]);
+  const { rows: [c] } = await q("select id, name, email, phone, address, markup from customers where id = $1 and rep_id = $2 and active", [intOrNull(b.customerId), req.user.id]);
   if (!c) return bad(res, "Pick one of your customers.");
   const items = (Array.isArray(b.items) ? b.items : []).filter((i) => intOrNull(i.qty) > 0).slice(0, 100);
   if (!items.length) return bad(res, "Add at least one product.");
   const a = c.address || {};
   if (!a.line1 || !a.city || !a.state || !a.zip) return bad(res, "This customer has no full shipping address yet. Edit the customer first.");
   try {
-    const r = await createOrder({ name: c.name, email: c.email, phone: c.phone, address: a, items, fulfillment: b.fulfillment, discountCode: b.discountCode, note: b.note, customerId: c.id, repId: req.user.id,
+    const r = await createOrder({ name: c.name, email: c.email, phone: c.phone, address: a, items, fulfillment: b.fulfillment, discountCode: b.discountCode, markup: c.markup !== null ? Number(c.markup) : null, note: b.note, customerId: c.id, repId: req.user.id,
       placedBy: `Rep: ${req.user.name || req.user.email}`, event: `Order placed by sales rep ${req.user.name || req.user.email}`, settings: await getSettings() });
     notifyOrder(r.id, "new").catch((e) => console.error("Order email failed:", e.message));
     // with card payments on, the rep gets a payment link to text or email to the customer

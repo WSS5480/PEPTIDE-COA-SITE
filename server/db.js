@@ -192,6 +192,9 @@ alter table orders add column if not exists stripe_session text;
 alter table orders add column if not exists stripe_pi text;
 alter table orders add column if not exists paid_cents int;
 alter table orders add column if not exists discount_code text not null default '';
+-- customer pricing: a markup % over our cost that replaces the store price for that customer (null = store prices)
+alter table customers add column if not exists markup numeric(6,2);
+alter table orders add column if not exists price_markup numeric(6,2);
 -- discount codes customers type at checkout; made in admin
 create table if not exists discount_codes (
   id serial primary key,

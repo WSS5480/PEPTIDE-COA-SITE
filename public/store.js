@@ -30,6 +30,7 @@ function banner(el, S) {
 }
 let S = {}, PRODUCTS = [], REPORTS = [], FUL = [], DOCS = [];
 let CODE = null; // discount code applied at checkout: { code, kind, value, label, minSubtotalCents }
+let PRICING = null; // { markup } when the signed-in customer has their own pricing
 let cart = store.get("cart") || [];   // [{id, qty}]
 const saveCart = () => { store.set("cart", cart); drawCartCount(); };
 
@@ -484,6 +485,7 @@ let first = true;
 async function load() {
   const res = await fetch("/api/store"); const j = await res.json();
   S = j.settings; PRODUCTS = j.products; REPORTS = j.reports; FUL = j.fulfillment || []; DOCS = j.documents || [];
+  PRICING = j.pricing || null;
   if (first) {
     first = false;
     afterPayment();
@@ -527,6 +529,7 @@ async function load() {
     if (target) requestAnimationFrame(() => { const el = $(rid(target)); if (el) el.scrollIntoView({ block: "center" }); });
     gate();
   } else drawReports();
+  { const base = S.priceNote || ""; $("pNote").textContent = PRICING ? `${base}${base ? " · " : ""}Your account pricing is applied.` : base; }
   drawProducts(); drawCartCount();
 }
 if (window.AppRefresh) window.AppRefresh.init({
