@@ -424,7 +424,7 @@ async function products() {
     <td>${inp("name", p?.name, "Name", ' style="min-width:16rem"')}</td>
     <td>${inp("strength", p?.strength, "10 mg", ' style="min-width:4.5rem"')}</td>
     <td>${inp("category", p?.category ?? "Research peptide", "Category", ' list="catlist" style="min-width:9rem"')}</td>
-    <td>${inp("manufacturer", p?.manufacturer, "e.g. XINT", ' list="mfrlist" style="min-width:7rem"')}</td>
+    <td>${inp("manufacturer", p?.manufacturer, "", ' list="mfrlist" style="min-width:7rem"')}</td>
     <td>${inp("cost", dollars(p?.cost_cents), "—", ' inputmode="decimal" style="min-width:4.5rem" title="Our cost per vial (staff never see it on the store)"')}</td>
     <td>${inp("price", dollars(p?.price_cents), "Ask", ' inputmode="decimal" style="min-width:5rem"')}</td>
     <td>${inp("stock", p?.stock ?? "", "∞", ' inputmode="numeric" style="min-width:4rem"')}</td>
@@ -600,7 +600,7 @@ async function inventory() {
   const receiveForm = (only) => {
     const rows = only ? [only] : items.filter((p) => p.active);
     panel.innerHTML = `<div class="panel" style="border-color:var(--blue)"><div class="row2" style="justify-content:space-between;align-items:center"><h2>${only ? `Receive ${esc(label(only))}` : "Receive shipment"}</h2><button class="btn" type="button" data-pclose>Close</button></div>
-      <div class="grid2">${fld("rvSup", "Supplier", 'placeholder="e.g. XINT"')}${fld("rvRef", "Invoice / PO #")}${fld("rvNote", "Note")}</div>
+      <div class="grid2">${fld("rvSup", "Supplier")}${fld("rvRef", "Invoice / PO #")}${fld("rvNote", "Note")}</div>
       ${only ? "" : `<input id="rvQ" type="search" placeholder="Filter products" style="height:2.4rem;padding:0 .8rem;border:1px solid var(--line-strong);border-radius:8px;max-width:20rem">`}
       <div class="tblwrap" style="max-height:26rem;overflow:auto"><table class="tbl compact" id="rvT"><tr><th>Product</th><th class="num">Now</th><th>Qty received</th><th>Cost each $</th><th>Lot / batch</th><th>Expires</th></tr>
       ${rows.map((p) => `<tr data-rid="${p.id}" data-txt="${esc([p.name, p.strength, p.manufacturer].join(" ").toLowerCase())}"><td class="namecol"><strong>${esc(label(p))}</strong><div class="muted" style="font-size:.78rem">${esc(sub(p))}</div></td><td class="num">${p.stock ?? "—"}</td>
@@ -764,7 +764,7 @@ function downloadTemplate(list) {
   const cell = (v) => { const x = String(v ?? ""); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
   const lines = [IMPORT_COLS.map(([, l]) => l).join(",")];
   list.forEach((p) => lines.push([p.name, p.strength, p.category, p.manufacturer, p.price_cents === null ? "" : (p.price_cents / 100).toFixed(2), p.stock ?? "", p.max_per_order ?? "", p.sort, p.active ? "Yes" : "No", p.description].map(cell).join(",")));
-  if (!list.length) lines.push("BPC-157,10 mg,Tissue repair research,XINT,45.00,25,,0,Yes,");
+  if (!list.length) lines.push("BPC-157,10 mg,Tissue repair research,,,45.00,25,,0,Yes,");
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" })); a.download = "products.csv"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 function importBox(list) {
@@ -884,7 +884,7 @@ async function discounts() {
       <div class="grid2" style="grid-template-columns:repeat(auto-fit,minmax(11rem,1fr))">
         <div class="field"><label class="eyebrow" for="dcCode">Code</label><div class="row2" style="flex-wrap:nowrap"><input id="dcCode" placeholder="e.g. WELCOME10" autocapitalize="characters" style="text-transform:uppercase;flex:1;min-width:0"><button class="btn" type="button" id="dcGen" title="Make a random code">Generate</button></div></div>
         <div class="field"><label class="eyebrow" for="dcKind">Type</label><select id="dcKind"><option value="percent">Percent off</option><option value="amount">Dollars off</option></select></div>
-        <div class="field"><label class="eyebrow" for="dcValue">Amount</label><input id="dcValue" inputmode="decimal" placeholder="10"></div>
+        <div class="field"><label class="eyebrow" for="dcValue">Amount</label><input id="dcValue" inputmode="decimal" placeholder="%"></div>
         <div class="field"><label class="eyebrow" for="dcMin">Minimum order $ (optional)</label><input id="dcMin" inputmode="decimal" placeholder="None"></div>
         <div class="field"><label class="eyebrow" for="dcUses">Number of uses (optional)</label><input id="dcUses" inputmode="numeric" placeholder="Unlimited"></div>
         <div class="field"><label class="eyebrow" for="dcExp">Expires (optional)</label><input id="dcExp" type="date" min="${today}"></div>
@@ -895,6 +895,7 @@ async function discounts() {
         ${codes.map((c) => { const [st, cls] = state(c); return `<tr data-id="${c.id}"><td class="mono"><strong>${esc(c.code)}</strong></td><td>${esc(c.label)}</td><td>${c.min_subtotal_cents ? money(c.min_subtotal_cents) : "—"}</td><td class="num">${c.used}${c.max_uses !== null ? ` / ${c.max_uses}` : ""}</td><td>${c.expires ? esc(String(c.expires).slice(0, 10)) : "—"}</td><td><span class="pill ${cls}">${st}</span></td><td class="num">${c.orders}</td><td class="num">${money(c.given_cents)}</td><td class="muted">${esc(c.note)}</td>
           <td class="row2" style="flex-wrap:nowrap"><button class="btn" data-copy="${esc(c.code)}">Copy</button><button class="btn" data-toggle="${c.active ? 0 : 1}">${c.active ? "Turn off" : "Turn on"}</button><button class="btn danger" data-del>Delete</button></td></tr>`; }).join("")}</table></div>` : `<p class="muted">No codes yet.</p>`}</div>`;
   const $ = (x) => document.getElementById(x);
+  $("dcKind").onchange = () => { $("dcValue").placeholder = $("dcKind").value === "percent" ? "%" : "$"; };
   $("dcGen").onclick = async () => { const r = await api("/discounts/new-code?prefix=" + encodeURIComponent($("dcCode").value.replace(/-.*$/, "").trim())); $("dcCode").value = r.code; };
   $("dcSave").onclick = async () => {
     const body = { code: $("dcCode").value, kind: $("dcKind").value, value: $("dcValue").value, minSubtotal: $("dcMin").value, maxUses: $("dcUses").value, expires: $("dcExp").value, note: $("dcNote").value };
