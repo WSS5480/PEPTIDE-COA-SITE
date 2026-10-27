@@ -837,6 +837,35 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
       [process.env.OWNER_EMAIL.trim().toLowerCase(), await bcrypt.hash(process.env.OWNER_PASSWORD, 11)]);
     console.log("Owner login created for", process.env.OWNER_EMAIL);
   } else if (n === 0) console.log("No owner yet: set OWNER_EMAIL and OWNER_PASSWORD and restart.");
+  // CATALOG_RESET on the host: each new value wipes every lab report and product (with their documents
+  // and stock history) once, then adds a few sample products to edit. Orders, customers and settings stay.
+  const resetTag = String(process.env.CATALOG_RESET || "").trim();
+  if (resetTag) {
+    const { rows: [done] } = await q("select value from settings where key = 'catalogResetMark'");
+    if (!done || done.value !== resetTag) {
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        const { rowCount: rr } = await client.query("delete from reports");
+        const { rowCount: pr } = await client.query("delete from products");
+        const SAMPLES = [
+          ["BPC-157", "10 mg", "Tissue repair research", "BC10", 4500],
+          ["TB-500", "10 mg", "Tissue repair research", "TB10", 5000],
+          ["GHK-Cu", "50 mg", "Skin and hair research", "CU50", 4000],
+          ["Ipamorelin", "10 mg", "Growth hormone research", "IP10", 3800],
+          ["Epithalon", "10 mg", "Longevity research", "ET10", 4200]
+        ];
+        for (const [i, [name, strength, category, sku, price]] of SAMPLES.entries()) {
+          await client.query("insert into products(name, strength, category, sku, price_cents, sort, description) values ($1,$2,$3,$4,$5,$6,$7)",
+            [name, strength, category, sku, price, i, "Sample listing. Edit or delete it in admin."]);
+        }
+        await client.query("insert into settings(key,value) values ('catalogResetMark',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(resetTag)]);
+        await client.query("commit");
+        console.log(`Catalog reset (${resetTag}): removed ${rr} lab reports and ${pr} products, added ${SAMPLES.length} samples`);
+      } catch (e) { await client.query("rollback").catch(() => {}); console.error("Catalog reset failed:", e.message); }
+      finally { client.release(); }
+    }
+  }
   // SITE_PIN on the host sets the shared store PIN. It's applied once per new value, so a PIN
   // changed later in admin isn't overwritten on restart. It doesn't turn the lock on or off.
   const envPin = String(process.env.SITE_PIN || "").trim();
