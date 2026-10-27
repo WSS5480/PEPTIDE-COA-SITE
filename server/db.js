@@ -141,6 +141,12 @@ alter table customers add column if not exists pin_version int not null default 
 alter table customers add column if not exists pin_set_at timestamptz;
 alter table customers add column if not exists pin_used_at timestamptz;
 alter table products add column if not exists reorder_point int;
+alter table products add column if not exists image bytea;
+alter table products add column if not exists image_type text;
+alter table products add column if not exists logo bytea;
+alter table products add column if not exists logo_type text;
+alter table products add column if not exists vial_label text not null default '';
+alter table products add column if not exists media_v int not null default 0;
 alter table products add column if not exists cost_cents int;
 create table if not exists stock_moves (
   id serial primary key,
@@ -177,6 +183,17 @@ const DEFAULT_SETTINGS = {
   announcementOn: false,
   pinOn: false,
   productLabel: "name",
+  // Page setup: the feature cards under the home page header
+  perksOn: true,
+  perks: [
+    { icon: "flask", title: "Independently tested", text: "Products are tested by an outside laboratory." },
+    { icon: "doc", title: "Lab reports online", text: "Open a product's lab report right from its listing." },
+    { icon: "key", title: "Easy to verify", text: "Check a report with the testing lab directly." },
+    { icon: "truck", title: "Tracked shipping", text: "Every order ships with a tracking number." }
+  ],
+  // Page setup: how the drawn product vial looks
+  vial: { shape: "vial", cap: "#0f1b33", band: "#c9d1dc", glass: "#ffffff", label: "#0b4d96", text: "#ffffff", sub: "#cfdcf0", liquid: "#e9f1fb", labelShows: "name" },
+  vialLogoV: 0,
   bannerScroll: true,
   heroEyebrow: "Third-party tested",
   headline: "Research peptides with the lab report on every vial",

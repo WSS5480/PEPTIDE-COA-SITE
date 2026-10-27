@@ -46,17 +46,26 @@ function gate() {
 }
 
 /* ---------- products ---------- */
-function vialSVG(name, size) {
-  const raw = String(name), label = esc(raw.slice(0, 22)), mg = esc(size), fit = raw.length > 8 ? ` textLength="52" lengthAdjust="spacingAndGlyphs"` : "";
-  return `<svg viewBox="0 0 120 200" aria-hidden="true">
-    <rect x="38" y="6" width="44" height="22" rx="4" fill="#0f1b33"/>
-    <rect x="34" y="26" width="52" height="10" rx="3" fill="#c9d1dc"/>
-    <path d="M30 40h60v140a14 14 0 0 1-14 14H44a14 14 0 0 1-14-14z" fill="#ffffff" stroke="#c9d1dc" stroke-width="2"/>
-    <rect x="30" y="78" width="60" height="78" fill="#0b4d96"/>
-    <text x="60" y="108" text-anchor="middle" font-family="Barlow Condensed, Arial Narrow, sans-serif" font-weight="700" font-size="14"${fit} fill="#fff">${label}</text>
-    <text x="60" y="130" text-anchor="middle" font-family="Poppins, sans-serif" font-weight="600" font-size="11" fill="#cfdcf0">${mg}</text>
-    <rect x="30" y="160" width="60" height="4" fill="#e9f1fb"/>
-  </svg>`;
+// product picture: the uploaded photo if there is one, otherwise the drawn vial (Page setup → Vial look)
+const ICON_PATHS = {
+  flask: '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3"/>',
+  doc: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/>',
+  shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',
+  truck: '<path d="M3 6h11v10H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
+  star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  chat: '<path d="M4 5h16v11H8l-4 4z"/>',
+  box: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
+  check: '<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>'
+};
+function productArt(p) {
+  if (p.has_image) return `<img class="pimg" src="/pimg/${p.id}?v=${p.media_v}" alt="${esc(`${p.name} ${p.strength}`)}" loading="lazy">`;
+  const v = S.vial || {};
+  const style = Object.assign({}, v, p.vial_label ? { label: p.vial_label } : {});
+  const useCode = !!p.sku && (v.labelShows === "code" || codeMode(p));
+  const logoUrl = p.has_logo ? `/plogo/${p.id}?v=${p.media_v}` : S.vialLogoV ? `/vial-logo?v=${S.vialLogoV}` : "";
+  return window.drawVial({ title: useCode ? p.sku : p.name, sub: p.strength, style, logoUrl });
 }
 // A product's lab report matches by name + size, or by its code (e.g. RT30) against the report's Sample line.
 const mfrOk = (p, r) => { const a = norm(p.manufacturer), b = norm(r.manufacturer); return !a || !b || a.includes(b) || b.includes(a); };
@@ -91,7 +100,7 @@ function drawProducts() {
     const buy = p.price_cents === null ? (S.contact ? `<span class="stockline">Contact us: ${esc(S.contact)}</span>` : "")
       : sold ? "" : `<button class="btn solid" type="button" data-add="${p.id}">Add to cart${inCart(p.id) ? ` (${inCart(p.id)})` : ""}</button>`;
     return `<article class="pcard">
-      <div class="thumb">${vialSVG(codeMode(p) ? p.sku : p.name, p.strength)}</div>
+      <div class="thumb">${productArt(p)}</div>
       <div class="pbody">
         <span class="pcat">${esc(p.category || "Research peptide")}${p.manufacturer ? ` · ${esc(p.manufacturer)}` : ""}</span>
         <h3 class="pname">${esc(codeMode(p) ? p.sku : p.name)}</h3>
@@ -425,9 +434,13 @@ async function load() {
     if (S.headline) $("headline").textContent = S.headline;
     if (S.heroEyebrow) $("heroEyebrow").textContent = S.heroEyebrow; else $("heroEyebrow").hidden = true;
     if (S.intro) $("lede").textContent = S.intro; else $("lede").hidden = true;
+    const perks = (S.perks || []).filter((c) => c.title || c.text);
+    if (S.perksOn !== false && perks.length) {
+      $("perks").innerHTML = perks.map((c) => `<li><svg viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[c.icon] || ICON_PATHS.check}</svg><div><strong>${esc(c.title)}</strong><span>${esc(c.text)}</span></div></li>`).join("");
+      $("perks").hidden = false;
+    }
     if (S.distributorOf) {
       $("topLine").textContent = `Authorized ${S.distributorOf} distributor`;
-      $("perkDist").textContent = `Authorized ${S.distributorOf} distributor`;
       // (distributor line above the product grid removed at owner request)
     }
     $("pNote").textContent = S.priceNote || "";

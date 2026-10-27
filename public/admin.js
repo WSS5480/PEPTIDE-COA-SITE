@@ -49,7 +49,7 @@ function drawLogin(msg) {
 }
 
 /* ---------- shell ---------- */
-const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Customers"], ["products", "Products & prices"], ["inventory", "Inventory"], ["reports", "Lab reports"], ["shipping", "Shipping"], ["settings", "Site settings"], ["staff", "Staff logins", true], ["account", "My account"]];
+const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Customers"], ["products", "Products & prices"], ["inventory", "Inventory"], ["reports", "Lab reports"], ["shipping", "Shipping"], ["page", "Page setup"], ["settings", "Site settings"], ["staff", "Staff logins", true], ["account", "My account"]];
 function shell() {
   app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><button type="button" id="mm">Menu</button></div>
   <div class="adm" id="adm"><aside class="side">
@@ -69,11 +69,11 @@ async function drawNav() {
 function go(v, id) {
   if (unsaved && !confirm("You have unsaved product changes. Leave without saving?")) return;
   unsaved = false;
-  const pn = document.getElementById("pane"); if (pn) pn.onclick = null; // drop the last screen's click handler
+  const pn = document.getElementById("pane"); if (pn) { pn.onclick = null; pn.oninput = null; pn.onchange = null; } // drop the last screen's handlers
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  ({ dashboard, orders, customers, products, inventory, reports, shipping, settings, staff, account }[v] || dashboard)();
+  ({ dashboard, orders, customers, products, inventory, reports, shipping, page, settings, staff, account }[v] || dashboard)();
   window.scrollTo(0, 0);
 }
 const pane = () => document.getElementById("pane");
@@ -349,9 +349,12 @@ async function products() {
       await api("/products/" + id, { method: "DELETE" }); toast("Deleted"); tr.remove(); return refresh();
     }
     if (!e.target.closest("[data-save]")) return;
-    await saveRow(tr); tr.classList.remove("bad"); refresh(); toast("Saved"); drawNav();
+    const isNew = !tr.dataset.id;
+    await saveRow(tr); tr.classList.remove("bad"); refresh(); toast(isNew ? "Saved. Add a picture or logo below." : "Saved"); drawNav();
+    if (isNew) { openManageId = +tr.dataset.id; unsaved = false; products(); }
   };
   refresh();
+  if (openManageId) { const p = list.find((x) => x.id === openManageId); openManageId = null; if (p) manageProduct(p, repFor(p)); }
 }
 
 
@@ -473,13 +476,28 @@ async function inventory() {
 const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
 const readFile = (file) => new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => no(new Error("Couldn't read the file")); fr.readAsDataURL(file); });
 const OK_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
-let pendingReport = null; // opens the Lab reports form already filled in for a product
+let pendingReport = null;
+let openManageId = null; // a peptide just added opens its Manage panel for picture/logo // opens the Lab reports form already filled in for a product
 async function manageProduct(p, reps) {
   const box = document.getElementById("manageBox");
   const label = `${p.name} ${p.strength}`.trim() + (p.manufacturer ? ` · ${p.manufacturer}` : "") + (p.sku ? ` · ${p.sku}` : "");
   const { documents: docs, kinds } = await api("/documents?productId=" + p.id);
+  const st = await api("/settings").catch(() => ({ settings: {} }));
+  const vialStyle = Object.assign({}, window.VIAL_DEFAULT, st.settings.vial || {});
+  const artHTML = () => p.has_image ? `<img src="/pimg/${p.id}?v=${p.media_v}" alt="">`
+    : window.drawVial({ title: vialStyle.labelShows === "code" && p.sku ? p.sku : p.name, sub: p.strength, style: Object.assign({}, vialStyle, p.vial_label ? { label: p.vial_label } : {}), logoUrl: p.has_logo ? `/plogo/${p.id}?v=${p.media_v}` : st.settings.vialLogoV ? `/vial-logo?v=${st.settings.vialLogoV}` : "" });
   box.innerHTML = `<div class="panel" style="border-color:var(--blue)">
     <div class="row2" style="justify-content:space-between;align-items:center"><h2>${esc(label)}</h2><button class="btn" type="button" id="mgClose">Close</button></div>
+    <div class="row2" style="align-items:flex-start;gap:1.25rem">
+      <div class="vialprev" id="mgArt">${artHTML()}</div>
+      <div class="stack" style="flex:1;min-width:16rem"><h3 class="eyebrow">Picture &amp; vial</h3>
+        <p class="muted" style="font-size:.82rem">A picture replaces the drawn vial on the store. Without one, the vial is drawn using Page setup → Vial look, with this product's logo and label color if you set them.</p>
+        ${isOwner() ? `<div class="field"><label class="eyebrow">Product picture (JPG/PNG, under 5 MB)</label><div class="row2"><input type="file" id="mgPic" accept="image/png,image/jpeg,image/webp">${p.has_image ? '<button class="btn" type="button" data-mdel="image">Remove picture</button>' : ""}</div></div>
+        <div class="field"><label class="eyebrow">Logo on this vial's label</label><div class="row2"><input type="file" id="mgLogo" accept="image/png,image/jpeg,image/webp">${p.has_logo ? '<button class="btn" type="button" data-mdel="logo">Remove logo</button>' : ""}</div></div>
+        <div class="row2" style="align-items:center"><label class="chk"><input type="color" id="mgColor" value="${esc(p.vial_label || vialStyle.label)}" style="width:2.4rem;height:2rem;padding:0;border:1px solid var(--line-strong);border-radius:6px"> Label color for this product</label>
+          <button class="btn" type="button" id="mgColorSave">Use this color</button>${p.vial_label ? '<button class="linkbtn" type="button" id="mgColorClear">Use the standard color</button>' : ""}</div>` : ""}
+      </div>
+    </div>
     <div class="two">
       <div class="stack"><h3 class="eyebrow">Lab reports (COA)</h3>
         ${reps.length ? `<ul class="hist">${reps.map((r) => `<li><strong>${esc(r.sample || `${r.product} ${r.strength}`)}</strong>${r.task ? ` · task #${esc(r.task)}` : ""}${r.tested ? ` · tested ${esc(r.tested)}` : ""}
@@ -504,6 +522,19 @@ async function manageProduct(p, reps) {
   box.scrollIntoView({ behavior: "smooth", block: "start" });
   const $ = (x) => document.getElementById(x);
   $("mgClose").onclick = () => { box.innerHTML = ""; };
+  const media = async (body, msg) => { await api(`/products/${p.id}/media`, { method: "POST", body }); toast(msg); refreshP(); };
+  const refreshP = async () => { const { products: all } = await api("/products"); const np = all.find((x) => x.id === p.id); if (np) Object.assign(p, np); manageProduct(p, reps); };
+  const upload = (input, kind) => input && (input.onchange = async () => {
+    const f = input.files[0]; if (!f) return;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(f.type)) return toast("Use a JPG, PNG or WEBP");
+    if (f.size > 5 * 1024 * 1024) return toast("That image is over 5 MB");
+    await media({ kind, fileData: await fileToData(f) }, kind === "logo" ? "Logo added" : "Picture added");
+  });
+  upload($("mgPic"), "image"); upload($("mgLogo"), "logo");
+  box.querySelectorAll("[data-mdel]").forEach((b) => (b.onclick = async () => { await api(`/products/${p.id}/media/${b.dataset.mdel}`, { method: "DELETE" }); toast("Removed"); refreshP(); }));
+  if ($("mgColor")) $("mgColor").oninput = () => { if (!p.has_image) $("mgArt").innerHTML = window.drawVial({ title: vialStyle.labelShows === "code" && p.sku ? p.sku : p.name, sub: p.strength, style: Object.assign({}, vialStyle, { label: $("mgColor").value }), logoUrl: p.has_logo ? `/plogo/${p.id}?v=${p.media_v}` : st.settings.vialLogoV ? `/vial-logo?v=${st.settings.vialLogoV}` : "" }); };
+  if ($("mgColorSave")) $("mgColorSave").onclick = () => media({ vialLabel: $("mgColor").value }, "Label color saved");
+  if ($("mgColorClear")) $("mgColorClear").onclick = () => media({ vialLabel: "" }, "Standard color restored");
   box.querySelectorAll("[data-editrep]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); pendingReport = { id: +a.dataset.editrep }; go("reports"); }));
   if ($("mgAddCoa")) $("mgAddCoa").onclick = () => { pendingReport = { product: p.name, strength: p.strength, sample: p.sku || `${p.name} ${p.strength}`.trim(), manufacturer: p.manufacturer || "" }; go("reports"); };
   if ($("dUp")) $("dUp").onclick = async () => {
@@ -673,6 +704,70 @@ async function shipping() {
   };
 }
 
+/* ---------- page setup: home page header, feature cards, vial look ---------- */
+const CARD_ICONS = [["flask", "Flask"], ["doc", "Document"], ["key", "Key"], ["shield", "Shield"], ["truck", "Truck"], ["star", "Star"], ["lock", "Lock"], ["chat", "Chat"], ["box", "Box"], ["check", "Check"]];
+const fileToData = (file) => new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => no(new Error("Couldn't read the file")); fr.readAsDataURL(file); });
+async function page() {
+  const { settings: s } = await api("/settings");
+  const own = isOwner();
+  const vial = Object.assign({}, window.VIAL_DEFAULT, s.vial || {});
+  let logoV = s.vialLogoV || 0;
+  const cards = (s.perks || []).concat(Array.from({ length: Math.max(0, 4 - (s.perks || []).length) }, () => ({ icon: "check", title: "", text: "" })));
+  const inp = (id, label, val, extra = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" value="${esc(val)}"${extra}${ro()}></div>`;
+  const COLORS = [["cap", "Cap"], ["band", "Metal band & outline"], ["glass", "Glass"], ["label", "Label"], ["text", "Label name"], ["sub", "Label size text"], ["liquid", "Liquid line"]];
+  pane().innerHTML = `<header><h1>Page setup</h1>${own ? `<button class="btn solid" id="pgSave">Save page setup</button>` : ""}</header>
+    <div class="panel"><h2>Home page header</h2>
+      ${inp("pg-eyebrow", "Small line above the headline", s.heroEyebrow)}
+      ${inp("pg-headline", "Headline", s.headline)}
+      <div class="field"><label class="eyebrow" for="pg-intro">Text under the headline</label><textarea id="pg-intro"${ro()}>${esc(s.intro)}</textarea></div></div>
+    <div class="panel"><h2>Feature cards</h2>
+      <label class="chk"><input type="checkbox" id="pg-perksOn"${s.perksOn !== false ? " checked" : ""}${ro()}> Show the feature cards under the header</label>
+      <p class="muted">Up to 6 cards. Leave a card's title and text empty to remove it.</p>
+      <div class="stack" id="pgCards">${cards.slice(0, 6).map((c, i) => `<div class="cardrow" data-card>
+        <div class="field"><label class="eyebrow">Icon</label><select data-c="icon"${ro()}>${CARD_ICONS.map(([v, l]) => `<option value="${v}"${c.icon === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>
+        <div class="field"><label class="eyebrow">Card ${i + 1} title</label><input data-c="title" value="${esc(c.title)}" maxlength="60"${ro()}></div>
+        <div class="field"><label class="eyebrow">Text</label><input data-c="text" value="${esc(c.text)}" maxlength="160"${ro()}></div></div>`).join("")}</div>
+      ${own && cards.length < 6 ? `<div><button class="linkbtn" type="button" id="pgAddCard">+ Add a card</button></div>` : ""}</div>
+    <div class="panel"><h2>Vial look</h2>
+      <p class="muted">How the drawn vial looks on every product that doesn't have its own picture. Each peptide can also have its own picture, logo or label color under Products &amp; prices → Manage.</p>
+      <div class="two"><div class="stack">
+        <div class="grid2"><div class="field"><label class="eyebrow" for="vl-shape">Shape</label><select id="vl-shape"${ro()}>${[["vial", "Vial"], ["tall", "Tall vial"], ["round", "Rounded bottle"]].map(([v, l]) => `<option value="${v}"${vial.shape === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>
+          <div class="field"><label class="eyebrow" for="vl-shows">Label shows</label><select id="vl-shows"${ro()}><option value="name"${vial.labelShows !== "code" ? " selected" : ""}>Peptide name</option><option value="code"${vial.labelShows === "code" ? " selected" : ""}>Product code (when it has one)</option></select></div></div>
+        <div class="colors">${COLORS.map(([k, l]) => `<label><input type="color" data-vc="${k}" value="${esc(vial[k])}"${ro()}> ${l}</label>`).join("")}</div>
+        <div class="field"><label class="eyebrow">Logo on every vial label (JPG/PNG, under 1 MB)</label>
+          <div class="row2">${own ? `<input type="file" id="vl-logo" accept="image/png,image/jpeg,image/webp"><button class="btn" type="button" id="vl-logoDel"${logoV ? "" : " hidden"}>Remove logo</button>` : ""}</div></div>
+        ${own ? `<div><button class="btn" type="button" id="vl-reset">Back to the original colors</button></div>` : ""}
+      </div>
+      <div class="stack" style="justify-items:center"><div class="vialprev" id="vlPrev"></div><input id="vl-sample" value="BPC-157" style="height:2.2rem;padding:0 .6rem;border:1px solid var(--line-strong);border-radius:8px;width:9rem;text-align:center" title="Sample name for the preview"><span class="muted" style="font-size:.78rem">Live preview</span></div></div></div>
+    ${own ? `<div><button class="btn solid" id="pgSave2">Save page setup</button></div>` : ""}`;
+  const $ = (x) => document.getElementById(x);
+  const readVial = () => { const v = { shape: $("vl-shape").value, labelShows: $("vl-shows").value }; document.querySelectorAll("[data-vc]").forEach((i) => { v[i.dataset.vc] = i.value; }); return v; };
+  const preview = () => { const v = readVial(); $("vlPrev").innerHTML = window.drawVial({ title: v.labelShows === "code" ? "BC10" : ($("vl-sample").value || "BPC-157"), sub: "10 mg", style: v, logoUrl: logoV ? `/vial-logo?v=${logoV}` : "" }); };
+  pane().oninput = (e) => { if (e.target.closest("[data-vc], #vl-shape, #vl-shows, #vl-sample")) preview(); };
+  pane().onchange = (e) => { if (e.target.closest("#vl-shape, #vl-shows")) preview(); };
+  preview();
+  if (!own) return;
+  $("vl-reset").onclick = () => { const d = window.VIAL_DEFAULT; document.querySelectorAll("[data-vc]").forEach((i) => { i.value = d[i.dataset.vc]; }); $("vl-shape").value = d.shape; preview(); toast("Original colors restored. Save to keep them."); };
+  if ($("pgAddCard")) $("pgAddCard").onclick = () => {
+    const rows = document.querySelectorAll("[data-card]"); if (rows.length >= 6) return;
+    const r = rows[rows.length - 1].cloneNode(true); r.querySelectorAll("input").forEach((i) => { i.value = ""; }); $("pgCards").appendChild(r);
+    r.querySelectorAll(".field label")[1].textContent = `Card ${rows.length + 1} title`;
+  };
+  $("vl-logo").onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    if (f.size > 1024 * 1024) return toast("Keep the logo under 1 MB");
+    await api("/vial-logo", { method: "PUT", body: { fileData: await fileToData(f) } });
+    logoV++; $("vl-logoDel").hidden = false; preview(); toast("Logo added to the vial");
+  };
+  $("vl-logoDel").onclick = async () => { await api("/vial-logo", { method: "DELETE" }); logoV = 0; $("vl-logoDel").hidden = true; $("vl-logo").value = ""; preview(); toast("Logo removed"); };
+  const save = async () => {
+    const perks = [...document.querySelectorAll("[data-card]")].map((r) => ({ icon: r.querySelector('[data-c="icon"]').value, title: r.querySelector('[data-c="title"]').value.trim(), text: r.querySelector('[data-c="text"]').value.trim() }));
+    await api("/settings", { method: "PUT", body: { heroEyebrow: $("pg-eyebrow").value, headline: $("pg-headline").value, intro: $("pg-intro").value, perksOn: $("pg-perksOn").checked, perks, vial: readVial() } });
+    toast("Page setup saved");
+  };
+  $("pgSave").onclick = save; $("pgSave2").onclick = save;
+}
+
 /* ---------- settings ---------- */
 async function settings() {
   const { settings: s } = await api("/settings");
@@ -697,10 +792,6 @@ async function settings() {
       <div class="field" style="max-width:24rem"><label class="eyebrow" for="s-productLabel">Show products by</label>
       <select id="s-productLabel"${ro()}>${[["name", "Name and size (Retatrutide 30 mg)"], ["code", "Code (RT30)"], ["both", "Both (Retatrutide 30 mg · RT30)"]].map(([v, l]) => `<option value="${v}"${(s.productLabel || "name") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
       <span class="muted">Products without a code always show their name. Search finds products by name or code either way.</span></div></div>
-    <div class="panel"><h2>Home page header</h2>
-      ${t("heroEyebrow", "Small line above the headline")}
-      ${t("headline", "Headline")}
-      ${ta("intro", "Text under the headline")}</div>
     <div class="panel"><h2>Age gate</h2>
       <label class="chk"><input type="checkbox" id="s-ageGate"${s.ageGate ? " checked" : ""}${ro()}> Ask visitors to confirm age and research use before entering</label>
       <div class="field" style="max-width:10rem"><label class="eyebrow" for="s-minAge">Minimum age</label><input id="s-minAge" value="${esc(s.minAge)}" inputmode="numeric"${ro()}></div></div>
@@ -732,7 +823,7 @@ async function settings() {
   document.getElementById("sSave").onclick = async () => {
     const v = (k) => document.getElementById("s-" + k);
     const body = {};
-    ["brand", "tagline", "contact", "distributorOf", "brandUrl", "intro", "paymentInstructions", "priceNote", "heroEyebrow", "headline"].forEach((k) => { body[k] = v(k).value; });
+    ["brand", "tagline", "contact", "distributorOf", "brandUrl", "paymentInstructions", "priceNote"].forEach((k) => { body[k] = v(k).value; });
     body.storeOpen = v("storeOpen").checked; body.ageGate = v("ageGate").checked; body.minAge = v("minAge").value;
     body.minOrderCents = Math.round(parseFloat(v("minOrder").value || 0) * 100);
     ["footerNotice", "disclaimers", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"].forEach((k) => { body[k] = v(k).value.split("\n").map((x) => x.trim()).filter(Boolean); });

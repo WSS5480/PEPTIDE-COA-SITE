@@ -30,7 +30,7 @@ const parseCookies = (h) => Object.fromEntries(String(h || "").split(/;\s*/).fil
 const SECURE = process.env.NODE_ENV === "production" || !!process.env.RENDER;
 
 function publicSettings(s) {
-  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "productLabel", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"];
+  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "productLabel", "perksOn", "perks", "vial", "vialLogoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"];
   return Object.fromEntries(keys.map((k) => [k, s[k]]));
 }
 const reportOut = (r) => ({
@@ -70,7 +70,7 @@ const owner = (req, res, next) => (req.user.role === "owner" ? next() : bad(res,
 // When the owner turns the PIN on, nothing on the store (pages, products, lab reports, orders)
 // is served until the visitor enters it. The admin, its login and the files it needs stay open.
 const PIN_OPEN = [/^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/pin(\.html)?$/, /^\/api\/pin$/,
-  /^\/store\.css$/, /^\/install\.js$/, /^\/sw\.js$/, /^\/manifest\.webmanifest$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
+  /^\/store\.css$/, /^\/install\.js$/, /^\/sw\.js$/, /^\/manifest\.webmanifest$/, /^\/vial\.js$/, /^\/vial-logo$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
 let pinCache = { at: 0, on: false, hash: "", secret: "", customerPins: 0 };
 async function pinState() {
   if (Date.now() - pinCache.at < 5000) return pinCache;
@@ -103,7 +103,10 @@ app.use(wrap(async (req, res, next) => {
   const st = await pinState();
   if (!st.on) return next();
   if (await passOk(st, parseCookies(req.headers.cookie).spin)) return next();
-  if (req.path.startsWith("/api/") || req.path.startsWith("/coa/") || req.path.startsWith("/doc/")) return bad(res, "PIN required", 401);
+  // signed-in admins can always see the store
+  const sid = parseCookies(req.headers.cookie).sid;
+  if (sid && (await q("select 1 from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [sid])).rows.length) return next();
+  if (/^\/(api|coa|doc|pimg|plogo)\//.test(req.path)) return bad(res, "PIN required", 401);
   res.set("Cache-Control", "no-store");
   res.sendFile(path.join(__dirname, "public", "pin.html"));
 }));
@@ -143,7 +146,7 @@ async function moveStock(db, productId, change, info = {}) {
 app.get("/api/store", wrap(async (req, res) => {
   const s = await getSettings();
   const [{ rows: products }, { rows: reports }, { rows: shipping }] = await Promise.all([
-    q("select id,name,strength,sku,show_code,manufacturer,category,description,price_cents,stock,max_per_order from products where active order by sort, name, strength, manufacturer, id"),
+    q("select id,name,strength,sku,show_code,manufacturer,category,description,price_cents,stock,max_per_order,vial_label,media_v,(image is not null) has_image,(logo is not null) has_logo from products where active order by sort, name, strength, manufacturer, id"),
     q(`select ${REPORT_COLS} from reports where active order by product, tested desc nulls last`),
     q("select id,name,detail,price_cents,free_over_cents from shipping_methods where active order by sort, price_cents")
   ]);
@@ -159,6 +162,20 @@ app.get("/coa/:id", wrap(async (req, res) => {
   res.set("Content-Disposition", "inline");
   res.set("Cache-Control", "private, max-age=600");
   res.send(rows[0].image);
+}));
+const sendMedia = (res, buf, type) => { res.set("Content-Type", type); res.set("Cache-Control", "public, max-age=86400"); res.set("Content-Disposition", "inline"); res.send(buf); };
+app.get("/pimg/:id", wrap(async (req, res) => {
+  const { rows: [m] } = await q("select image, image_type from products where id = $1 and image is not null", [intOrNull(req.params.id)]);
+  m ? sendMedia(res, m.image, m.image_type) : res.status(404).send("Not found");
+}));
+app.get("/plogo/:id", wrap(async (req, res) => {
+  const { rows: [m] } = await q("select logo, logo_type from products where id = $1 and logo is not null", [intOrNull(req.params.id)]);
+  m ? sendMedia(res, m.logo, m.logo_type) : res.status(404).send("Not found");
+}));
+app.get("/vial-logo", wrap(async (req, res) => {
+  const { rows: [m] } = await q("select value from settings where key = 'vialLogo'");
+  if (!m || !m.value || !m.value.data) return res.status(404).send("Not found");
+  sendMedia(res, Buffer.from(m.value.data, "base64"), m.value.type);
 }));
 // a product document (SDS, spec sheet, certificate…); hidden ones open only for signed-in admins
 app.get("/doc/:id", wrap(async (req, res) => {
@@ -480,7 +497,9 @@ admin.patch("/customers/:id", owner, wrap(async (req, res) => {
 
 /* ---------- admin: products ---------- */
 admin.get("/products", wrap(async (req, res) => {
-  const { rows } = await q("select p.*, (select count(*)::int from documents d where d.product_id = p.id) doc_count from products p order by sort, name, strength, manufacturer, id");
+  const { rows } = await q(`select p.id, p.name, p.strength, p.sku, p.show_code, p.manufacturer, p.category, p.description, p.price_cents, p.stock, p.max_per_order,
+      p.active, p.sort, p.created_at, p.reorder_point, p.cost_cents, p.vial_label, p.media_v, (p.image is not null) has_image, (p.logo is not null) has_logo,
+      (select count(*)::int from documents d where d.product_id = p.id) doc_count from products p order by sort, name, strength, manufacturer, id`);
   res.json({ products: rows });
 }));
 function productFields(b) {
@@ -513,7 +532,7 @@ admin.post("/products/import", owner, wrap(async (req, res) => {
   if (!rows.length) return bad(res, "The file has no product rows.");
   const sk = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/mg$/, "");
   const has = (v) => v !== undefined && v !== null && String(v).trim() !== "";
-  const { rows: existing } = await q("select * from products");
+  const { rows: existing } = await q("select id, name, strength, manufacturer, stock from products");
   let created = 0, updated = 0; const problems = [];
   for (const [i, r] of rows.entries()) {
     const name = str(r.name, 120), strength = str(r.strength, 40);
@@ -552,6 +571,42 @@ admin.post("/products/import", owner, wrap(async (req, res) => {
     }
   }
   res.json({ ok: true, created, updated, problems });
+}));
+// picture (shown instead of the drawn vial) or logo (printed on the vial label); JPG, PNG or WEBP up to 5 MB
+function pictureFrom(data) {
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(data || ""));
+  if (!m) return null;
+  const buf = Buffer.from(m[2], "base64");
+  return buf.length && buf.length <= 5 * 1024 * 1024 ? { type: m[1], buf } : null;
+}
+admin.post("/products/:id/media", owner, wrap(async (req, res) => {
+  const id = intOrNull(req.params.id), b = req.body || {};
+  if (b.vialLabel !== undefined) {
+    const c = /^#[0-9a-f]{6}$/i.test(String(b.vialLabel)) ? b.vialLabel : "";
+    await q("update products set vial_label = $1, media_v = media_v + 1 where id = $2", [c, id]);
+    return res.json({ ok: true });
+  }
+  const kind = b.kind === "logo" ? "logo" : "image";
+  const f = pictureFrom(b.fileData); if (!f) return bad(res, "Use a JPG, PNG or WEBP under 5 MB.");
+  await q(`update products set ${kind} = $1, ${kind}_type = $2, media_v = media_v + 1 where id = $3`, [f.buf, f.type, id]);
+  res.json({ ok: true });
+}));
+admin.delete("/products/:id/media/:kind", owner, wrap(async (req, res) => {
+  const kind = req.params.kind === "logo" ? "logo" : "image";
+  await q(`update products set ${kind} = null, ${kind}_type = null, media_v = media_v + 1 where id = $1`, [intOrNull(req.params.id)]);
+  res.json({ ok: true });
+}));
+admin.put("/vial-logo", owner, wrap(async (req, res) => {
+  const f = pictureFrom(req.body?.fileData); if (!f) return bad(res, "Use a JPG, PNG or WEBP under 5 MB.");
+  if (f.buf.length > 1024 * 1024) return bad(res, "Keep the logo under 1 MB.");
+  await q("insert into settings(key,value) values ('vialLogo',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify({ type: f.type, data: f.buf.toString("base64") })]);
+  await q("update settings set value = to_jsonb(coalesce((value #>> '{}')::int, 0) + 1) where key = 'vialLogoV'");
+  res.json({ ok: true });
+}));
+admin.delete("/vial-logo", owner, wrap(async (req, res) => {
+  await q("delete from settings where key = 'vialLogo'");
+  await q("update settings set value = '0' where key = 'vialLogoV'");
+  res.json({ ok: true });
 }));
 admin.post("/products/clear", owner, wrap(async (req, res) => {
   if (req.body?.confirm !== "DELETE") return bad(res, "Type DELETE to confirm.");
@@ -754,7 +809,16 @@ admin.put("/settings", owner, wrap(async (req, res) => {
   for (const k of Object.keys(DEFAULT_SETTINGS)) {
     if (b[k] === undefined || k === "pinOn") continue; // the PIN has its own endpoint
     let v = b[k];
-    if (typeof DEFAULT_SETTINGS[k] === "boolean") v = !!v;
+    if (k === "vialLogoV") continue; // changed only by uploading or removing the logo
+    if (k === "perks") {
+      const ICONS = ["flask", "doc", "key", "shield", "truck", "star", "lock", "chat", "box", "check"];
+      v = (Array.isArray(v) ? v : []).slice(0, 6).map((c) => ({ icon: ICONS.includes(c && c.icon) ? c.icon : "check", title: str(c && c.title, 60), text: str(c && c.text, 160) })).filter((c) => c.title || c.text);
+    } else if (k === "vial") {
+      const d = DEFAULT_SETTINGS.vial, x = v && typeof v === "object" ? v : {};
+      v = Object.fromEntries(Object.keys(d).map((key) => [key, key === "shape" ? (["vial", "tall", "round"].includes(x.shape) ? x.shape : "vial")
+        : key === "labelShows" ? (["name", "code"].includes(x.labelShows) ? x.labelShows : "name")
+        : /^#[0-9a-f]{6}$/i.test(String(x[key] || "")) ? x[key] : d[key]]));
+    } else if (typeof DEFAULT_SETTINGS[k] === "boolean") v = !!v;
     else if (typeof DEFAULT_SETTINGS[k] === "number") v = Math.max(0, intOrNull(v) ?? DEFAULT_SETTINGS[k]);
     else if (Array.isArray(DEFAULT_SETTINGS[k])) v = (Array.isArray(v) ? v : []).map((x) => str(x, 1000)).filter(Boolean).slice(0, 30);
     else v = str(v, 3000);
