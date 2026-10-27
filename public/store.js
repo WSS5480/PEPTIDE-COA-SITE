@@ -513,7 +513,7 @@ async function load() {
     const cats = [...new Set(PRODUCTS.map((p) => p.category || "Research peptide"))].sort();
     $("footCats").innerHTML = cats.map((c) => `<li><a href="#products" data-cat="${esc(c)}">${esc(c)}</a></li>`).join("");
     $("footCopy").textContent = `© ${new Date().getFullYear()} ${name}`;
-    fetch("/api/build").then((r) => r.json()).then((b) => { $("footCopy").textContent += ` · v${b.version} · updated ${fmtDate(b.updated)}`; }).catch(() => {});
+    fetch("/api/build").then((r) => r.json()).then((b) => { $("footVer").textContent = `Version ${b.version} · updated ${fmtDate(b.updated)}`; $("footVer").hidden = false; }).catch(() => {});
     drawHelix();
     const names = [...new Set(REPORTS.map((r) => r.product))];
     $("product").insertAdjacentHTML("beforeend", names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join(""));

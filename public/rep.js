@@ -43,10 +43,11 @@ function drawLogin(msg) {
 /* ---------- shell ---------- */
 const NAV = [["home", "Home"], ["customers", "Customers"], ["neworder", "New order"], ["orders", "Orders"], ["commissions", "Commissions"], ["account", "Account"]];
 function shell() {
-  app.innerHTML = `<div class="rtop"><div style="display:flex;align-items:center;gap:.6rem"><span class="logopill"><img src="/site-logo" alt="360 Medical"></span><div class="logo"><span id="rbrand">Sales rep</span><small>${esc(me.name || me.email)}</small></div></div>
+  app.innerHTML = `<div class="rtop"><div style="display:flex;align-items:center;gap:.6rem"><span class="logopill"><img src="/site-logo" alt="360 Medical"></span><div class="logo"><span id="rbrand">Sales rep</span><small>${esc(me.name || me.email)} <span id="rver"></span></small></div></div>
       <div class="tools"><button type="button" data-refresh title="Refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button><button type="button" id="lo">Sign out</button></div></div>
     <nav class="rnav" id="rnav"></nav><main class="rpane" id="pane"></main>`;
   $("lo").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };
+  fetch("/api/build").then((r) => r.json()).then((b) => { const v = $("rver"); if (v) v.textContent = `· v${b.version}`; }).catch(() => {});
   go(view);
 }
 function drawNav() { $("rnav").innerHTML = NAV.map(([k, l]) => `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${l}</button>`).join(""); }

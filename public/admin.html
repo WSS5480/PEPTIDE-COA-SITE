@@ -7,7 +7,7 @@
 <title>360 Peptides Admin</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Poppins:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="/store.css?v=1793132881">
+<link rel="stylesheet" href="/store.css?v=1793133387">
 <link rel="manifest" href="/admin.webmanifest?v=3">
 <meta name="theme-color" content="#0f1b33">
 <link rel="icon" href="/admin-icon-192.png?v=2">
@@ -17,7 +17,8 @@
 <meta name="application-name" content="360 Peptides Admin">
 <style>
 .adm { display: grid; grid-template-columns: 13.5rem minmax(0, 1fr); min-height: 100vh; min-height: 100dvh; }
-.side { position: sticky; top: 0; height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto 1fr auto; gap: 1rem; padding: 1.2rem 1rem; background: var(--navy); color: var(--on-navy); }
+.side { position: sticky; top: 0; height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto auto 1fr auto; gap: 1rem; padding: 1.2rem 1rem; background: var(--navy); color: var(--on-navy); overflow-y: auto; }
+.side .ver { display: block; margin-top: .25rem; font: 500 .72rem/1.3 var(--body); color: var(--on-hero-2); letter-spacing: 0; text-transform: none; }
 .side .logo { color: var(--on-navy); }
 .side .logobox { padding: .5rem .7rem; background: #fff; border-radius: 10px; } .side .logobox img { display: block; width: 100%; height: 2.4rem; object-fit: contain; }
 .side nav { display: grid; gap: .2rem; align-content: start; }
@@ -26,6 +27,8 @@
 .side nav button.on { background: rgba(255,255,255,.12); color: #fff; }
 .side nav .badge { min-width: 1.4rem; padding: 0 .35rem; background: #fff; color: var(--navy); border-radius: 999px; font-size: .72rem; font-weight: 700; text-align: center; }
 .side .who { font-size: .8rem; color: var(--on-hero-2); display: grid; gap: .4rem; }
+.side .sref { justify-self: start; display: inline-flex; align-items: center; gap: .35rem; margin-top: -.4rem; padding: .35rem .7rem; background: none; border: 1px solid rgba(255,255,255,.3); border-radius: 6px; color: #fff; font-size: .8rem; cursor: pointer; }
+.side .sref:hover { background: rgba(255,255,255,.1); }
 .side .who button { justify-self: start; display: inline-flex; align-items: center; gap: .3rem; padding: .35rem .7rem; background: none; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; color: #fff; font-size: .8rem; cursor: pointer; }
 .pane { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.1rem; align-content: start; padding: clamp(1rem, 3vw, 2rem); min-width: 0; }
 .pane > * { min-width: 0; max-width: 100%; }
@@ -97,7 +100,7 @@
 <div id="app"></div>
 <script src="/refresh.js?v=1"></script>
 <script src="/vial.js?v=1793128623"></script>
-<script src="/admin.js?v=1793132881"></script>
+<script src="/admin.js?v=1793133387"></script>
 <script src="/install.js?v=1792620296"></script>
 </body>
 </html>

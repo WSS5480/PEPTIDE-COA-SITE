@@ -28,7 +28,7 @@ const szk = (x) => nrm(x).replace(/mg$/, "");
 const mfrOk = (p, r) => { const a = nrm(p.manufacturer), b = nrm(r.manufacturer); return !a || !b || a.includes(b) || b.includes(a); };
 const reportMatches = (p, r) => mfrOk(p, r) && nrm(p.name) === nrm(r.product) && szk(p.strength) === szk(r.strength);
 addEventListener("beforeunload", (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ""; } });
-let me = null, view = "dashboard", orderId = null, stats = null;
+let me = null, view = "dashboard", orderId = null, stats = null, BUILD = null;
 const isOwner = () => me && me.role === "owner";
 
 /* ---------- login ---------- */
@@ -56,12 +56,13 @@ const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Cu
 function shell() {
   app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><span><button type="button" data-refresh title="Refresh"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button> <button type="button" id="mm">Menu</button></span></div>
   <div class="adm" id="adm"><aside class="side">
-    <div class="logobox"><img src="/site-logo" alt="360 Medical"></div><div class="logo"><small>Peptides admin</small></div>
+    <div class="logobox"><img src="/site-logo" alt="360 Medical"></div><div class="logo"><small>Peptides admin</small><span class="ver" id="buildTop">v…</span></div>
+    <button type="button" class="sref" data-refresh title="Reload this screen"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="vertical-align:-2px"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg> Refresh</button>
     <nav id="nav"></nav>
     <div class="who"><span>${esc(me.name || me.email)} · ${esc(me.role)}</span><a href="/" target="_blank" style="color:#fff">View store ↗</a><button type="button" data-refresh><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="vertical-align:-2px"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg> Refresh</button><button type="button" data-install>Download admin app</button><button type="button" id="lo">Sign out</button><span id="buildLine" style="font-size:.7rem;opacity:.7"></span></div>
   </aside><section class="pane" id="pane"></section></div>`;
   document.getElementById("lo").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };
-  fetch("/api/build").then((r) => r.json()).then((b) => { document.getElementById("buildLine").textContent = `v${b.version} · updated ${when(b.updated)}`; }).catch(() => {});
+  fetch("/api/build").then((r) => r.json()).then((b) => { BUILD = b; const line = `v${b.version} · updated ${when(b.updated)}`; document.getElementById("buildLine").textContent = line; document.getElementById("buildTop").textContent = line; const d = document.getElementById("dashBuild"); if (d) d.textContent = line; }).catch(() => {});
   document.getElementById("mm").onclick = () => document.getElementById("adm").classList.toggle("menu");
   go(view, orderId);
 }
@@ -94,7 +95,7 @@ async function dashboard() {
     box.innerHTML = lone.length ? `<div class="panel"><strong>${lone.length} lab report${lone.length === 1 ? " isn't" : "s aren't"} attached to a product:</strong><span class="muted">${lone.map((r) => esc(`${r.product} ${r.strength}${r.sample ? " (" + r.sample + ")" : ""}`)).join(", ")}</span><div><button class="btn" data-nav="reports">Open lab reports</button></div></div>` : "";
   }).catch(() => {});
   const b = s.byStatus;
-  pane().innerHTML = `<header><h1>Dashboard</h1></header>
+  pane().innerHTML = `<header><h1>Dashboard</h1><span class="muted" id="dashBuild">${BUILD ? `v${BUILD.version} · updated ${when(BUILD.updated)}` : ""}</span></header>
     <dl class="kpis">
       <div class="kpi" data-go="orders:new"><dt>New orders</dt><dd>${b.new || 0}</dd></div>
       <div class="kpi" data-go="orders:confirmed"><dt>Waiting for payment</dt><dd>${b.confirmed || 0}</dd></div>
