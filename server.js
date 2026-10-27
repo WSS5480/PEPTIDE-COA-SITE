@@ -1483,7 +1483,9 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
       const { rows: have } = await q("select id, name, strength, manufacturer, sort from products");
       let added = 0, updated = 0, sort = have.reduce((m, p) => Math.max(m, p.sort || 0), 0);
       for (const r of list) {
-        const m = have.find((p) => p.name.toLowerCase() === r.name.toLowerCase() && sz(p.strength) === sz(r.strength) && !p.manufacturer);
+        // same name + size with no maker; failing that, the only product of that name + size (even with a maker)
+        const same = have.filter((p) => p.name.toLowerCase() === r.name.toLowerCase() && sz(p.strength) === sz(r.strength));
+        const m = same.find((p) => !p.manufacturer) || (same.length === 1 ? same[0] : null);
         const price = typeof r.price === "number" ? Math.round(r.price * 100) : null; // a price in the list sets the store price
         const cost = typeof r.cost === "number" ? Math.round(r.cost * 100) : null;    // a cost in the list sets our cost per vial
         if (m) { await q(`update products set category = $1,
@@ -1495,6 +1497,24 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
       await q("insert into settings(key,value) values ('catalogImportMark',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(importTag)]);
       console.log(`Catalog import (${importTag}): added ${added}, updated ${updated}`);
     }
+  }
+  // One-time tidy-up after the Q4 2026 cost sheet: a cost row that didn't match its product (the product had been
+  // given a manufacturer) was added as a new unpriced product. Move the cost onto the real product and drop the extra.
+  const { rows: [tidied] } = await q("select 1 from settings where key = 'costDupesTidied'");
+  if (!tidied) {
+    const sz = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/mg$/, "");
+    const { rows: all } = await q("select id, name, strength, manufacturer, price_cents, cost_cents, description from products");
+    const extras = all.filter((p) => p.price_cents === null && p.cost_cents !== null && !p.manufacturer && !p.description);
+    const left = [];
+    for (const e of extras) {
+      const twins = all.filter((p) => p.id !== e.id && p.name.toLowerCase() === e.name.toLowerCase() && sz(p.strength) === sz(e.strength) && p.price_cents !== null);
+      if (!twins.length) { left.push(`${e.name} ${e.strength}`); continue; }
+      for (const t of twins) await q("update products set cost_cents = coalesce(cost_cents, $1) where id = $2", [e.cost_cents, t.id]);
+      await q("delete from products where id = $1", [e.id]);
+      console.log(`Cost tidy-up: moved the cost of "${e.name} ${e.strength}" onto ${twins.map((t) => `#${t.id} (${t.manufacturer || "no maker"})`).join(", ")} and removed the duplicate`);
+    }
+    if (left.length) console.log("Cost tidy-up: no priced product matches " + left.join("; "));
+    await q("insert into settings(key, value) values ('costDupesTidied', 'true') on conflict (key) do nothing");
   }
   // SITE_PIN on the host sets the shared store PIN. It's applied once per new value, so a PIN
   // changed later in admin isn't overwritten on restart. It doesn't turn the lock on or off.
