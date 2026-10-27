@@ -944,6 +944,28 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
       finally { client.release(); }
     }
   }
+  // CATALOG_IMPORT on the host names a list in seed/catalog-<name>.json. Each new value adds those products once
+  // (no prices); a product with the same name, size and no manufacturer is updated instead of duplicated.
+  const importTag = String(process.env.CATALOG_IMPORT || "").trim().replace(/[^a-z0-9-]/gi, "");
+  if (importTag) {
+    const { rows: [done] } = await q("select value from settings where key = 'catalogImportMark'");
+    const file = path.join(__dirname, "seed", `catalog-${importTag}.json`);
+    if ((!done || done.value !== importTag) && require("fs").existsSync(file)) {
+      const list = JSON.parse(require("fs").readFileSync(file, "utf8"));
+      const sz = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/mg$/, "");
+      const { rows: have } = await q("select id, name, strength, manufacturer, sort from products");
+      let added = 0, updated = 0, sort = have.reduce((m, p) => Math.max(m, p.sort || 0), 0);
+      for (const r of list) {
+        const m = have.find((p) => p.name.toLowerCase() === r.name.toLowerCase() && sz(p.strength) === sz(r.strength) && !p.manufacturer);
+        if (m) { await q(`update products set category = $1,
+            price_cents = case when description like 'Sample listing%' then null else price_cents end,
+            description = case when $2 <> '' then $2 when description like 'Sample listing%' then '' else description end where id = $3`, [r.category, r.description || "", m.id]); updated++; }
+        else { await q("insert into products(name, strength, category, description, sort) values ($1,$2,$3,$4,$5)", [r.name, r.strength, r.category, r.description || "", ++sort]); added++; }
+      }
+      await q("insert into settings(key,value) values ('catalogImportMark',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(importTag)]);
+      console.log(`Catalog import (${importTag}): added ${added}, updated ${updated}`);
+    }
+  }
   // SITE_PIN on the host sets the shared store PIN. It's applied once per new value, so a PIN
   // changed later in admin isn't overwritten on restart. It doesn't turn the lock on or off.
   const envPin = String(process.env.SITE_PIN || "").trim();
