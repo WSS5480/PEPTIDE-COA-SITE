@@ -245,7 +245,9 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
   const name = str(b.name, 120), email = str(b.email, 160).toLowerCase(), phone = str(b.phone, 40);
   const a = b.address || {};
   const address = { line1: str(a.line1, 160), line2: str(a.line2, 160), city: str(a.city, 80), state: str(a.state, 40), zip: str(a.zip, 20), country: str(a.country || "US", 40) };
-  if (!name || !isEmail(email)) return bad(res, "Enter your name and a valid email.");
+  const signedIn = await customerFrom(req);
+  if (!name) return bad(res, "Enter your name.");
+  if (email ? !isEmail(email) : !signedIn) return bad(res, email ? "That email doesn't look right." : "Enter your email.");
   if (!address.line1 || !address.city || !address.state || !address.zip) return bad(res, "Enter a full shipping address.");
   const items = Array.isArray(b.items) ? b.items.slice(0, 50) : [];
   if (!items.length) return bad(res, "Your cart is empty.");
@@ -602,6 +604,34 @@ app.post("/api/account/register", jsonOnly, limit("register", 8, 60 * 60 * 1000)
   await startCustomerSession(res, c.id);
   res.json({ ok: true });
 }));
+// A visitor asks for a PIN: saved for the office and emailed to the store address.
+app.post("/api/pin-request", jsonOnly, limit("pinreq", 5, 60 * 60 * 1000), wrap(async (req, res) => {
+  const b = req.body || {};
+  if (b.website) return res.json({ ok: true }); // honeypot
+  const name = str(b.name, 120), email = str(b.email, 160).toLowerCase(), phone = str(b.phone, 40), company = str(b.company, 120), note = str(b.note, 1000);
+  if (!name) return bad(res, "Enter your name.");
+  if (!email && phone.replace(/\D/g, "").length < 10) return bad(res, "Enter an email or a phone number so we can reach you.");
+  if (email && !isEmail(email)) return bad(res, "That email doesn't look right.");
+  const { rows: [r] } = await q("insert into pin_requests(name, company, email, phone, note) values ($1,$2,$3,$4,$5) returning id", [name, company, email, phone, note]);
+  const s = await getSettings();
+  if (s.orderEmailOn && isEmail(s.orderEmail || "")) {
+    const text = [`PIN request from ${name}${company ? ` (${company})` : ""}`, "", email ? `Email: ${email}` : "", phone ? `Phone: ${phone}` : "", note ? `\nMessage: ${note}` : "", BASE_URL ? `\nApprove it under Customers in admin: ${BASE_URL}/admin#customers` : ""].filter((x) => x !== "").join("\n");
+    mail.send({ to: s.orderEmail, subject: `PIN request · ${name}${company ? " · " + company : ""}`, text, html: emailHtml(s, { eyebrow: "Store admin", kicker: "New PIN request", title: name, badge: { text: "Request", tone: "info" }, intro: `${name}${company ? ` from ${company}` : ""} asked for a PIN to sign in to the store.`, facts: [...(email ? [["Email", `<a href="mailto:${escHtml(email)}" style="color:${BLUE}">${escHtml(email)}</a>`]] : []), ...(phone ? [["Phone", escHtml(phone)]] : []), ...(company ? [["Company", escHtml(company)]] : [])], note: note ? { label: "Message", text: note } : null, button: BASE_URL ? { text: "Open Customers in admin", url: `${BASE_URL}/admin#customers` } : null, footer: `Sent by the ${escHtml(s.brand)} store.` }), replyTo: email || undefined }, s).then((x) => { if (!x.ok) console.error("PIN request email failed:", x.error); });
+  }
+  res.json({ ok: true, id: r.id });
+}));
+// Customers sign in with the PIN the store gave them (set under admin → Customers). It also satisfies the site lock.
+app.post("/api/account/pin", jsonOnly, limit("cpin", 10, 15 * 60 * 1000), wrap(async (req, res) => {
+  const pin = String(req.body?.pin || "").replace(/\D/g, "").slice(0, 12);
+  if (pin.length < 4) return bad(res, "Enter the PIN you were given.");
+  const st = await pinState();
+  const { rows: [c] } = await q("select id, pin_version from customers where access_pin_key = $1 and active", [customerPinKey(st, pin)]);
+  if (!c) return bad(res, "That PIN isn't right. Contact us if you need a new one.", 401);
+  await q("update customers set pin_used_at = now() where id = $1", [c.id]);
+  res.append("Set-Cookie", `spin=${customerPass(st, c.id, c.pin_version)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`);
+  await startCustomerSession(res, c.id);
+  res.json({ ok: true });
+}));
 app.post("/api/account/login", jsonOnly, limit("clogin", 12, 15 * 60 * 1000), wrap(async (req, res) => {
   const email = str(req.body?.email, 160).toLowerCase();
   if (!email) return bad(res, "Email or password is wrong.", 401);
@@ -709,7 +739,8 @@ admin.get("/stats", wrap(async (req, res) => {
   const { rows: [m] } = await q("select coalesce(sum(total_cents),0)::int paid_cents, count(*)::int paid_n from orders where paid_at >= date_trunc('month', now())");
   const { rows: low } = await q("select id,name,strength,manufacturer,stock,coalesce(reorder_point,5) reorder_at from products where active and stock is not null and stock <= coalesce(reorder_point,5) order by stock");
   const { rows: [np] } = await q("select count(*)::int n from products where active and price_cents is null");
-  res.json({ byStatus: Object.fromEntries(byStatus.map((r) => [r.status, r.n])), month: m, lowStock: low, unpriced: np.n });
+  const { rows: [pr] } = await q("select count(*)::int n from pin_requests where status = 'new'");
+  res.json({ byStatus: Object.fromEntries(byStatus.map((r) => [r.status, r.n])), month: m, lowStock: low, unpriced: np.n, pinRequests: pr.n });
 }));
 
 /* ---------- admin: orders (owner + staff) ---------- */
@@ -864,6 +895,37 @@ admin.post("/orders", wrap(async (req, res) => {
     if (b.payLink && stripe && (await getSettings()).cardPayments) { try { payUrl = await payLinkFor(r.id, originOf(req), who); } catch (e) { /* the order still stands */ } }
     res.json({ ok: true, ...r, payUrl });
   } catch (e) { bad(res, e.message || "Could not place the order."); }
+}));
+
+/* ---------- admin: PIN requests ---------- */
+admin.get("/pin-requests", wrap(async (req, res) => {
+  if (isRep(req)) return bad(res, "Not for reps", 403);
+  const { rows } = await q("select r.*, c.name customer_name from pin_requests r left join customers c on c.id = r.customer_id where r.status = 'new' or r.created_at > now() - interval '14 days' order by (r.status = 'new') desc, r.created_at desc limit 100");
+  res.json({ requests: rows });
+}));
+// Approve: make the customer (name, email, phone, optional rep + pricing); the screen then gives the PIN.
+admin.post("/pin-requests/:id/approve", owner, wrap(async (req, res) => {
+  const { rows: [r] } = await q("select * from pin_requests where id = $1", [intOrNull(req.params.id)]);
+  if (!r) return bad(res, "Not found", 404);
+  const b = req.body || {}, email = str(b.email ?? r.email, 160).toLowerCase();
+  if (email && !isEmail(email)) return bad(res, "That email doesn't look right.");
+  let cid = r.customer_id;
+  if (!cid) {
+    const { rows: [ex] } = email ? await q("select id from customers where lower(email) = $1", [email]) : { rows: [] };
+    if (ex) cid = ex.id;
+    else {
+      const repId = intOrNull(b.repId) && (await q("select 1 from users where id = $1 and role = 'rep'", [intOrNull(b.repId)])).rows.length ? intOrNull(b.repId) : null;
+      const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash, rep_id, markup) values ($1,$2,$3,$4,$5,$6,$7) returning id",
+        [email || null, str(b.name ?? r.name, 120) || r.name, str(b.phone ?? r.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId, b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup)]);
+      cid = c.id;
+    }
+  }
+  await q("update pin_requests set status = 'done', customer_id = $1 where id = $2", [cid, r.id]);
+  res.json({ ok: true, customerId: cid });
+}));
+admin.post("/pin-requests/:id/dismiss", owner, wrap(async (req, res) => {
+  await q("update pin_requests set status = 'dismissed' where id = $1", [intOrNull(req.params.id)]);
+  res.json({ ok: true });
 }));
 
 /* ---------- admin: customers ---------- */

@@ -195,6 +195,7 @@ function openCheckout() {
   $("cfAgeText").textContent = `I am ${S.minAge} or older.`;
   $("coIntro").textContent = S.cardPayments ? "You'll pay securely by card on the next screen. We never see your card number." : "No payment is taken here. We review your order, then contact you with the total and how to pay.";
   $("coSubmit").textContent = submitLabel();
+  $("cEmailLabel").textContent = ME ? "Email (optional)" : "Email";
   drawFulfillment();
   const saved = ME ? { name: ME.name, email: ME.email, phone: ME.phone, ...(ME.address || {}) } : (store.get("buyer") || {});
   [["cName", "name"], ["cEmail", "email"], ["cPhone", "phone"], ["a1", "line1"], ["a2", "line2"], ["aCity", "city"], ["aState", "state"], ["aZip", "zip"]].forEach(([id, k]) => { if (saved[k] && !$(id).value) $(id).value = saved[k]; });
@@ -205,7 +206,8 @@ async function submitOrder(e) {
   e.preventDefault();
   const err = (m) => { $("coErr").textContent = m; $("coErr").hidden = false; $("coErr").scrollIntoView({ block: "nearest" }); };
   const v = (id) => $(id).value.trim();
-  if (!v("cName") || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v("cEmail"))) return err("Enter your name and a valid email.");
+  if (!v("cName")) return err("Enter your name.");
+  if (v("cEmail") ? !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v("cEmail")) : !ME) return err(v("cEmail") ? "That email doesn't look right." : "Enter your email.");
   if (!v("a1") || !v("aCity") || !v("aState") || !v("aZip")) return err("Enter your full address.");
   if (!$("cfAge").checked || !$("cfRes").checked) return err("Please confirm both statements to place the order.");
   const f = chosenFul();
@@ -363,38 +365,38 @@ async function post(url, body, method = "POST") {
 function acctView(mode) {
   const b = $("acBody"), close = `<button class="btn" type="button" data-close>Close</button>`;
   const fld = (id, label, type = "text", ac = "", val = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}" autocomplete="${ac}" value="${esc(val)}"></div>`;
-  if (!ME && mode !== "register") {
-    b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Sign in</h2>${close}</div>
-      <div class="tabs"><button class="on" type="button">Sign in</button><button type="button" data-acct="register">Create account</button></div>
-      <form id="acForm" class="stack">${fld("acE", "Email", "email", "username")}${fld("acP", "Password", "password", "current-password")}
-      <div class="err" id="acErr" hidden></div><button class="btn solid wide">Sign in</button></form>
-      <p class="dist">No account? <button class="linkbtn" type="button" data-acct="register">Create one</button> to save your address and see your orders.</p>`;
-    $("acForm").onsubmit = async (e) => { e.preventDefault(); try { await post("/api/account/login", { email: $("acE").value, password: $("acP").value }); await loadAccount(); toast("Signed in"); acctView(); } catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; } };
+  if (!ME && mode === "request") {
+    b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Request a PIN</h2>${close}</div>
+      <div class="tabs"><button type="button" data-acct="signin">Sign in</button><button class="on" type="button">Request a PIN</button></div>
+      <p class="dist">Tell us who you are and we'll set you up with a PIN. Accounts are created by ${esc(S.brand || "the store")}, not online.</p>
+      <form id="acForm" class="stack"><div class="grid2">${fld("rqN", "Your name", "text", "name")}${fld("rqC", "Company or clinic (optional)", "text", "organization")}${fld("rqE", "Email", "email", "email")}${fld("rqP", "Phone", "tel", "tel")}</div>
+      <div class="field"><label class="eyebrow" for="rqM">Message (optional)</label><textarea id="rqM" maxlength="1000" placeholder="Anything we should know, e.g. who referred you"></textarea></div>
+      <label class="hp">Leave this empty <input id="rqW" tabindex="-1" autocomplete="off"></label>
+      <div class="err" id="acErr" hidden></div><button class="btn solid wide">Send request</button></form>`;
+    $("acForm").onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        await post("/api/pin-request", { name: $("rqN").value, company: $("rqC").value, email: $("rqE").value, phone: $("rqP").value, note: $("rqM").value, website: $("rqW").value });
+        b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Request sent</h2>${close}</div><div class="okbox"><strong>Thanks, ${esc($("rqN").value.trim() || "we got it")}.</strong><span>We'll be in touch with your PIN${S.contact ? ` — or reach us at ${esc(S.contact)}` : ""}. Until then you can order as a guest.</span></div>`;
+      } catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; }
+    };
     return;
   }
   if (!ME) {
-    b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Create account</h2>${close}</div>
-      <div class="tabs"><button type="button" data-acct="signin">Sign in</button><button class="on" type="button">Create account</button></div>
-      <form id="acForm" class="stack"><div class="grid2">${fld("rN", "Full name", "text", "name")}${fld("rE", "Email", "email", "email")}${fld("rPh", "Phone number", "tel", "tel")}${fld("rP", "Password (8+ characters)", "password", "new-password")}</div>
-      <span class="eyebrow">Shipping address</span>
-      <div class="grid2"><div class="field" style="grid-column:1/-1"><label class="eyebrow" for="r1">Street address</label><input id="r1" autocomplete="address-line1"></div>
-      ${fld("r2", "Apt, suite (optional)", "text", "address-line2")}${fld("rC", "City", "text", "address-level2")}${fld("rS", "State", "text", "address-level1")}${fld("rZ", "ZIP", "text", "postal-code")}</div>
-      <label class="check"><input type="checkbox" id="rAge"><span>I am ${esc(S.minAge || 21)} or older.</span></label>
-      <label class="check"><input type="checkbox" id="rRes"><span>I am buying for laboratory research only, and I agree to the <a href="/policy#terms" target="_blank">terms of service</a> and <a href="/policy#privacy" target="_blank">privacy policy</a>.</span></label>
-      <div class="err" id="acErr" hidden></div><button class="btn solid wide">Create account</button></form>`;
-    $("acForm").onsubmit = async (e) => {
-      e.preventDefault();
-      if (!$("r1").value.trim() || !$("rC").value.trim() || !$("rS").value.trim() || !$("rZ").value.trim()) { $("acErr").textContent = "Enter your full shipping address."; $("acErr").hidden = false; return; }
-      if ($("rPh").value.replace(/\D/g, "").length < 10) { $("acErr").textContent = "Enter a phone number with area code."; $("acErr").hidden = false; return; }
-      try { await post("/api/account/register", { name: $("rN").value, email: $("rE").value, phone: $("rPh").value, password: $("rP").value, address: { line1: $("r1").value, line2: $("r2").value, city: $("rC").value, state: $("rS").value, zip: $("rZ").value }, confirmAge: $("rAge").checked, confirmResearch: $("rRes").checked }); await loadAccount(); toast("Account created"); acctView(); }
-      catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; }
-    };
+    b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Sign in</h2>${close}</div>
+      <div class="tabs"><button class="on" type="button">Sign in</button><button type="button" data-acct="request">Request a PIN</button></div>
+      <p class="dist">Enter the PIN ${esc(S.brand || "we")} gave you. It signs you in, shows your pricing and keeps your orders in one place.</p>
+      <form id="acForm" class="stack"><div class="field"><label class="eyebrow" for="acPin">Your PIN</label><input id="acPin" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="6 to 8 digits" style="font:600 1.4rem/1 var(--mono);letter-spacing:.3em;text-align:center"></div>
+      <div class="err" id="acErr" hidden></div><button class="btn solid wide">Sign in</button></form>
+      <p class="dist">No PIN yet? <button class="linkbtn" type="button" data-acct="request">Request one</button> — accounts are set up by us, not online. You can still order as a guest.</p>`;
+    $("acPin").focus();
+    $("acForm").onsubmit = async (e) => { e.preventDefault(); try { await post("/api/account/pin", { pin: $("acPin").value }); await loadAccount(); await load(); toast("Signed in"); acctView(); } catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; } };
     return;
   }
   const a = ME.address || {};
   const tab = mode === "details" ? "details" : "orders";
   b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">My account</h2>${close}</div>
-    <p class="dist">Signed in as ${esc(ME.email)} · <button class="linkbtn" type="button" id="acOut">Sign out</button></p>
+    <p class="dist">Signed in as ${esc(ME.name || ME.email)}${ME.email ? ` (${esc(ME.email)})` : ""} · <button class="linkbtn" type="button" id="acOut">Sign out</button></p>
     <div class="tabs"><button type="button" class="${tab === "orders" ? "on" : ""}" data-acct="orders">My orders</button><button type="button" class="${tab === "details" ? "on" : ""}" data-acct="details">Details &amp; address</button></div>
     ${tab === "orders" ? `<div class="olist">${MY_ORDERS.length ? MY_ORDERS.map((o) => `<div class="orow"><div class="top2"><span>Order ${esc(o.number)}</span><span>${money(o.total_cents)}</span></div>
         <span>${fmtDate(o.created_at)} · ${esc(STATUS_TEXT[o.status] || o.status)}${o.shipping_method ? ` · ${esc(o.shipping_method)}` : ""}${o.paid_at ? " · paid by card" : ""}</span>
@@ -403,13 +405,12 @@ function acctView(mode) {
         ${o.canPay ? `<span><button class="btn solid" type="button" data-payorder="${esc(o.number)}">Pay now by card</button></span>` : ""}</div>`).join("") : `<p class="dist">No orders yet.</p>`}</div>`
     : `<form id="acForm" class="stack"><div class="grid2">${fld("mN", "Full name", "text", "name", ME.name)}${fld("mPh", "Phone", "tel", "tel", ME.phone)}</div>
       <div class="grid2">${fld("m1", "Street address", "text", "address-line1", a.line1)}${fld("m2", "Apt, suite", "text", "address-line2", a.line2)}${fld("mC", "City", "text", "address-level2", a.city)}${fld("mS", "State", "text", "address-level1", a.state)}${fld("mZ", "ZIP", "text", "postal-code", a.zip)}</div>
-      <details><summary class="eyebrow" style="cursor:pointer">Change password</summary><div class="grid2" style="margin-top:.7rem">${fld("mPc", "Current password", "password", "current-password")}${fld("mPn", "New password", "password", "new-password")}</div></details>
       <div class="err" id="acErr" hidden></div><button class="btn solid wide">Save</button></form>`}`;
   $("acOut").onclick = async () => { await post("/api/account/logout", {}); await loadAccount(); toast("Signed out"); closeD($("acct")); };
   if (tab === "details") $("acForm").onsubmit = async (e) => {
     e.preventDefault();
     try {
-      await post("/api/account", { name: $("mN").value, phone: $("mPh").value, address: { line1: $("m1").value, line2: $("m2").value, city: $("mC").value, state: $("mS").value, zip: $("mZ").value }, currentPassword: $("mPc").value, newPassword: $("mPn").value }, "PATCH");
+      await post("/api/account", { name: $("mN").value, phone: $("mPh").value, address: { line1: $("m1").value, line2: $("m2").value, city: $("mC").value, state: $("mS").value, zip: $("mZ").value } }, "PATCH");
       await loadAccount(); toast("Saved"); acctView("details");
     } catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; }
   };

@@ -197,6 +197,18 @@ alter table customers alter column email drop not null;
 -- customer pricing: a markup % over our cost that replaces the store price for that customer (null = store prices)
 alter table customers add column if not exists markup numeric(6,2);
 alter table orders add column if not exists price_markup numeric(6,2);
+-- visitors without a PIN can ask for one; the office turns a request into a customer + PIN
+create table if not exists pin_requests (
+  id serial primary key,
+  name text not null,
+  company text not null default '',
+  email text not null default '',
+  phone text not null default '',
+  note text not null default '',
+  status text not null default 'new',
+  customer_id int references customers(id) on delete set null,
+  created_at timestamptz not null default now()
+);
 -- discount codes customers type at checkout; made in admin
 create table if not exists discount_codes (
   id serial primary key,
@@ -233,6 +245,7 @@ drop trigger if exists t_bump on commission_payouts; create trigger t_bump after
 drop trigger if exists t_bump on users; create trigger t_bump after insert or update or delete on users for each statement execute function bump_app_version();
 drop trigger if exists t_bump on settings; create trigger t_bump after insert or update or delete on settings for each statement execute function bump_app_version();
 drop trigger if exists t_bump on discount_codes; create trigger t_bump after insert or update or delete on discount_codes for each statement execute function bump_app_version();
+drop trigger if exists t_bump on pin_requests; create trigger t_bump after insert or update or delete on pin_requests for each statement execute function bump_app_version();
 `;
 
 const DEFAULT_SETTINGS = {

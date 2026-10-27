@@ -73,7 +73,7 @@ function shell() {
 async function drawNav() {
   try { stats = await api("/stats"); } catch (e) { return; }
   const n = stats.byStatus.new || 0;
-  document.getElementById("nav").innerHTML = NAV.map(([k, label, who]) => k === "line" ? (isRep() ? "" : '<hr class="navline">') : !canSee(who) ? "" : `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}</button>`).join("");
+  document.getElementById("nav").innerHTML = NAV.map(([k, label, who]) => k === "line" ? (isRep() ? "" : '<hr class="navline">') : !canSee(who) ? "" : `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}${k === "customers" && stats.pinRequests ? `<span class="badge" title="PIN requests">${stats.pinRequests}</span>` : ""}</button>`).join("");
 }
 let paneDirty = false; // something typed on this screen and not saved yet
 document.addEventListener("input", (e) => { if (e.target.closest("#pane")) paneDirty = true; });
@@ -339,7 +339,7 @@ async function customers() {
   pane().innerHTML = `<header><h1>${isRep() ? "My customers" : "Customers"}</h1>${isOwner() || isRep() ? `<button class="btn solid" id="addC">Add customer</button>` : ""}</header>
     ${isRep() ? `<p class="muted">Customers assigned to you. Orders they place (or you place for them) earn your commission. Ask the office to give them a PIN or special pricing.</p>` : `<p class="muted">Give a customer their own PIN to let them into the site. Their PIN works only for them: it unlocks the store and signs them into their account. Changing or revoking it, or turning the account off, ends their access right away. Turn the lock on under Site settings → Site PIN.</p>
     <p class="muted"><strong>Pricing:</strong> a customer with a markup pays our cost plus that percent on every product that has a cost (products without a cost stay at the store price). They see their prices as soon as they sign in; sales reps see them when they place that customer's order. "Store prices" = the normal Products &amp; prices list.</p>`}
-    <div id="cNew"></div><div id="pinShow"></div>
+    <div id="cNew"></div><div id="pinShow"></div><div id="pinReq"></div>
     <div class="filters"><input id="cq" type="search" placeholder="Search customers"></div>
     <div class="tblwrap" id="ct"><p class="muted">Loading…</p></div>`;
   let term = "";
@@ -410,6 +410,30 @@ async function customers() {
     try { const r = await api(`/customers/${id}/pin`, { method: "POST", body: { pin: typed } }); showPin(name, r.pin); load(); } catch (e) { /* toast shown */ }
   };
   let t; document.getElementById("cq").oninput = (e) => { clearTimeout(t); t = setTimeout(() => { term = e.target.value; load(); }, 250); };
+  // PIN requests from the store's sign-in box
+  const loadRequests = async () => {
+    if (isRep()) return;
+    const { requests } = await api("/pin-requests").catch(() => ({ requests: [] }));
+    const open = requests.filter((r) => r.status === "new");
+    document.getElementById("pinReq").innerHTML = open.length ? `<div class="panel" style="border-color:var(--blue)"><h2>PIN requests (${open.length})</h2>
+      <p class="muted">People who asked for a PIN on the store. Approve makes the customer (you can pick a rep and pricing), then shows the PIN to send them.</p>
+      <div class="tblwrap"><table class="tbl"><tr><th>When</th><th>Name</th><th>Company</th><th>Email</th><th>Phone</th><th>Message</th>${isOwner() ? "<th></th>" : ""}</tr>
+      ${open.map((r) => `<tr data-rq="${r.id}"><td>${when(r.created_at)}</td><td>${esc(r.name)}</td><td>${esc(r.company)}</td><td>${r.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : ""}</td><td>${r.phone ? `<a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>` : ""}</td><td class="muted">${esc(r.note)}</td>
+        ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn solid" data-rq-ok>Approve &amp; give PIN</button><button class="btn" data-rq-no>Dismiss</button></td>` : ""}</tr>`).join("")}</table></div>
+      ${isOwner() ? `<div class="row2" style="align-items:end"><div class="field" style="max-width:16rem"><label class="eyebrow" for="rq-rep">Sales rep for approved requests</label><select id="rq-rep"><option value="">— none —</option>${activeReps.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join("")}</select></div>
+        <div class="field" style="max-width:14rem"><label class="eyebrow" for="rq-mk">Pricing</label><select id="rq-mk"><option value="">Store prices</option>${MK.map((m) => `<option value="${m}">+${m}%</option>`).join("")}</select></div></div>` : ""}</div>` : "";
+    document.getElementById("pinReq").onclick = async (e) => {
+      const tr = e.target.closest("tr[data-rq]"); if (!tr) return;
+      const r = open.find((x) => String(x.id) === tr.dataset.rq);
+      if (e.target.closest("[data-rq-no]")) { if (!confirm(`Dismiss the request from ${r.name}?`)) return; await api(`/pin-requests/${r.id}/dismiss`, { method: "POST" }); toast("Dismissed"); drawNav(); return loadRequests(); }
+      if (e.target.closest("[data-rq-ok]")) {
+        const res = await api(`/pin-requests/${r.id}/approve`, { method: "POST", body: { repId: document.getElementById("rq-rep").value || null, markup: document.getElementById("rq-mk").value } });
+        toast("Customer created"); drawNav(); await loadRequests(); await load();
+        givePin(res.customerId, r.name);
+      }
+    };
+  };
+  loadRequests();
   if (document.getElementById("addC")) document.getElementById("addC").onclick = () => {
     const box = document.getElementById("cNew");
     if (box.innerHTML) { box.innerHTML = ""; return; }
@@ -1380,6 +1404,7 @@ if (window.AppRefresh) window.AppRefresh.init({
   // order emails link straight to an order: /admin#order-123
   const m = /^#order-(\d+)$/.exec(location.hash);
   if (m) { view = "orders"; orderId = m[1]; history.replaceState(null, "", location.pathname); }
+  if (location.hash === "#customers") { view = "customers"; history.replaceState(null, "", location.pathname); }
   const res = await fetch("/api/admin/me");
   if (res.ok) { me = (await res.json()).user; shell(); } else drawLogin();
 })();
