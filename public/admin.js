@@ -34,7 +34,7 @@ const isOwner = () => me && me.role === "owner";
 /* ---------- login ---------- */
 function drawLogin(msg) {
   app.innerHTML = `<div class="login"><form id="lf">
-    <img src="/site-logo" alt="360 Medical" style="height:3.2rem;width:auto;max-width:16rem;object-fit:contain;justify-self:start">
+    <img src="/site-logo?v=2" alt="360 Peptides" style="height:3.2rem;width:auto;max-width:16rem;object-fit:contain;justify-self:start">
     <h1>Peptides Admin</h1><p class="muted">Sign in to manage orders, prices and the site.</p>
     <div class="field"><label class="eyebrow" for="le">Email</label><input id="le" type="email" autocomplete="username" required></div>
     <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>
@@ -56,7 +56,7 @@ const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Cu
 function shell() {
   app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><span><button type="button" data-refresh title="Refresh"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button> <button type="button" id="mm">Menu</button></span></div>
   <div class="adm" id="adm"><aside class="side">
-    <div class="logobox"><img src="/site-logo" alt="360 Medical"></div><div class="logo"><small>Peptides admin</small><span class="ver" id="buildTop">v…</span></div>
+    <div class="logobox"><img src="/site-logo?v=2" alt="360 Peptides"></div><div class="logo"><small>Peptides admin</small><span class="ver" id="buildTop">v…</span></div>
     <button type="button" class="sref" data-refresh title="Reload this screen"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="vertical-align:-2px"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg> Refresh</button>
     <nav id="nav"></nav>
     <div class="who"><span>${esc(me.name || me.email)} · ${esc(me.role)}</span><a href="/" target="_blank" style="color:#fff">View store ↗</a><button type="button" data-refresh><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="vertical-align:-2px"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg> Refresh</button><button type="button" data-install>Download admin app</button><button type="button" id="lo">Sign out</button><span id="buildLine" style="font-size:.7rem;opacity:.7"></span></div>

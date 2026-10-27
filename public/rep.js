@@ -22,7 +22,7 @@ async function api(path, opts = {}) {
 /* ---------- login ---------- */
 function drawLogin(msg) {
   app.innerHTML = `<div class="login"><form id="lf">
-    <img src="/site-logo" alt="360 Medical" style="height:3rem;width:auto;max-width:15rem;object-fit:contain;justify-self:start">
+    <img src="/site-logo?v=2" alt="360 Peptides" style="height:3rem;width:auto;max-width:15rem;object-fit:contain;justify-self:start">
     <h1>Sales rep sign in</h1><p class="muted">Add customers, place their orders and see your commissions.</p>
     <div class="field"><label class="eyebrow" for="le">Email</label><input id="le" type="email" autocomplete="username" required></div>
     <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>
@@ -43,7 +43,7 @@ function drawLogin(msg) {
 /* ---------- shell ---------- */
 const NAV = [["home", "Home"], ["customers", "Customers"], ["neworder", "New order"], ["orders", "Orders"], ["commissions", "Commissions"], ["account", "Account"]];
 function shell() {
-  app.innerHTML = `<div class="rtop"><div style="display:flex;align-items:center;gap:.6rem"><span class="logopill"><img src="/site-logo" alt="360 Medical"></span><div class="logo"><span id="rbrand">Sales rep</span><small>${esc(me.name || me.email)} <span id="rver"></span></small></div></div>
+  app.innerHTML = `<div class="rtop"><div style="display:flex;align-items:center;gap:.6rem"><span class="logopill"><img src="/site-logo?v=2" alt="360 Peptides"></span><div class="logo"><span id="rbrand">Sales rep</span><small>${esc(me.name || me.email)} <span id="rver"></span></small></div></div>
       <div class="tools"><button type="button" data-refresh title="Refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button><button type="button" id="lo">Sign out</button></div></div>
     <nav class="rnav" id="rnav"></nav><main class="rpane" id="pane"></main>`;
   $("lo").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };

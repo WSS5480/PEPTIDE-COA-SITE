@@ -452,7 +452,7 @@ const FONT = "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 function emailHtml(s, p) {
   const $ = (c) => "$" + ((c || 0) / 100).toFixed(2);
   const tone = { ok: [TEAL, "#ffffff"], warn: ["#fff1cc", "#6b4b00"], bad: ["#fbe3e3", "#8a1c1c"], info: [TEAL_WASH, TEAL_DARK] }[p.badge && p.badge.tone] || [TEAL_WASH, TEAL_DARK];
-  const logo = BASE_URL && s.siteLogoV ? `<img src="${escHtml(BASE_URL)}/site-logo?v=${encodeURIComponent(s.siteLogoV)}" alt="${escHtml(s.brand)}" height="40" style="display:block;height:40px;width:auto;max-width:240px;border:0">` : `<span style="font:800 22px/1 ${FONT};color:${INK};letter-spacing:.02em"><span style="color:${TEAL}">360</span>MEDICAL</span>`;
+  const logo = BASE_URL && s.siteLogoV ? `<img src="${escHtml(BASE_URL)}/site-logo?v=${encodeURIComponent(s.siteLogoV)}" alt="${escHtml(s.brand)}" height="40" style="display:block;height:40px;width:auto;max-width:240px;border:0">` : `<span style="font:800 22px/1 ${FONT};color:${INK};letter-spacing:.02em"><span style="color:${TEAL}">360</span>PEPTIDES</span>`;
   const row = (l, v) => `<tr><td style="padding:6px 16px 6px 0;font:600 12px/1.4 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.08em;vertical-align:top;white-space:nowrap">${escHtml(l)}</td><td style="padding:6px 0;font:600 16px/1.4 ${FONT};color:${INK};vertical-align:top">${v}</td></tr>`;
   const items = (p.items || []).map((i) => `<tr>
       <td style="padding:9px 10px;border-top:1px solid ${LINE};font:15px/1.35 ${FONT};color:${INK}">${escHtml(`${i.name} ${i.strength}`.trim())}</td>

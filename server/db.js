@@ -444,6 +444,12 @@ async function init() {
     await q(`update settings set value = jsonb_set(value, '{labelShows}', '"name"') where key = 'vial'`);
     await q("insert into settings(key, value) values ('codesRemoved', 'true') on conflict (key) do nothing");
   }
+  // The bundled logo now reads "360 PEPTIDES" (Oct 2026): bump its version once so browsers fetch the new file.
+  const { rows: [logoV2] } = await q("select 1 from settings where key = 'logoPeptides'");
+  if (!logoV2) {
+    await q("update settings set value = '2' where key = 'siteLogoV' and value = '1'");
+    await q("insert into settings(key, value) values ('logoPeptides', 'true') on conflict (key) do nothing");
+  }
   // Shipping moved from the old shipping-options table to Site settings (Oct 2026): carry over a charge set there once.
   const { rows: [shipMoved] } = await q("select 1 from settings where key = 'shippingMoved'");
   if (!shipMoved) {
