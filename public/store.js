@@ -107,7 +107,7 @@ function drawProducts() {
         <span class="pmeta">${[codeMode(p) ? `${p.name} ${p.strength}`.trim() : p.strength, !codeMode(p) && S.productLabel === "both" && p.sku ? p.sku : "", purity ? `${purity} purity` : ""].filter(Boolean).map(esc).join(" · ")}</span>
         ${p.description ? `<p class="stockline">${esc(p.description)}</p>` : ""}
         ${price}${stock}
-        <p class="research">For laboratory research use only. Not for human or animal use.</p>
+        <p class="research">For laboratory research use only.</p>
         <div class="pact">${buy}${r ? `<a class="btn" href="/lab-reports#${esc(rid(r))}" data-report="${r.id}" data-pid="${p.id}">Lab report</a>` : `<span class="stockline">No report yet</span>`}${docsFor(p).length ? `<button class="btn" type="button" data-docs="${p.id}">Documents (${docsFor(p).length})</button>` : ""}</div>
       </div>
     </article>`;
@@ -138,7 +138,7 @@ function drawCart() {
   const min = S.minOrderCents || 0;
   $("cartFoot").innerHTML = `<div class="totals"><div class="big"><span>Subtotal</span><span>${money(sub)}</span></div>
     <div class="dist"><span>Shipping is added at checkout.</span></div></div>
-    <p class="research">All items are sold for laboratory research only and are not for human or animal use.</p>
+    <p class="research">All items are sold for laboratory research only.</p>
     ${min && sub < min ? `<div class="err">The minimum order is ${money(min)}.</div>` : ""}
     ${S.storeOpen ? `<button class="btn solid wide" type="button" id="toCheckout" ${min && sub < min ? "disabled" : ""}>Checkout</button>` : `<div class="err">Ordering is paused right now. Please check back soon.</div>`}`;
 }
@@ -325,7 +325,7 @@ function acctView(mode) {
       <div class="grid2"><div class="field" style="grid-column:1/-1"><label class="eyebrow" for="r1">Street address</label><input id="r1" autocomplete="address-line1"></div>
       ${fld("r2", "Apt, suite (optional)", "text", "address-line2")}${fld("rC", "City", "text", "address-level2")}${fld("rS", "State", "text", "address-level1")}${fld("rZ", "ZIP", "text", "postal-code")}</div>
       <label class="check"><input type="checkbox" id="rAge"><span>I am ${esc(S.minAge || 21)} or older.</span></label>
-      <label class="check"><input type="checkbox" id="rRes"><span>I am buying for laboratory research only, not for human or animal use, and I agree to the <a href="/policy#terms" target="_blank">terms of service</a> and <a href="/policy#privacy" target="_blank">privacy policy</a>.</span></label>
+      <label class="check"><input type="checkbox" id="rRes"><span>I am buying for laboratory research only, and I agree to the <a href="/policy#terms" target="_blank">terms of service</a> and <a href="/policy#privacy" target="_blank">privacy policy</a>.</span></label>
       <div class="err" id="acErr" hidden></div><button class="btn solid wide">Create account</button></form>`;
     $("acForm").onsubmit = async (e) => {
       e.preventDefault();

@@ -244,12 +244,12 @@ const DEFAULT_SETTINGS = {
   intro: "Many of our products come with an independent lab report. Open one to see the results, then check it on the lab's own site with the key printed on it.",
   // Short notice in the footer of every page (one paragraph per line).
   footerNotice: [
-    "Every product on this site is sold for laboratory research and development only and is not for human or animal consumption of any kind. Statements on this site have not been evaluated by the U.S. Food and Drug Administration, and no product or statement here is intended to diagnose, treat, cure or prevent any disease.",
+    "Every product on this site is sold for laboratory research and development only. Statements on this site have not been evaluated by the U.S. Food and Drug Administration, and no product or statement here is intended to diagnose, treat, cure or prevent any disease.",
     "We supply research chemicals. We are not a compounding pharmacy or chemical compounding facility under Section 503A of the Federal Food, Drug, and Cosmetic Act, and not an outsourcing facility under Section 503B of that Act."
   ],
   // Full policy pages. One paragraph per line; "Heading: text" shows the heading in bold.
   disclaimers: [
-    "Research use only: All products are sold strictly for in vitro research, laboratory and analytical use. They are not for human or veterinary use and must not be consumed, injected, inhaled, implanted, applied to the skin or given to animals.",
+    "Research use only: All products are sold strictly for in vitro research, laboratory and analytical use.",
     "Not a drug, food or supplement: These products are not drugs, foods, dietary supplements, cosmetics or medical devices, and they are not labeled for any of those uses.",
     "FDA status: These products have not been approved, cleared or evaluated by the U.S. Food and Drug Administration (FDA). Some compounds sold here are also the active ingredient in prescription medicines; the products sold here are not those medicines and are not a substitute for them.",
     "No medical claims or advice: Nothing on this site is intended to diagnose, treat, cure, mitigate or prevent any disease or condition. Nothing here is medical, dosing or health advice. Talk to a licensed healthcare professional about any medical question.",
@@ -262,10 +262,10 @@ const DEFAULT_SETTINGS = {
   ],
   policyTerms: [
     "Agreement: By using this site or placing an order you agree to these terms, the Disclaimer, and our Shipping, Refund and Returns, and Privacy policies.",
-    "Eligibility: You must be at least 21 years old and buying for lawful laboratory research. You may not buy for resale to anyone you know or suspect intends human or animal use.",
+    "Eligibility: You must be at least 21 years old and buying for lawful laboratory research.",
     "Buyer responsibility: You confirm the products are for research only, and you are responsible for knowing and following all federal, state and local laws that apply to buying, owning, storing, using and disposing of them where you are.",
     "Orders: Submitting a cart is a request, not a completed sale. An order is accepted only when we confirm it with you and receive payment. Prices, stock and product offerings may change without notice, and obvious pricing errors may be corrected before we accept an order.",
-    "Right to refuse: We may refuse or cancel any order, at any time and without explanation, including where anything suggests human or animal use, possible illegality, or a buyer we cannot verify. Any payment received for a cancelled order is refunded.",
+    "Right to refuse: We may refuse or cancel any order, at any time and without explanation, including where anything suggests possible illegality or a buyer we cannot verify. Any payment received for a cancelled order is refunded.",
     "No warranty: Products are provided as is, without any warranty, express or implied, including any warranty of merchantability or fitness for a particular purpose, except where the law does not allow this to be excluded.",
     "Limitation of liability: To the fullest extent allowed by law, we are not liable for any injury, loss or damage arising from misuse of any product, from use contrary to these terms, or from reliance on information on this site. Our total liability for any order is limited to the amount paid for it.",
     "Indemnity: You agree to hold us harmless from any claim, loss or expense arising from your purchase, handling or use of products, or from your breach of these terms.",
@@ -322,6 +322,32 @@ async function init() {
   const { rows: [{ n: pc0 }] } = await q("select count(*)::int n from products");
   const firstRun = !seeded && rc === 0 && pc0 === 0;
   await q("insert into settings(key, value) values ('catalogSeeded', 'true') on conflict (key) do nothing");
+  // one-time: take "not for human / animal use" wording out of the saved disclaimer and policy texts
+  const { rows: [hs] } = await q("select 1 from settings where key = 'humanUseScrubbed'");
+  if (!hs) {
+    const BAD = /not for human|human (or|and) (animal|veterinary)|human (use|consumption)|given to animals|animal use/i;
+    const scrub = (t) => {
+      let x = String(t)
+        .replace(/\s*and (is|are) not for human or animal (consumption|use)( of any kind)?/gi, "")
+        .replace(/\s*They are not for human or veterinary use and must not be consumed[^.]*\./gi, "")
+        .replace(/\s*You may not buy for resale to anyone you know or suspect intends human or animal use\./gi, "")
+        .replace(/including where anything suggests human or animal use, possible illegality, or a buyer we cannot verify/gi, "including where anything suggests possible illegality or a buyer we cannot verify");
+      if (BAD.test(x)) x = x.split(/(?<=[.!?])\s+/).filter((sentence) => !BAD.test(sentence)).join(" "); // drop any sentence still mentioning it
+      return x.replace(/\s{2,}/g, " ").trim();
+    };
+    const { rows: texts } = await q("select key, value from settings where key in ('footerNotice','disclaimers','policyTerms','policyReturns','policyShipping','policyPrivacy','intro','paymentInstructions','headline','heroEyebrow','priceNote','perks')");
+    for (const r of texts) {
+      let v = r.value, changed = false;
+      if (typeof v === "string") { const n = scrub(v); changed = n !== v; v = n; }
+      else if (Array.isArray(v)) {
+        const n = v.map((item) => typeof item === "string" ? scrub(item) : item && typeof item === "object" ? { ...item, title: scrub(item.title || ""), text: scrub(item.text || "") } : item)
+          .filter((item) => typeof item !== "string" || !/^[^:]{2,40}:\s*$/.test(item)); // a heading left with no text is dropped
+        changed = JSON.stringify(n) !== JSON.stringify(v); v = n;
+      }
+      if (changed) await q("update settings set value = $1 where key = $2", [JSON.stringify(v), r.key]);
+    }
+    await q("insert into settings(key, value) values ('humanUseScrubbed', 'true') on conflict (key) do nothing");
+  }
   // one-time: stores set up with the drawn vial switch to the real vial photo
   const { rows: [vp] } = await q("select 1 from settings where key = 'vialPhotoSeeded'");
   if (!vp) {
