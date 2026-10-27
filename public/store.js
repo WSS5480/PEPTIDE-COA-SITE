@@ -62,10 +62,10 @@ const ICON_PATHS = {
 function productArt(p) {
   if (p.has_image) return `<img class="pimg" src="/pimg/${p.id}?v=${p.media_v}" alt="${esc(`${p.name} ${p.strength}`)}" loading="lazy">`;
   const v = S.vial || {};
-  const style = Object.assign({}, v, p.vial_label ? { label: p.vial_label } : {});
+  const style = Object.assign({}, v, p.vial_label ? { label: p.vial_label, photoTint: true } : {});
   const useCode = !!p.sku && (v.labelShows === "code" || codeMode(p));
   const logoUrl = p.has_logo ? `/plogo/${p.id}?v=${p.media_v}` : S.vialLogoV ? `/vial-logo?v=${S.vialLogoV}` : "";
-  return window.drawVial({ title: useCode ? p.sku : p.name, sub: p.strength, style, logoUrl });
+  return window.drawVial({ title: useCode ? p.sku : p.name, sub: p.strength, style, logoUrl, photoUrl: `/vial-photo?v=${S.vialPhotoV || 1}` });
 }
 // A product's lab report matches by name + size, or by its code (e.g. RT30) against the report's Sample line.
 const mfrOk = (p, r) => { const a = norm(p.manufacturer), b = norm(r.manufacturer); return !a || !b || a.includes(b) || b.includes(a); };
@@ -100,7 +100,7 @@ function drawProducts() {
     const buy = p.price_cents === null ? (S.contact ? `<span class="stockline">Contact us: ${esc(S.contact)}</span>` : "")
       : sold ? "" : `<button class="btn solid" type="button" data-add="${p.id}">Add to cart${inCart(p.id) ? ` (${inCart(p.id)})` : ""}</button>`;
     return `<article class="pcard">
-      <div class="thumb">${productArt(p)}</div>
+      <div class="thumb${!p.has_image && (S.vial || {}).shape !== "vial" && (S.vial || {}).shape !== "tall" && (S.vial || {}).shape !== "round" ? " photo" : ""}">${productArt(p)}</div>
       <div class="pbody">
         <span class="pcat">${esc(p.category || "Research peptide")}${p.manufacturer ? ` · ${esc(p.manufacturer)}` : ""}</span>
         <h3 class="pname">${esc(codeMode(p) ? p.sku : p.name)}</h3>
@@ -430,6 +430,7 @@ async function load() {
     document.title = LAB ? `Lab reports · ${name}` : name;
     if (LAB) $("hq").placeholder = "Search lab reports";
     $("brand").textContent = name; $("footBrand").textContent = name;
+    if (S.siteLogoV) { $("brandImg").src = "/site-logo?v=" + S.siteLogoV; $("brandImg").alt = name; $("brandImg").hidden = false; $("brand").classList.add("hp"); $("tagline").classList.add("hp"); }
     if (S.tagline) { $("tagline").textContent = S.tagline; $("tagline").hidden = false; }
     if (S.headline) $("headline").textContent = S.headline;
     if (S.heroEyebrow) $("heroEyebrow").textContent = S.heroEyebrow; else $("heroEyebrow").hidden = true;
@@ -451,6 +452,7 @@ async function load() {
     const cats = [...new Set(PRODUCTS.map((p) => p.category || "Research peptide"))].sort();
     $("footCats").innerHTML = cats.map((c) => `<li><a href="#products" data-cat="${esc(c)}">${esc(c)}</a></li>`).join("");
     $("footCopy").textContent = `© ${new Date().getFullYear()} ${name}`;
+    fetch("/api/build").then((r) => r.json()).then((b) => { $("footCopy").textContent += ` · v${b.version} · updated ${fmtDate(b.updated)}`; }).catch(() => {});
     drawHelix();
     const names = [...new Set(REPORTS.map((r) => r.product))];
     $("product").insertAdjacentHTML("beforeend", names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join(""));
@@ -466,6 +468,11 @@ async function load() {
   } else drawReports();
   drawProducts(); drawCartCount();
 }
+if (window.AppRefresh) window.AppRefresh.init({
+  version: "/api/version", interval: 30000,
+  canAuto: () => !document.querySelector("dialog[open]") && !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || ""),
+  refresh: async () => { await load(); await loadAccount(); }
+});
 loadAccount();
 load().catch(() => { $("pgrid").innerHTML = `<div class="card empty"><p><strong>The store couldn't load.</strong> Refresh the page to try again.</p></div>`; });
 })();

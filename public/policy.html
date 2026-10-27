@@ -7,7 +7,7 @@
 <title>Policies</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Poppins:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="/store.css?v=1793127324">
+<link rel="stylesheet" href="/store.css?v=1793128572">
 <style>
 .pol { display: grid; grid-template-columns: 14rem minmax(0, 1fr); gap: 2rem; padding-block: 2rem 4rem; align-items: start; }
 .pol nav { position: sticky; top: 5rem; display: grid; gap: .2rem; }
@@ -21,7 +21,7 @@
 </head>
 <body>
 <header class="top"><div class="wrap">
-  <a class="logo" href="/" style="text-decoration:none"><span id="brand">360 Medical Peptides</span></a>
+  <a class="logo" href="/" style="text-decoration:none"><img class="brandimg" id="brandImg" alt="" hidden><span id="brand">360 Medical Peptides</span></a>
   <a class="btn" href="/" style="display:inline-grid;place-items:center;text-decoration:none">← Back to store</a>
 </div></header>
 <main class="wrap pol">
@@ -40,6 +40,7 @@
   const { settings: S } = await (await fetch("/api/store")).json();
   const name = S.brand || "360 Medical Peptides";
   document.title = "Policies · " + name; $("brand").textContent = name;
+  if (S.siteLogoV) { $("brandImg").src = "/site-logo?v=" + S.siteLogoV; $("brandImg").alt = name; $("brandImg").hidden = false; $("brand").classList.add("hp"); }
   const block = (id, title, items) => `<section id="${id}"><h2 class="title">${title}</h2>${(items || []).map((t) => `<p>${para(t)}</p>`).join("") || "<p>Coming soon.</p>"}</section>`;
   $("body").innerHTML = [
     block("terms", "Terms of service", S.policyTerms),

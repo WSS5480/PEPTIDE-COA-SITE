@@ -8,7 +8,7 @@
 <title>360 Medical Peptides</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Poppins:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="/store.css?v=1793127324">
+<link rel="stylesheet" href="/store.css?v=1793128572">
 <link rel="manifest" href="/manifest.webmanifest?v=3">
 <meta name="theme-color" content="#0b4d96">
 <link rel="icon" href="/icon-192.png">
@@ -18,13 +18,14 @@
 </head>
 <body>
 <header class="top" id="top"><div class="wrap">
-  <a class="logo" href="/" style="text-decoration:none"><span id="brand">360 Medical Peptides</span><small id="tagline" hidden></small></a>
+  <a class="logo" href="/" style="text-decoration:none"><img class="brandimg" id="brandImg" alt="" hidden><span id="brand">360 Medical Peptides</span><small id="tagline" hidden></small></a>
   <label class="coaonly" title="Show only products that have a lab report"><input type="checkbox" data-coaonly> COA only</label>
   <label class="hsearch"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
     <span class="hp">Search products</span><input id="hq" type="search" autocomplete="off" spellcheck="false" placeholder="Search products, mg or batch"></label>
   <div class="tools">
     <span class="eyebrow" id="topLine">Lab-tested research peptides</span>
     <button class="stoggle" type="button" id="stoggle" aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>
+    <button class="btn acctbtn refbtn" type="button" data-refresh title="Refresh"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button>
     <button class="btn acctbtn appbtn" type="button" data-install title="Download the app"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/></svg><span>App</span></button>
     <button class="btn acctbtn" type="button" id="acctOpen"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><span id="acctLabel">Sign in</span></button>
     <button class="cartbtn" type="button" id="cartOpen"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 8H6"/><circle cx="10" cy="20" r="1.3"/><circle cx="17" cy="20" r="1.3"/></svg>Cart <span class="n" id="cartN">0</span></button>
@@ -177,8 +178,9 @@
   <div class="v-foot"><a id="vOpen" href="#" target="_blank" rel="noopener">Open full size</a><a id="vVerify" href="#" target="_blank" rel="noopener" hidden>Check this report with the lab</a></div>
 </dialog>
 
-<script src="/vial.js?v=1"></script>
-<script src="/store.js?v=1793127324"></script>
+<script src="/refresh.js?v=1"></script>
+<script src="/vial.js?v=1793128623"></script>
+<script src="/store.js?v=1793128891"></script>
 <script src="/install.js?v=1792620296"></script>
 </body>
 </html>

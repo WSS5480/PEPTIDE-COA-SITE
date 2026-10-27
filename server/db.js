@@ -136,6 +136,19 @@ create table if not exists documents (
   created_at timestamptz not null default now()
 );
 create index if not exists documents_product_idx on documents(product_id);
+alter table users drop constraint if exists users_role_check;
+alter table users add constraint users_role_check check (role in ('owner','staff','rep'));
+alter table users add column if not exists phone text not null default '';
+alter table users add column if not exists commission_rate numeric(5,2) not null default 0;
+create table if not exists commission_payouts (
+  id serial primary key,
+  rep_id int references users(id) on delete set null,
+  amount_cents int not null,
+  orders int not null default 0,
+  note text not null default '',
+  who text not null default '',
+  paid_at timestamptz not null default now()
+);
 alter table customers add column if not exists access_pin_key text unique;
 alter table customers add column if not exists pin_version int not null default 0;
 alter table customers add column if not exists pin_set_at timestamptz;
@@ -168,9 +181,32 @@ create index if not exists stock_moves_expiry_idx on stock_moves(expires) where 
 alter table products add column if not exists manufacturer text not null default '';
 alter table products add column if not exists show_code boolean not null default false;
 alter table orders add column if not exists customer_id int references customers(id) on delete set null;
+alter table customers add column if not exists rep_id int references users(id) on delete set null;
+alter table orders add column if not exists rep_id int references users(id) on delete set null;
+alter table orders add column if not exists commission_rate numeric(5,2);
+alter table orders add column if not exists payout_id int references commission_payouts(id) on delete set null;
+alter table orders add column if not exists placed_by text not null default '';
+create index if not exists orders_rep_idx on orders(rep_id);
 create index if not exists orders_customer_idx on orders(customer_id);
 create index if not exists orders_status_idx on orders(status);
 create index if not exists orders_created_idx on orders(created_at desc);
+-- a counter that moves whenever store data changes; pages poll it to know when to refresh
+create table if not exists app_state (id int primary key, version bigint not null default 1, at timestamptz not null default now());
+insert into app_state(id) values (1) on conflict (id) do nothing;
+create or replace function bump_app_version() returns trigger language plpgsql as $$
+begin update app_state set version = version + 1, at = now() where id = 1; return null; end $$;
+drop trigger if exists t_bump on orders; create trigger t_bump after insert or update or delete on orders for each statement execute function bump_app_version();
+drop trigger if exists t_bump on order_items; create trigger t_bump after insert or update or delete on order_items for each statement execute function bump_app_version();
+drop trigger if exists t_bump on order_events; create trigger t_bump after insert or update or delete on order_events for each statement execute function bump_app_version();
+drop trigger if exists t_bump on products; create trigger t_bump after insert or update or delete on products for each statement execute function bump_app_version();
+drop trigger if exists t_bump on customers; create trigger t_bump after insert or update or delete on customers for each statement execute function bump_app_version();
+drop trigger if exists t_bump on reports; create trigger t_bump after insert or update or delete on reports for each statement execute function bump_app_version();
+drop trigger if exists t_bump on documents; create trigger t_bump after insert or update or delete on documents for each statement execute function bump_app_version();
+drop trigger if exists t_bump on shipping_methods; create trigger t_bump after insert or update or delete on shipping_methods for each statement execute function bump_app_version();
+drop trigger if exists t_bump on stock_moves; create trigger t_bump after insert or update or delete on stock_moves for each statement execute function bump_app_version();
+drop trigger if exists t_bump on commission_payouts; create trigger t_bump after insert or update or delete on commission_payouts for each statement execute function bump_app_version();
+drop trigger if exists t_bump on users; create trigger t_bump after insert or update or delete on users for each statement execute function bump_app_version();
+drop trigger if exists t_bump on settings; create trigger t_bump after insert or update or delete on settings for each statement execute function bump_app_version();
 `;
 
 const DEFAULT_SETTINGS = {
@@ -192,8 +228,10 @@ const DEFAULT_SETTINGS = {
     { icon: "truck", title: "Tracked shipping", text: "Every order ships with a tracking number." }
   ],
   // Page setup: how the drawn product vial looks
-  vial: { shape: "vial", cap: "#0f1b33", band: "#c9d1dc", glass: "#ffffff", label: "#0b4d96", text: "#ffffff", sub: "#cfdcf0", liquid: "#e9f1fb", labelShows: "name" },
-  vialLogoV: 0,
+  vial: { shape: "photo", cap: "#0f1b33", band: "#c9d1dc", glass: "#ffffff", label: "#0b4d96", text: "#ffffff", sub: "#cfdcf0", liquid: "#e9f1fb", labelShows: "name", photoName: "#0f1b33", photoMg: "#0097b2", photoTint: false },
+  vialPhotoV: 1,  // 1 = the bundled vial photo; uploads bump it
+  vialLogoV: 1,   // 1 = the bundled brand mark; uploads bump it
+  siteLogoV: 1,   // header logo: 1 = bundled brand logo, 0 = show the store name as text
   bannerScroll: true,
   heroEyebrow: "Third-party tested",
   headline: "Research peptides with the lab report on every vial",
@@ -284,6 +322,18 @@ async function init() {
   const { rows: [{ n: pc0 }] } = await q("select count(*)::int n from products");
   const firstRun = !seeded && rc === 0 && pc0 === 0;
   await q("insert into settings(key, value) values ('catalogSeeded', 'true') on conflict (key) do nothing");
+  // one-time: stores set up with the drawn vial switch to the real vial photo
+  const { rows: [vp] } = await q("select 1 from settings where key = 'vialPhotoSeeded'");
+  if (!vp) {
+    await q(`update settings set value = jsonb_set(value, '{shape}', '"photo"') where key = 'vial' and value->>'shape' = 'vial'`);
+    await q("insert into settings(key, value) values ('vialPhotoSeeded', 'true') on conflict (key) do nothing");
+  }
+  // one-time: stores set up before the brand logo existed start showing it on vials
+  const { rows: [vl] } = await q("select 1 from settings where key = 'vialLogoSeeded'");
+  if (!vl) {
+    await q("update settings set value = '1' where key = 'vialLogoV' and value::text = '0' and not exists (select 1 from settings where key = 'vialLogo')");
+    await q("insert into settings(key, value) values ('vialLogoSeeded', 'true') on conflict (key) do nothing");
+  }
   // one-time rename: a store still on the old default name becomes 360 Medical Peptides
   const { rows: [renamed] } = await q("select 1 from settings where key = 'brandRenamed360'");
   if (!renamed) {

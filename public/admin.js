@@ -34,30 +34,34 @@ const isOwner = () => me && me.role === "owner";
 /* ---------- login ---------- */
 function drawLogin(msg) {
   app.innerHTML = `<div class="login"><form id="lf">
-    <h1>360 Peptides Admin</h1><p class="muted">Sign in to manage orders, prices and the site.</p>
+    <img src="/site-logo" alt="360 Medical" style="height:3.2rem;width:auto;max-width:16rem;object-fit:contain;justify-self:start">
+    <h1>Peptides Admin</h1><p class="muted">Sign in to manage orders, prices and the site.</p>
     <div class="field"><label class="eyebrow" for="le">Email</label><input id="le" type="email" autocomplete="username" required></div>
     <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>
     ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
-    <button class="btn solid wide">Sign in</button><button class="btn wide" type="button" data-install>Download admin app</button></form></div>`;
+    <button class="btn solid wide">Sign in</button><button class="btn wide" type="button" data-install>Download admin app</button>
+    <p class="muted" style="text-align:center;margin:0">Sales rep? <a href="/rep">Sign in to the rep app</a> to fill orders.</p></form></div>`;
   document.getElementById("lf").onsubmit = async (e) => {
     e.preventDefault();
     const res = await fetch("/api/admin/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: le.value, password: lp.value }) });
     const j = await res.json();
     if (!res.ok) return drawLogin(j.error);
+    if (j.user.role === "rep") { location.href = "/rep"; return; }
     me = j.user; shell();
   };
 }
 
 /* ---------- shell ---------- */
-const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Customers"], ["products", "Products & prices"], ["inventory", "Inventory"], ["reports", "Lab reports"], ["shipping", "Shipping"], ["page", "Page setup"], ["settings", "Site settings"], ["staff", "Staff logins", true], ["account", "My account"]];
+const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Customers"], ["reps", "Sales reps", true], ["commissions", "Commissions", true], ["products", "Products & prices"], ["inventory", "Inventory"], ["reports", "Lab reports"], ["shipping", "Shipping"], ["page", "Page setup"], ["settings", "Site settings"], ["staff", "Staff logins", true], ["account", "My account"]];
 function shell() {
-  app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><button type="button" id="mm">Menu</button></div>
+  app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><span><button type="button" data-refresh title="Refresh"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button> <button type="button" id="mm">Menu</button></span></div>
   <div class="adm" id="adm"><aside class="side">
-    <div class="logo"><span>360 Peptides Admin</span><small>Store manager</small></div>
+    <div class="logobox"><img src="/site-logo" alt="360 Medical"></div><div class="logo"><small>Peptides admin</small></div>
     <nav id="nav"></nav>
-    <div class="who"><span>${esc(me.name || me.email)} · ${esc(me.role)}</span><a href="/" target="_blank" style="color:#fff">View store ↗</a><button type="button" data-install>Download admin app</button><button type="button" id="lo">Sign out</button></div>
+    <div class="who"><span>${esc(me.name || me.email)} · ${esc(me.role)}</span><a href="/" target="_blank" style="color:#fff">View store ↗</a><button type="button" data-refresh><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="vertical-align:-2px"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg> Refresh</button><button type="button" data-install>Download admin app</button><button type="button" id="lo">Sign out</button><span id="buildLine" style="font-size:.7rem;opacity:.7"></span></div>
   </aside><section class="pane" id="pane"></section></div>`;
   document.getElementById("lo").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };
+  fetch("/api/build").then((r) => r.json()).then((b) => { document.getElementById("buildLine").textContent = `v${b.version} · updated ${when(b.updated)}`; }).catch(() => {});
   document.getElementById("mm").onclick = () => document.getElementById("adm").classList.toggle("menu");
   go(view);
 }
@@ -66,15 +70,17 @@ async function drawNav() {
   const n = stats.byStatus.new || 0;
   document.getElementById("nav").innerHTML = NAV.filter(([, , o]) => !o || isOwner()).map(([k, label]) => `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}</button>`).join("");
 }
-function go(v, id) {
-  if (unsaved && !confirm("You have unsaved product changes. Leave without saving?")) return;
-  unsaved = false;
+let paneDirty = false; // something typed on this screen and not saved yet
+document.addEventListener("input", (e) => { if (e.target.closest("#pane")) paneDirty = true; });
+function go(v, id, opts = {}) {
+  if (!opts.silent && unsaved && !confirm("You have unsaved product changes. Leave without saving?")) return;
+  unsaved = false; paneDirty = false;
   const pn = document.getElementById("pane"); if (pn) { pn.onclick = null; pn.oninput = null; pn.onchange = null; } // drop the last screen's handlers
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  ({ dashboard, orders, customers, products, inventory, reports, shipping, page, settings, staff, account }[v] || dashboard)();
-  window.scrollTo(0, 0);
+  ({ dashboard, orders, customers, reps, commissions, products, inventory, reports, shipping, page, settings, staff, account }[v] || dashboard)();
+  if (!opts.keepScroll) window.scrollTo(0, 0);
 }
 const pane = () => document.getElementById("pane");
 const ro = () => (isOwner() ? "" : " disabled");
@@ -113,15 +119,16 @@ async function orders() {
   const load = async () => {
     const qs = new URLSearchParams(oFilter).toString();
     const { orders: list } = await api("/orders?" + qs);
-    document.getElementById("ot").innerHTML = list.length ? `<table class="tbl"><tr><th>Order</th><th>Placed</th><th>Customer</th><th class="num">Items</th><th class="num">Total</th><th>Status</th><th>Tracking</th></tr>
-      ${list.map((o) => `<tr class="click" data-order="${o.id}"><td class="mono">${esc(o.number)}</td><td>${when(o.created_at)}</td><td>${esc(o.name)}<br><span class="muted">${esc(o.email)}</span></td><td class="num">${o.items}</td><td class="num">${money(o.total_cents)}</td><td>${pill(o.status)}</td><td class="mono">${esc(o.tracking)}</td></tr>`).join("")}</table>` : `<p class="muted">No orders${oFilter.status || oFilter.q ? " match" : " yet"}.</p>`;
+    document.getElementById("ot").innerHTML = list.length ? `<table class="tbl"><tr><th>Order</th><th>Placed</th><th>Customer</th><th>Rep</th><th class="num">Items</th><th class="num">Total</th><th>Status</th><th>Tracking</th></tr>
+      ${list.map((o) => `<tr class="click" data-order="${o.id}"><td class="mono">${esc(o.number)}</td><td>${when(o.created_at)}</td><td>${esc(o.name)}<br><span class="muted">${esc(o.email)}</span></td><td>${esc(o.rep_name || "")}${o.placed_by && o.placed_by.startsWith("Rep") ? '<div class="muted" style="font-size:.72rem">placed by rep</div>' : ""}</td><td class="num">${o.items}</td><td class="num">${money(o.total_cents)}</td><td>${pill(o.status)}</td><td class="mono">${esc(o.tracking)}</td></tr>`).join("")}</table>` : `<p class="muted">No orders${oFilter.status || oFilter.q ? " match" : " yet"}.</p>`;
   };
   document.getElementById("of").onchange = (e) => { oFilter.status = e.target.value; load(); };
   let t; document.getElementById("oq").oninput = (e) => { clearTimeout(t); t = setTimeout(() => { oFilter.q = e.target.value; load(); }, 250); };
   load();
 }
 async function orderDetail(id) {
-  const { order: o, items, events } = await api("/orders/" + id);
+  const { order: o, items, events, reps: repOpts } = await api("/orders/" + id);
+  const comm = o.rep_id && o.commission_rate !== null ? Math.round((o.subtotal_cents - o.discount_cents) * o.commission_rate / 100) : 0;
   const a = o.address || {};
   const addr = [a.line1, a.line2, `${a.city || ""}, ${a.state || ""} ${a.zip || ""}`].filter((x) => x && x.trim() !== ",").map(esc).join("<br>");
   pane().innerHTML = `<header><h1>Order ${esc(o.number)}</h1><button class="btn" data-nav="orders">← All orders</button></header>
@@ -148,6 +155,11 @@ async function orderDetail(id) {
         <div class="field"><label class="eyebrow" for="oin">Internal note (staff only)</label><textarea id="oin">${esc(o.internal_note)}</textarea></div>
         <button class="btn solid" id="saveO">Save</button>
         <p class="muted">${o.paid_at ? "Paid " + when(o.paid_at) + ". " : ""}${o.shipped_at ? "Shipped " + when(o.shipped_at) + "." : ""}</p></div>
+      <div class="panel"><h2>Sales rep &amp; commission</h2>
+        ${isOwner() ? `<div class="grid2"><div class="field"><label class="eyebrow" for="orep">Rep</label><select id="orep"${o.payout_id ? " disabled" : ""}><option value="">— none —</option>${(repOpts || []).concat(o.rep_id && !(repOpts || []).some((r) => r.id === o.rep_id) ? [{ id: o.rep_id, name: o.rep_name, commission_rate: o.commission_rate }] : []).map((r) => `<option value="${r.id}"${r.id === o.rep_id ? " selected" : ""}>${esc(r.name)} (${r.commission_rate}%)</option>`).join("")}</select></div>
+          <div class="field"><label class="eyebrow" for="orate">Rate on this order %</label><input id="orate" value="${o.commission_rate ?? ""}" inputmode="decimal"${o.rep_id && !o.payout_id ? "" : " disabled"}></div></div>
+          <div><button class="btn" id="saveRep"${o.payout_id ? " disabled" : ""}>Save</button></div>` : `<p>${o.rep_name ? `${esc(o.rep_name)} · ${o.commission_rate}%` : "No sales rep on this order."}</p>`}
+        <p class="muted">${o.rep_id ? `Commission ${money(comm)} · ${o.status === "cancelled" ? "void (cancelled)" : o.payout_id ? "paid out" : ["paid", "shipped", "delivered"].includes(o.status) ? "earned, not yet paid out" : "pending until the order is paid"}` : ""}${o.placed_by ? ` · Placed by ${esc(o.placed_by)}` : ""}</p></div>
       <div class="panel"><h2>History</h2>
         <div class="row2"><input id="onote" placeholder="Add a note (e.g. payment received via Zelle)" style="flex:1;height:2.4rem;padding:0 .7rem;border:1px solid var(--line-strong);border-radius:8px"><button class="btn" id="addNote">Add</button></div>
         <ul class="hist">${events.map((e) => `<li>${esc(e.text)}<small>${esc(e.who)} · ${when(e.at)}</small></li>`).join("")}</ul></div>
@@ -163,6 +175,7 @@ async function orderDetail(id) {
     await api("/orders/" + id, { method: "PATCH", body: { shippingCents: Math.round(parseFloat($("oship").value || 0) * 100), discountCents: Math.round(parseFloat($("odisc").value || 0) * 100) } });
     toast("Charges updated"); orderDetail(id);
   };
+  if ($("saveRep")) $("saveRep").onclick = async () => { await api("/orders/" + id, { method: "PATCH", body: { repId: $("orep").value || null, commissionRate: $("orate").value } }); toast("Saved"); orderDetail(id); };
   $("addNote").onclick = async () => { if (!$("onote").value.trim()) return; await api(`/orders/${id}/note`, { method: "POST", body: { text: $("onote").value } }); orderDetail(id); };
   $("copyAddr").onclick = () => {
     const txt = [o.name, a.line1, a.line2, `${a.city}, ${a.state} ${a.zip}`].filter(Boolean).join("\n");
@@ -179,6 +192,11 @@ async function customers() {
     <div class="filters"><input id="cq" type="search" placeholder="Name or email"></div>
     <div class="tblwrap" id="ct"><p class="muted">Loading…</p></div>`;
   let term = "";
+  const { reps: repList } = await api("/reps").catch(() => ({ reps: [] }));
+  const activeReps = repList.filter((r) => r.active);
+  const repCell = (c) => isOwner()
+    ? `<select data-rep style="min-width:8rem"><option value="">— none —</option>${repList.filter((r) => r.active || r.id === c.rep_id).map((r) => `<option value="${r.id}"${r.id === c.rep_id ? " selected" : ""}>${esc(r.name)}${r.active ? "" : " (off)"}</option>`).join("")}</select>`
+    : esc(c.rep_name || "");
   const pinCell = (c) => {
     if (!isOwner()) return c.has_pin ? "Set" : "";
     return c.has_pin
@@ -188,11 +206,28 @@ async function customers() {
   };
   const load = async () => {
     const { customers: list } = await api("/customers?q=" + encodeURIComponent(term));
-    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Site PIN</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th></tr>
+    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Sales rep</th><th>Site PIN</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th>${isOwner() ? "<th></th>" : ""}</tr>
       ${list.map((c) => `<tr data-cid="${c.id}" data-cname="${esc(c.name || c.email)}"><td>${esc(c.name)}</td><td><a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a></td><td>${esc(c.phone)}</td>
-        <td>${pinCell(c)}</td><td>${when(c.created_at)}</td>
+        <td>${repCell(c)}</td><td>${pinCell(c)}</td><td>${when(c.created_at)}</td>
         <td class="num">${c.orders}</td><td class="num">${money(c.spent_cents)}</td><td>${c.last_order ? when(c.last_order) : ""}</td>
-        <td><input type="checkbox" data-cact${c.active ? " checked" : ""}${ro()}></td></tr>`).join("")}</table>` : `<p class="muted">No customers yet.${isOwner() ? " Use Add customer to set one up and give them a PIN." : ""}</p>`;
+        <td><input type="checkbox" data-cact${c.active ? " checked" : ""}${ro()}></td>
+        ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-cedit>Edit</button><button class="btn" data-cdel>Delete</button></td>` : ""}</tr>`).join("")}</table>` : `<p class="muted">No customers yet.${isOwner() ? " Use Add customer to set one up and give them a PIN." : ""}</p>`;
+    lastList = list;
+  };
+  let lastList = [];
+  const editForm = (c) => {
+    const a = c.address || {};
+    const f = (id, label, val = "", type = "text") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}" value="${esc(val)}"></div>`;
+    document.getElementById("cNew").innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Edit customer</h2><div class="grid2">${f("ec-n", "Name", c.name)}${f("ec-e", "Email", c.email, "email")}${f("ec-p", "Phone", c.phone, "tel")}</div>
+      <div class="grid2">${f("ec-1", "Street address", a.line1)}${f("ec-2", "Apt, suite", a.line2)}${f("ec-c", "City", a.city)}${f("ec-s", "State", a.state)}${f("ec-z", "ZIP", a.zip)}</div>
+      <div class="row2"><button class="btn solid" type="button" id="ecSave">Save changes</button><button class="btn" type="button" id="ecCancel">Cancel</button></div></div>`;
+    window.scrollTo(0, 0);
+    document.getElementById("ecCancel").onclick = () => { document.getElementById("cNew").innerHTML = ""; paneDirty = false; };
+    document.getElementById("ecSave").onclick = async () => {
+      const g = (x) => document.getElementById(x).value;
+      await api("/customers/" + c.id, { method: "PATCH", body: { edit: true, name: g("ec-n"), email: g("ec-e"), phone: g("ec-p"), address: { line1: g("ec-1"), line2: g("ec-2"), city: g("ec-c"), state: g("ec-s"), zip: g("ec-z") } } });
+      toast("Customer updated"); paneDirty = false; document.getElementById("cNew").innerHTML = ""; load();
+    };
   };
   const showPin = (name, pin) => {
     document.getElementById("pinShow").innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>PIN for ${esc(name)}</h2>
@@ -223,12 +258,13 @@ async function customers() {
     const f = (id, label, type = "text") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}"></div>`;
     box.innerHTML = `<div class="panel"><h2>Add customer</h2><div class="grid2">${f("nc-n", "Name")}${f("nc-e", "Email", "email")}${f("nc-p", "Phone", "tel")}</div>
       <div class="grid2">${f("nc-1", "Street address")}${f("nc-2", "Apt, suite")}${f("nc-c", "City")}${f("nc-s", "State")}${f("nc-z", "ZIP")}</div>
+      <div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-rep">Sales rep (for commission)</label><select id="nc-rep"><option value="">— none —</option>${activeReps.map((r) => `<option value="${r.id}">${esc(r.name)} · ${r.commission_rate}%</option>`).join("")}</select></div>
       <label class="chk"><input type="checkbox" id="nc-pin" checked> Give them a PIN now</label>
       <div class="row2"><button class="btn solid" type="button" id="ncSave">Add customer</button><button class="btn" type="button" id="ncCancel">Cancel</button></div></div>`;
     document.getElementById("ncCancel").onclick = () => { box.innerHTML = ""; };
     document.getElementById("ncSave").onclick = async () => {
       const g = (x) => document.getElementById(x).value;
-      const r = await api("/customers", { method: "POST", body: { name: g("nc-n"), email: g("nc-e"), phone: g("nc-p"), address: { line1: g("nc-1"), line2: g("nc-2"), city: g("nc-c"), state: g("nc-s"), zip: g("nc-z") } } });
+      const r = await api("/customers", { method: "POST", body: { name: g("nc-n"), email: g("nc-e"), phone: g("nc-p"), repId: g("nc-rep") || null, address: { line1: g("nc-1"), line2: g("nc-2"), city: g("nc-c"), state: g("nc-s"), zip: g("nc-z") } } });
       const wantPin = document.getElementById("nc-pin").checked, name = g("nc-n");
       box.innerHTML = ""; toast("Customer added"); await load();
       if (wantPin) givePin(r.id, name);
@@ -238,6 +274,12 @@ async function customers() {
     const link = e.target.closest("[data-cust-orders]");
     if (link) { e.preventDefault(); oFilter = { status: "", q: link.dataset.custOrders }; go("orders"); return; }
     const tr = e.target.closest("tr[data-cid]");
+    if (tr && e.target.closest("[data-cedit]")) { const c = lastList.find((x) => String(x.id) === tr.dataset.cid); if (c) editForm(c); return; }
+    if (tr && e.target.closest("[data-cdel]")) {
+      const c = lastList.find((x) => String(x.id) === tr.dataset.cid);
+      if (!confirm(`Delete ${tr.dataset.cname}? Their login and PIN are removed. Past orders are kept with the name and address they were placed with.${c && c.orders ? ` (${c.orders} order${c.orders === 1 ? "" : "s"})` : ""}`)) return;
+      await api("/customers/" + tr.dataset.cid, { method: "DELETE" }); toast("Customer deleted"); return load();
+    }
     const pb = e.target.closest("[data-pin]");
     if (pb && tr) {
       if (pb.dataset.pin === "revoke") {
@@ -249,6 +291,98 @@ async function customers() {
     const box = e.target.closest("[data-cact]");
     if (box) { await api("/customers/" + box.closest("tr").dataset.cid, { method: "PATCH", body: { active: box.checked } }); toast(box.checked ? "Account turned on" : "Account turned off"); }
   };
+  document.getElementById("ct").onchange = async (e) => {
+    const sel = e.target.closest("[data-rep]"); if (!sel) return;
+    await api("/customers/" + sel.closest("tr").dataset.cid, { method: "PATCH", body: { repId: sel.value || null } });
+    toast(sel.value ? "Sales rep assigned. New orders from this customer earn them commission." : "Sales rep removed");
+  };
+  load();
+}
+
+/* ---------- sales reps ---------- */
+async function reps() {
+  if (!isOwner()) return dashboard();
+  const $ = (x) => document.getElementById(x);
+  const { reps: list } = await api("/reps");
+  pane().innerHTML = `<header><h1>Sales reps</h1><button class="btn solid" id="addRep">Add sales rep</button></header>
+    <p class="muted">Reps sign in at <a href="/rep" target="_blank">/rep</a> (the rep app). They add their own customers and place orders for them; every order from one of their customers earns their commission rate, whether the rep or the customer placed it. Change the rate here; it applies to new orders.</p>
+    <div id="repForm"></div>
+    <div class="tblwrap"><table class="tbl" id="rt"><tr><th>Name</th><th>Email</th><th>Phone</th><th class="num">Rate %</th><th class="num">Customers</th><th class="num">Orders</th><th class="num">Sales (all)</th><th class="num">This month</th><th class="num">Owed now</th><th class="num">Paid out</th><th>Active</th><th>New password</th><th></th></tr>
+    ${list.map((r) => `<tr data-rid="${r.id}"><td><input data-k="name" value="${esc(r.name)}"></td><td>${esc(r.email)}</td><td><input data-k="phone" value="${esc(r.phone)}" style="min-width:7rem"></td>
+      <td class="num"><input data-k="rate" value="${r.commission_rate}" inputmode="decimal" style="width:4.5rem;text-align:right"></td>
+      <td class="num">${r.customers}</td><td class="num">${r.orders}</td><td class="num">${money(r.sales_cents)}</td><td class="num">${money(r.month_cents)}</td><td class="num"><strong>${money(r.commission.earned)}</strong></td><td class="num">${money(r.commission.paid)}</td>
+      <td><input type="checkbox" data-k="active"${r.active ? " checked" : ""}></td><td><input data-k="password" type="password" placeholder="Leave blank" autocomplete="new-password" style="min-width:7rem"></td>
+      <td class="row2" style="flex-wrap:nowrap"><button class="btn" data-save>Save</button><button class="btn" data-comm="${r.id}">Commissions</button></td></tr>`).join("")}
+    ${list.length ? "" : '<tr><td colspan="13" class="muted">No sales reps yet.</td></tr>'}</table></div>`;
+  $("addRep").onclick = () => {
+    const f = (id, label, type = "text", extra = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}"${extra}></div>`;
+    $("repForm").innerHTML = `<div class="panel"><h2>New sales rep</h2><div class="grid2">${f("nr-n", "Name")}${f("nr-e", "Email (their login)", "email")}${f("nr-p", "Phone", "tel")}${f("nr-r", "Commission %", "text", ' inputmode="decimal" placeholder="e.g. 10"')}${f("nr-pw", "Temporary password (8+ characters)", "password", ' autocomplete="new-password"')}</div>
+      <div class="row2"><button class="btn solid" id="nrSave">Add rep</button><button class="btn" id="nrCancel">Cancel</button></div></div>`;
+    $("nrCancel").onclick = () => { $("repForm").innerHTML = ""; paneDirty = false; };
+    $("nrSave").onclick = async () => {
+      const g = (x) => $(x).value.trim();
+      await api("/reps", { method: "POST", body: { name: g("nr-n"), email: g("nr-e"), phone: g("nr-p"), rate: g("nr-r"), password: $("nr-pw").value } });
+      toast("Rep added. Send them /rep and their temporary password."); paneDirty = false; reps();
+    };
+  };
+  $("rt").onclick = async (e) => {
+    const c = e.target.closest("[data-comm]"); if (c) { commFilter.rep = c.dataset.comm; go("commissions"); return; }
+    if (!e.target.closest("[data-save]")) return;
+    const tr = e.target.closest("tr"), body = {};
+    tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body.active = i.checked; else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
+    await api("/reps/" + tr.dataset.rid, { method: "PATCH", body }); toast("Saved"); paneDirty = false; reps();
+  };
+}
+
+/* ---------- commissions ---------- */
+let commFilter = { rep: "", from: "", to: "", status: "" };
+async function commissions() {
+  if (!isOwner()) return dashboard();
+  const $ = (x) => document.getElementById(x);
+  const { reps: repList } = await api("/reps");
+  pane().innerHTML = `<header><h1>Commissions</h1><a class="btn" id="cmCsv" href="#" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></header>
+    <div class="filters"><select id="cm-rep"><option value="">All reps</option>${repList.map((r) => `<option value="${r.id}"${String(r.id) === String(commFilter.rep) ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
+      <input id="cm-from" type="date" value="${esc(commFilter.from)}"><input id="cm-to" type="date" value="${esc(commFilter.to)}">
+      <select id="cm-st"><option value="">All statuses</option>${["pending", "earned", "paid", "void"].map((x) => `<option value="${x}"${commFilter.status === x ? " selected" : ""}>${x}</option>`).join("")}</select>
+      <button class="btn" id="cm-month" type="button">This month</button><button class="btn" id="cm-clear" type="button">Clear</button></div>
+    <dl class="kpis" id="cmK"></dl>
+    <div class="panel" id="cmPay" hidden></div>
+    <div class="tblwrap" id="cmT"></div>
+    <div id="cmHist"></div>
+    <p class="muted"><strong>Pending</strong> = order not paid yet. <strong>Earned</strong> = order paid, commission owed. <strong>Paid</strong> = included in a payout. <strong>Void</strong> = order cancelled. Commission = product total after discount × the rep's rate when the order was placed.</p>`;
+  const qs = () => new URLSearchParams(Object.fromEntries(Object.entries({ rep: commFilter.rep, from: commFilter.from, to: commFilter.to, status: commFilter.status }).filter(([, v]) => v))).toString();
+  const load = async () => {
+    const d = await api("/commissions?" + qs());
+    $("cmCsv").href = "/api/admin/commissions.csv?" + qs();
+    $("cmK").innerHTML = [["Sales (product total)", d.totals.sales], ["Pending", d.totals.pending], ["Earned, owed now", d.totals.earned], ["Paid out", d.totals.paid]].map(([k, v]) => `<div class="kpi"><dt>${k}</dt><dd>${money(v)}</dd></div>`).join("");
+    const earned = d.rows.filter((r) => r.comm_status === "earned");
+    $("cmT").innerHTML = d.rows.length ? `<table class="tbl"><tr><th>${earned.length ? '<input type="checkbox" id="cmAll" title="Select all earned">' : ""}</th><th>Date</th><th>Order</th><th>Rep</th><th>Customer</th><th>Order status</th><th class="num">Sales</th><th class="num">Rate</th><th class="num">Commission</th><th>Status</th></tr>
+      ${d.rows.map((r) => `<tr><td>${r.comm_status === "earned" ? `<input type="checkbox" data-pick="${r.id}" data-rep="${r.rep_id}">` : ""}</td><td>${when(r.created_at)}</td><td class="mono"><a href="#" data-order="${r.id}">${esc(r.number)}</a></td><td>${esc(r.rep_name)}</td><td>${esc(r.customer)}</td><td>${pill(r.status)}</td>
+        <td class="num">${money(r.subtotal_cents - r.discount_cents)}</td><td class="num">${r.commission_rate}%</td><td class="num"><strong>${money(r.commission_cents)}</strong></td><td><span class="pill st-${r.comm_status === "earned" ? "shipped" : r.comm_status === "paid" ? "delivered" : r.comm_status === "void" ? "cancelled" : "new"}">${r.comm_status}</span>${r.payout_date ? `<div class="muted" style="font-size:.72rem">${when(r.payout_date)}</div>` : ""}</td></tr>`).join("")}</table>` : `<p class="muted">No commissions match.</p>`;
+    $("cmHist").innerHTML = d.payouts.length ? `<div class="panel"><h2>Payouts</h2><div class="tblwrap"><table class="tbl"><tr><th>Date</th><th>Rep</th><th class="num">Amount</th><th class="num">Orders</th><th>Note</th><th>By</th><th></th></tr>
+      ${d.payouts.map((p) => `<tr><td>${when(p.paid_at)}</td><td>${esc(p.rep_name || "")}</td><td class="num"><strong>${money(p.amount_cents)}</strong></td><td class="num">${p.orders}</td><td>${esc(p.note)}</td><td>${esc(p.who)}</td><td><button class="btn" data-undo="${p.id}">Undo</button></td></tr>`).join("")}</table></div></div>` : "";
+    const payBox = $("cmPay");
+    const sync = () => {
+      const picked = [...document.querySelectorAll("[data-pick]:checked")];
+      if (!picked.length) { payBox.hidden = true; return; }
+      const repIds = new Set(picked.map((c) => c.dataset.rep));
+      const sum = picked.reduce((t, c) => t + d.rows.find((r) => String(r.id) === c.dataset.pick).commission_cents, 0);
+      payBox.hidden = false;
+      payBox.innerHTML = repIds.size > 1 ? `<div class="err">Select commissions for one rep at a time.</div>` : `<div class="row2" style="align-items:end"><div><strong>${picked.length} commission${picked.length === 1 ? "" : "s"} · ${money(sum)}</strong> for ${esc(d.rows.find((r) => String(r.id) === picked[0].dataset.pick).rep_name)}</div>
+        <div class="field" style="flex:1;min-width:12rem"><label class="eyebrow" for="cmNote">Payout note (check #, Zelle, date…)</label><input id="cmNote"></div><button class="btn solid" id="cmPaid">Mark as paid out</button></div>`;
+      if (repIds.size === 1) $("cmPaid").onclick = async () => {
+        const r = await api("/commissions/payout", { method: "POST", body: { repId: picked[0].dataset.rep, orderIds: picked.map((c) => +c.dataset.pick), note: $("cmNote").value } });
+        toast(`Paid out ${money(r.amountCents)} for ${r.orders} order${r.orders === 1 ? "" : "s"}`); paneDirty = false; load();
+      };
+    };
+    $("cmT").onchange = (e) => { if (e.target.id === "cmAll") document.querySelectorAll("[data-pick]").forEach((c) => { c.checked = e.target.checked; }); sync(); };
+    $("cmT").onclick = (e) => { const o = e.target.closest("[data-order]"); if (o) { e.preventDefault(); go("orders", o.dataset.order); } };
+    $("cmHist").onclick = async (e) => { const u = e.target.closest("[data-undo]"); if (u && confirm("Undo this payout? Its commissions go back to earned.")) { await api("/commissions/payout/" + u.dataset.undo, { method: "DELETE" }); toast("Payout undone"); load(); } };
+  };
+  const apply = () => { commFilter = { rep: $("cm-rep").value, from: $("cm-from").value, to: $("cm-to").value, status: $("cm-st").value }; load(); };
+  ["cm-rep", "cm-from", "cm-to", "cm-st"].forEach((id) => { $(id).onchange = apply; });
+  $("cm-month").onclick = () => { const d = new Date(); $("cm-from").value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; $("cm-to").value = ""; apply(); };
+  $("cm-clear").onclick = () => { $("cm-rep").value = ""; $("cm-from").value = ""; $("cm-to").value = ""; $("cm-st").value = ""; apply(); };
   load();
 }
 
@@ -485,7 +619,7 @@ async function manageProduct(p, reps) {
   const st = await api("/settings").catch(() => ({ settings: {} }));
   const vialStyle = Object.assign({}, window.VIAL_DEFAULT, st.settings.vial || {});
   const artHTML = () => p.has_image ? `<img src="/pimg/${p.id}?v=${p.media_v}" alt="">`
-    : window.drawVial({ title: vialStyle.labelShows === "code" && p.sku ? p.sku : p.name, sub: p.strength, style: Object.assign({}, vialStyle, p.vial_label ? { label: p.vial_label } : {}), logoUrl: p.has_logo ? `/plogo/${p.id}?v=${p.media_v}` : st.settings.vialLogoV ? `/vial-logo?v=${st.settings.vialLogoV}` : "" });
+    : window.drawVial({ title: vialStyle.labelShows === "code" && p.sku ? p.sku : p.name, sub: p.strength, style: Object.assign({}, vialStyle, p.vial_label ? { label: p.vial_label, photoTint: true } : {}), logoUrl: p.has_logo ? `/plogo/${p.id}?v=${p.media_v}` : st.settings.vialLogoV ? `/vial-logo?v=${st.settings.vialLogoV}` : "", photoUrl: `/vial-photo?v=${st.settings.vialPhotoV || 1}` });
   box.innerHTML = `<div class="panel" style="border-color:var(--blue)">
     <div class="row2" style="justify-content:space-between;align-items:center"><h2>${esc(label)}</h2><button class="btn" type="button" id="mgClose">Close</button></div>
     <div class="row2" style="align-items:flex-start;gap:1.25rem">
@@ -532,7 +666,7 @@ async function manageProduct(p, reps) {
   });
   upload($("mgPic"), "image"); upload($("mgLogo"), "logo");
   box.querySelectorAll("[data-mdel]").forEach((b) => (b.onclick = async () => { await api(`/products/${p.id}/media/${b.dataset.mdel}`, { method: "DELETE" }); toast("Removed"); refreshP(); }));
-  if ($("mgColor")) $("mgColor").oninput = () => { if (!p.has_image) $("mgArt").innerHTML = window.drawVial({ title: vialStyle.labelShows === "code" && p.sku ? p.sku : p.name, sub: p.strength, style: Object.assign({}, vialStyle, { label: $("mgColor").value }), logoUrl: p.has_logo ? `/plogo/${p.id}?v=${p.media_v}` : st.settings.vialLogoV ? `/vial-logo?v=${st.settings.vialLogoV}` : "" }); };
+  if ($("mgColor")) $("mgColor").oninput = () => { if (!p.has_image) $("mgArt").innerHTML = window.drawVial({ title: vialStyle.labelShows === "code" && p.sku ? p.sku : p.name, sub: p.strength, style: Object.assign({}, vialStyle, { label: $("mgColor").value, photoTint: true }), logoUrl: p.has_logo ? `/plogo/${p.id}?v=${p.media_v}` : st.settings.vialLogoV ? `/vial-logo?v=${st.settings.vialLogoV}` : "", photoUrl: `/vial-photo?v=${st.settings.vialPhotoV || 1}` }); };
   if ($("mgColorSave")) $("mgColorSave").onclick = () => media({ vialLabel: $("mgColor").value }, "Label color saved");
   if ($("mgColorClear")) $("mgColorClear").onclick = () => media({ vialLabel: "" }, "Standard color restored");
   box.querySelectorAll("[data-editrep]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); pendingReport = { id: +a.dataset.editrep }; go("reports"); }));
@@ -711,7 +845,7 @@ async function page() {
   const { settings: s } = await api("/settings");
   const own = isOwner();
   const vial = Object.assign({}, window.VIAL_DEFAULT, s.vial || {});
-  let logoV = s.vialLogoV || 0;
+  let logoV = s.vialLogoV || 0, photoV = s.vialPhotoV || 1;
   const cards = (s.perks || []).concat(Array.from({ length: Math.max(0, 4 - (s.perks || []).length) }, () => ({ icon: "check", title: "", text: "" })));
   const inp = (id, label, val, extra = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" value="${esc(val)}"${extra}${ro()}></div>`;
   const COLORS = [["cap", "Cap"], ["band", "Metal band & outline"], ["glass", "Glass"], ["label", "Label"], ["text", "Label name"], ["sub", "Label size text"], ["liquid", "Liquid line"]];
@@ -720,6 +854,11 @@ async function page() {
       ${inp("pg-eyebrow", "Small line above the headline", s.heroEyebrow)}
       ${inp("pg-headline", "Headline", s.headline)}
       <div class="field"><label class="eyebrow" for="pg-intro">Text under the headline</label><textarea id="pg-intro"${ro()}>${esc(s.intro)}</textarea></div></div>
+    <div class="panel"><h2>Logo</h2>
+      <p class="muted">Shown in the store header, on the PIN screen and in the admin and rep apps. The app icons use the cross mark from it.</p>
+      <div class="row2" style="align-items:center;gap:1.25rem"><div style="padding:.6rem 1rem;background:#fff;border:1px solid var(--line);border-radius:10px"><img id="lgPrev" src="${s.siteLogoV ? "/site-logo?v=" + s.siteLogoV : "/brand-logo.png"}" alt="" style="height:3rem;width:auto;max-width:16rem;object-fit:contain;${s.siteLogoV ? "" : "opacity:.35"}"></div>
+        <span class="muted" id="lgState">${s.siteLogoV ? "Logo is shown." : "Logo is off; the store name shows as text."}</span></div>
+      ${own ? `<div class="row2"><input type="file" id="lg-file" accept="image/png,image/jpeg,image/webp"><button class="btn" type="button" id="lg-off"${s.siteLogoV ? "" : " hidden"}>Show the name as text instead</button><button class="btn" type="button" id="lg-restore"${s.siteLogoV ? " hidden" : ""}>Bring the logo back</button></div>` : ""}</div>
     <div class="panel"><h2>Feature cards</h2>
       <label class="chk"><input type="checkbox" id="pg-perksOn"${s.perksOn !== false ? " checked" : ""}${ro()}> Show the feature cards under the header</label>
       <p class="muted">Up to 6 cards. Leave a card's title and text empty to remove it.</p>
@@ -731,20 +870,25 @@ async function page() {
     <div class="panel"><h2>Vial look</h2>
       <p class="muted">How the drawn vial looks on every product that doesn't have its own picture. Each peptide can also have its own picture, logo or label color under Products &amp; prices → Manage.</p>
       <div class="two"><div class="stack">
-        <div class="grid2"><div class="field"><label class="eyebrow" for="vl-shape">Shape</label><select id="vl-shape"${ro()}>${[["vial", "Vial"], ["tall", "Tall vial"], ["round", "Rounded bottle"]].map(([v, l]) => `<option value="${v}"${vial.shape === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>
+        <div class="grid2"><div class="field"><label class="eyebrow" for="vl-shape">Shape</label><select id="vl-shape"${ro()}>${[["photo", "Photo of a real vial"], ["vial", "Drawn vial"], ["tall", "Drawn tall vial"], ["round", "Drawn rounded bottle"]].map(([v, l]) => `<option value="${v}"${vial.shape === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>
           <div class="field"><label class="eyebrow" for="vl-shows">Label shows</label><select id="vl-shows"${ro()}><option value="name"${vial.labelShows !== "code" ? " selected" : ""}>Peptide name</option><option value="code"${vial.labelShows === "code" ? " selected" : ""}>Product code (when it has one)</option></select></div></div>
-        <div class="colors">${COLORS.map(([k, l]) => `<label><input type="color" data-vc="${k}" value="${esc(vial[k])}"${ro()}> ${l}</label>`).join("")}</div>
-        <div class="field"><label class="eyebrow">Logo on every vial label (JPG/PNG, under 1 MB)</label>
-          <div class="row2">${own ? `<input type="file" id="vl-logo" accept="image/png,image/jpeg,image/webp"><button class="btn" type="button" id="vl-logoDel"${logoV ? "" : " hidden"}>Remove logo</button>` : ""}</div></div>
+        <div class="colors" data-photo-only><label><input type="color" data-vc="photoName" value="${esc(vial.photoName)}"${ro()}> Peptide name</label><label><input type="color" data-vc="photoMg" value="${esc(vial.photoMg)}"${ro()}> Size (mg)</label>
+          <label class="chk" style="grid-column:1/-1"><input type="checkbox" id="vl-tint"${vial.photoTint ? " checked" : ""}${ro()}> Color the label (uses the Label, Label name and Label size colors below)</label></div>
+        <div class="colors">${COLORS.map(([k, l]) => `<label${["cap", "band", "glass", "liquid"].includes(k) ? " data-drawn-only" : ""}><input type="color" data-vc="${k}" value="${esc(vial[k])}"${ro()}> ${l}</label>`).join("")}</div>
+        <div class="field" data-photo-only><label class="eyebrow">Vial photo (JPG/PNG, square works best; under 5 MB)</label>
+          <div class="row2">${own ? `<input type="file" id="vl-photo" accept="image/png,image/jpeg,image/webp"><button class="btn" type="button" id="vl-photoReset"${photoV > 1 ? "" : " hidden"}>Back to the standard photo</button>` : ""}</div></div>
+        <div class="field"><label class="eyebrow">Logo on every vial label (JPG/PNG, under 1 MB) — the brand mark by default</label>
+          <div class="row2">${own ? `<input type="file" id="vl-logo" accept="image/png,image/jpeg,image/webp"><button class="btn" type="button" id="vl-logoDel"${logoV ? "" : " hidden"}>No logo on vials</button><button class="btn" type="button" id="vl-logoRestore"${logoV ? " hidden" : ""}>Use the brand mark</button>` : ""}</div></div>
         ${own ? `<div><button class="btn" type="button" id="vl-reset">Back to the original colors</button></div>` : ""}
       </div>
       <div class="stack" style="justify-items:center"><div class="vialprev" id="vlPrev"></div><input id="vl-sample" value="BPC-157" style="height:2.2rem;padding:0 .6rem;border:1px solid var(--line-strong);border-radius:8px;width:9rem;text-align:center" title="Sample name for the preview"><span class="muted" style="font-size:.78rem">Live preview</span></div></div></div>
     ${own ? `<div><button class="btn solid" id="pgSave2">Save page setup</button></div>` : ""}`;
   const $ = (x) => document.getElementById(x);
-  const readVial = () => { const v = { shape: $("vl-shape").value, labelShows: $("vl-shows").value }; document.querySelectorAll("[data-vc]").forEach((i) => { v[i.dataset.vc] = i.value; }); return v; };
-  const preview = () => { const v = readVial(); $("vlPrev").innerHTML = window.drawVial({ title: v.labelShows === "code" ? "BC10" : ($("vl-sample").value || "BPC-157"), sub: "10 mg", style: v, logoUrl: logoV ? `/vial-logo?v=${logoV}` : "" }); };
-  pane().oninput = (e) => { if (e.target.closest("[data-vc], #vl-shape, #vl-shows, #vl-sample")) preview(); };
-  pane().onchange = (e) => { if (e.target.closest("#vl-shape, #vl-shows")) preview(); };
+  const readVial = () => { const v = { shape: $("vl-shape").value, labelShows: $("vl-shows").value, photoTint: $("vl-tint").checked }; document.querySelectorAll("[data-vc]").forEach((i) => { v[i.dataset.vc] = i.value; }); return v; };
+  const modeUI = () => { const photo = $("vl-shape").value === "photo"; document.querySelectorAll("[data-photo-only]").forEach((el) => { el.hidden = !photo; }); document.querySelectorAll("[data-drawn-only]").forEach((el) => { el.hidden = photo; }); };
+  const preview = () => { modeUI(); const v = readVial(); $("vlPrev").innerHTML = window.drawVial({ title: v.labelShows === "code" ? "BC10" : ($("vl-sample").value || "BPC-157"), sub: "10 mg", style: v, logoUrl: logoV ? `/vial-logo?v=${logoV}` : "", photoUrl: `/vial-photo?v=${photoV}` }); };
+  pane().oninput = (e) => { if (e.target.closest("[data-vc], #vl-shape, #vl-shows, #vl-sample, #vl-tint")) preview(); };
+  pane().onchange = (e) => { if (e.target.closest("#vl-shape, #vl-shows, #vl-tint")) preview(); };
   preview();
   if (!own) return;
   $("vl-reset").onclick = () => { const d = window.VIAL_DEFAULT; document.querySelectorAll("[data-vc]").forEach((i) => { i.value = d[i.dataset.vc]; }); $("vl-shape").value = d.shape; preview(); toast("Original colors restored. Save to keep them."); };
@@ -753,13 +897,27 @@ async function page() {
     const r = rows[rows.length - 1].cloneNode(true); r.querySelectorAll("input").forEach((i) => { i.value = ""; }); $("pgCards").appendChild(r);
     r.querySelectorAll(".field label")[1].textContent = `Card ${rows.length + 1} title`;
   };
+  $("lg-file").onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    if (f.size > 2 * 1024 * 1024) return toast("Keep the logo under 2 MB");
+    await api("/site-logo", { method: "PUT", body: { fileData: await fileToData(f) } }); toast("Logo updated everywhere"); page();
+  };
+  $("lg-off").onclick = async () => { await api("/site-logo", { method: "DELETE" }); toast("Store name shows as text"); page(); };
+  $("lg-restore").onclick = async () => { await api("/site-logo?restore=1", { method: "DELETE" }); toast("Logo is back"); page(); };
+  $("vl-photo").onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    if (f.size > 5 * 1024 * 1024) return toast("Keep the photo under 5 MB");
+    await api("/vial-photo", { method: "PUT", body: { fileData: await fileToData(f) } }); photoV++; $("vl-photoReset").hidden = false; preview(); toast("Vial photo updated");
+  };
+  $("vl-photoReset").onclick = async () => { await api("/vial-photo", { method: "DELETE" }); photoV = 1; $("vl-photoReset").hidden = true; $("vl-photo").value = ""; preview(); toast("Standard vial photo restored"); };
   $("vl-logo").onchange = async (e) => {
     const f = e.target.files[0]; if (!f) return;
     if (f.size > 1024 * 1024) return toast("Keep the logo under 1 MB");
     await api("/vial-logo", { method: "PUT", body: { fileData: await fileToData(f) } });
     logoV++; $("vl-logoDel").hidden = false; preview(); toast("Logo added to the vial");
   };
-  $("vl-logoDel").onclick = async () => { await api("/vial-logo", { method: "DELETE" }); logoV = 0; $("vl-logoDel").hidden = true; $("vl-logo").value = ""; preview(); toast("Logo removed"); };
+  $("vl-logoDel").onclick = async () => { await api("/vial-logo", { method: "DELETE" }); logoV = 0; $("vl-logoDel").hidden = true; $("vl-logoRestore").hidden = false; $("vl-logo").value = ""; preview(); toast("Vials show no logo"); };
+  $("vl-logoRestore").onclick = async () => { await api("/vial-logo?restore=1", { method: "DELETE" }); logoV = 1; $("vl-logoDel").hidden = false; $("vl-logoRestore").hidden = true; preview(); toast("Brand mark is back on the vials"); };
   const save = async () => {
     const perks = [...document.querySelectorAll("[data-card]")].map((r) => ({ icon: r.querySelector('[data-c="icon"]').value, title: r.querySelector('[data-c="title"]').value.trim(), text: r.querySelector('[data-c="text"]').value.trim() }));
     await api("/settings", { method: "PUT", body: { heroEyebrow: $("pg-eyebrow").value, headline: $("pg-headline").value, intro: $("pg-intro").value, perksOn: $("pg-perksOn").checked, perks, vial: readVial() } });
@@ -837,7 +995,7 @@ async function staff() {
   if (!isOwner()) return dashboard();
   const { users } = await api("/users");
   pane().innerHTML = `<header><h1>Staff logins</h1></header>
-    <p class="muted">Staff can view and work orders (status, tracking, notes). Only owners can change prices, charges, reports, shipping, settings and logins.</p>
+    <p class="muted">Staff can view and work orders (status, tracking, notes). Only owners can change prices, charges, reports, shipping, settings and logins. Sales reps have their own logins under <button class="linkbtn" data-nav="reps">Sales reps</button>.</p>
     <div class="tblwrap"><table class="tbl" id="ut"><tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th><th>New password</th><th></th></tr>
     ${users.map((u) => `<tr data-id="${u.id}"><td><input data-k="name" value="${esc(u.name)}"></td><td>${esc(u.email)}</td>
       <td><select data-k="role"><option${u.role === "staff" ? " selected" : ""}>staff</option><option${u.role === "owner" ? " selected" : ""}>owner</option></select></td>
@@ -881,6 +1039,12 @@ document.addEventListener("click", (e) => {
   const n = e.target.closest("[data-nav]"); if (n) { go(n.dataset.nav); return; }
   const k = e.target.closest("[data-go]"); if (k) { const [v, st] = k.dataset.go.split(":"); if (st) oFilter = { status: st, q: "" }; go(v); return; }
   const o = e.target.closest("[data-order]"); if (o) { go("orders", o.dataset.order); }
+});
+
+if (window.AppRefresh) window.AppRefresh.init({
+  version: "/api/version",
+  canAuto: () => !!me && !unsaved && !paneDirty && !document.querySelector("dialog[open]") && !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "") && !document.getElementById("impPrev"),
+  refresh: async () => { if (me) go(view, orderId, { keepScroll: true, silent: true }); }
 });
 
 (async () => {

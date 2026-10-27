@@ -321,3 +321,18 @@ a.doc { text-decoration: none; color: inherit; }
 
 /* uploaded product picture fills the card's picture area */
 .thumb .pimg { width: 100%; height: 100%; object-fit: contain; padding: 8%; }
+
+/* refresh button: desktop only (phones pull down to refresh) */
+.refbtn { width: 2.6rem; padding: 0; justify-content: center; }
+@media (max-width: 760px) { .refbtn { display: none; } }
+body { overscroll-behavior-y: contain; }
+
+/* brand logo image in headers */
+.brandimg { display: block; height: 2.6rem; width: auto; max-width: 14rem; object-fit: contain; }
+.brandimg.big { height: 3.4rem; max-width: 18rem; margin-inline: auto; }
+@media (max-width: 760px) { .brandimg { height: 2.1rem; max-width: 10rem; } }
+.logo .hp { position: absolute; left: -9999px; }
+
+/* real vial photo fills the card's picture area */
+.thumb.photo { background: #efefef; }
+.thumb.photo svg { width: 100%; height: 100%; }

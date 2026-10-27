@@ -3,7 +3,10 @@
 (() => {
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const hex = (v, d) => (/^#[0-9a-f]{6}$/i.test(String(v || "")) ? v : d);
-  const DEFAULT = { shape: "vial", cap: "#0f1b33", band: "#c9d1dc", glass: "#ffffff", label: "#0b4d96", text: "#ffffff", sub: "#cfdcf0", liquid: "#e9f1fb", labelShows: "name" };
+  const DEFAULT = { shape: "photo", cap: "#0f1b33", band: "#c9d1dc", glass: "#ffffff", label: "#0b4d96", text: "#ffffff", sub: "#cfdcf0", liquid: "#e9f1fb", labelShows: "name",
+    photoName: "#0f1b33", photoMg: "#0097b2", photoTint: false };
+  // the real vial photo (square, 200 x 200 viewBox) and where its blank label sits
+  const PHOTO = { label: [59, 91, 82, 76] };
   // each shape: cap, metal band, glass outline, label area, liquid line
   const SHAPES = {
     vial: { cap: [38, 6, 44, 22, 4], band: [34, 26, 52, 10, 3], body: "M30 40h60v140a14 14 0 0 1-14 14H44a14 14 0 0 1-14-14z", label: [30, 78, 60, 80], liquid: [30, 162, 60, 4] },
@@ -11,8 +14,29 @@
     round: { cap: [42, 6, 36, 18, 4], band: [38, 22, 44, 9, 3], body: "M44 31h32v8c12 4 18 12 18 24v113a14 14 0 0 1-14 14H40a14 14 0 0 1-14-14V63c0-12 6-20 18-24z", label: [26, 80, 68, 78], liquid: [26, 164, 68, 4] }
   };
   window.VIAL_DEFAULT = DEFAULT;
+  // the photo of a real vial with the peptide name and mg printed on its label
+  function drawPhoto(o, st) {
+    const [lx, ly, lw, lh] = PHOTO.label, cx = lx + lw / 2;
+    const raw = String(o.title || ""), sub = String(o.sub || "");
+    const tint = st.photoTint ? `<rect x="${lx}" y="${ly}" width="${lw}" height="${lh}" fill="${hex(st.label, DEFAULT.label)}" opacity=".9"/>` : "";
+    const nameColor = st.photoTint ? hex(st.text, DEFAULT.text) : hex(st.photoName, DEFAULT.photoName);
+    const mgColor = st.photoTint ? hex(st.sub, DEFAULT.sub) : hex(st.photoMg, DEFAULT.photoMg);
+    const logoH = o.logoUrl ? 26 : 0;
+    const logo = o.logoUrl ? `<image href="${esc(o.logoUrl)}" x="${cx - 13}" y="${ly + 6}" width="26" height="26" preserveAspectRatio="xMidYMid meet"/>` : "";
+    // name + mg sit centred in the space under the logo
+    const block = 30, top = ly + 6 + logoH + (lh - 6 - logoH - block) / 2;
+    const size = raw.length > 14 ? 9.5 : raw.length > 10 ? 11 : 13;
+    const fit = raw.length > 11 ? ` textLength="${lw - 8}" lengthAdjust="spacingAndGlyphs"` : "";
+    return `<svg viewBox="0 0 200 200" aria-hidden="true">
+      <image href="${esc(o.photoUrl || "/vial-photo")}" width="200" height="200" preserveAspectRatio="xMidYMid slice"/>
+      ${tint}${logo}
+      <text x="${cx}" y="${(top + 13).toFixed(1)}" text-anchor="middle" font-family="Barlow Condensed, Arial Narrow, sans-serif" font-weight="700" font-size="${size}"${fit} fill="${nameColor}">${esc(raw.slice(0, 26))}</text>
+      <text x="${cx}" y="${(top + 28).toFixed(1)}" text-anchor="middle" font-family="Poppins, sans-serif" font-weight="600" font-size="9.5" fill="${mgColor}">${esc(sub)}</text>
+    </svg>`;
+  }
   window.drawVial = function drawVial(o = {}) {
     const st = Object.assign({}, DEFAULT, o.style || {});
+    if (st.shape === "photo") return drawPhoto(o, st);
     const sh = SHAPES[st.shape] || SHAPES.vial;
     const c = { cap: hex(st.cap, DEFAULT.cap), band: hex(st.band, DEFAULT.band), glass: hex(st.glass, DEFAULT.glass), label: hex(st.label, DEFAULT.label), text: hex(st.text, DEFAULT.text), sub: hex(st.sub, DEFAULT.sub), liquid: hex(st.liquid, DEFAULT.liquid) };
     const [lx, ly, lw, lh] = sh.label;

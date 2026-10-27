@@ -7,7 +7,7 @@
 <title>360 Peptides Admin</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Poppins:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="/store.css?v=1793127324">
+<link rel="stylesheet" href="/store.css?v=1793128572">
 <link rel="manifest" href="/admin.webmanifest?v=3">
 <meta name="theme-color" content="#0f1b33">
 <link rel="icon" href="/admin-icon-192.png?v=2">
@@ -19,14 +19,16 @@
 .adm { display: grid; grid-template-columns: 13.5rem minmax(0, 1fr); min-height: 100vh; min-height: 100dvh; }
 .side { position: sticky; top: 0; height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto 1fr auto; gap: 1rem; padding: 1.2rem 1rem; background: var(--navy); color: var(--on-navy); }
 .side .logo { color: var(--on-navy); }
+.side .logobox { padding: .5rem .7rem; background: #fff; border-radius: 10px; } .side .logobox img { display: block; width: 100%; height: 2.4rem; object-fit: contain; }
 .side nav { display: grid; gap: .2rem; align-content: start; }
 .side nav button { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: .6rem .8rem; background: none; border: 0; border-radius: 8px; color: var(--on-hero-2); font-weight: 500; text-align: left; cursor: pointer; }
 .side nav button:hover { background: rgba(255,255,255,.06); color: #fff; }
 .side nav button.on { background: rgba(255,255,255,.12); color: #fff; }
 .side nav .badge { min-width: 1.4rem; padding: 0 .35rem; background: #fff; color: var(--navy); border-radius: 999px; font-size: .72rem; font-weight: 700; text-align: center; }
 .side .who { font-size: .8rem; color: var(--on-hero-2); display: grid; gap: .4rem; }
-.side .who button { justify-self: start; padding: .35rem .7rem; background: none; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; color: #fff; font-size: .8rem; cursor: pointer; }
-.pane { display: grid; gap: 1.1rem; align-content: start; padding: clamp(1rem, 3vw, 2rem); min-width: 0; }
+.side .who button { justify-self: start; display: inline-flex; align-items: center; gap: .3rem; padding: .35rem .7rem; background: none; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; color: #fff; font-size: .8rem; cursor: pointer; }
+.pane { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.1rem; align-content: start; padding: clamp(1rem, 3vw, 2rem); min-width: 0; }
+.pane > * { min-width: 0; max-width: 100%; }
 .pane > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem 1rem; }
 .pane h1 { font: 700 2rem/1 var(--display); text-transform: uppercase; }
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .8rem; }
@@ -67,8 +69,8 @@
 .btn.danger { border-color: #e7b4b4; color: #9b1c1c; } .btn.danger:hover { background: #fdecec; border-color: #9b1c1c; color: #9b1c1c; }
 .thumbimg { width: 3rem; height: 4.2rem; object-fit: cover; object-position: top; border: 1px solid var(--line-strong); border-radius: 4px; }
 .mtop { display: none; }
-.vialprev { width: 9rem; height: 15rem; display: grid; place-items: center; background: radial-gradient(70% 70% at 50% 40%, #fff 0, var(--blue-wash) 100%); border: 1px solid var(--line); border-radius: 12px; }
-.vialprev svg { width: 70%; height: auto; } .vialprev img { max-width: 85%; max-height: 85%; object-fit: contain; }
+.vialprev { width: 12rem; height: 12rem; display: grid; place-items: center; background: radial-gradient(70% 70% at 50% 40%, #fff 0, var(--blue-wash) 100%); border: 1px solid var(--line); border-radius: 12px; }
+.vialprev svg { width: auto; height: 100%; max-width: 100%; } .vialprev img { max-width: 85%; max-height: 85%; object-fit: contain; }
 .colors { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: .6rem 1rem; }
 .colors label { display: flex; align-items: center; gap: .5rem; font-size: .86rem; }
 .colors input[type=color] { width: 2.4rem; height: 2rem; padding: 0; border: 1px solid var(--line-strong); border-radius: 6px; background: none; cursor: pointer; }
@@ -81,14 +83,15 @@
   .side { position: fixed; inset: 0 auto 0 0; z-index: 40; width: 15rem; transform: translateX(-100%); transition: transform .2s; }
   .adm.menu .side { transform: none; }
   .mtop { display: flex; align-items: center; justify-content: space-between; padding: .7rem 1rem; background: var(--navy); color: #fff; position: sticky; top: 0; z-index: 30; }
-  .mtop button { background: none; border: 1px solid rgba(255,255,255,.3); border-radius: 6px; color: #fff; padding: .35rem .7rem; }
+  .mtop span { display: flex; gap: .4rem; } .mtop button { background: none; border: 1px solid rgba(255,255,255,.3); border-radius: 6px; color: #fff; padding: .35rem .7rem; }
 }
 </style>
 </head>
 <body>
 <div id="app"></div>
-<script src="/vial.js?v=1"></script>
-<script src="/admin.js?v=1793127324"></script>
+<script src="/refresh.js?v=1"></script>
+<script src="/vial.js?v=1793128623"></script>
+<script src="/admin.js?v=1793128891"></script>
 <script src="/install.js?v=1792620296"></script>
 </body>
 </html>

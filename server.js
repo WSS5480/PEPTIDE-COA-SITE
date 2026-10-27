@@ -30,7 +30,7 @@ const parseCookies = (h) => Object.fromEntries(String(h || "").split(/;\s*/).fil
 const SECURE = process.env.NODE_ENV === "production" || !!process.env.RENDER;
 
 function publicSettings(s) {
-  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "productLabel", "perksOn", "perks", "vial", "vialLogoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"];
+  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "productLabel", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"];
   return Object.fromEntries(keys.map((k) => [k, s[k]]));
 }
 const reportOut = (r) => ({
@@ -69,8 +69,8 @@ const owner = (req, res, next) => (req.user.role === "owner" ? next() : bad(res,
 /* ---------- site PIN ---------- */
 // When the owner turns the PIN on, nothing on the store (pages, products, lab reports, orders)
 // is served until the visitor enters it. The admin, its login and the files it needs stay open.
-const PIN_OPEN = [/^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/pin(\.html)?$/, /^\/api\/pin$/,
-  /^\/store\.css$/, /^\/install\.js$/, /^\/sw\.js$/, /^\/manifest\.webmanifest$/, /^\/vial\.js$/, /^\/vial-logo$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
+const PIN_OPEN = [/^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/,
+  /^\/store\.css$/, /^\/install\.js$/, /^\/refresh\.js$/, /^\/sw\.js$/, /^\/manifest\.webmanifest$/, /^\/vial\.js$/, /^\/vial-logo$/, /^\/site-logo$/, /^\/vial-photo$/, /^\/vial-photo\.jpg$/, /^\/brand-(logo|mark|vial-logo)\.png$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
 let pinCache = { at: 0, on: false, hash: "", secret: "", customerPins: 0 };
 async function pinState() {
   if (Date.now() - pinCache.at < 5000) return pinCache;
@@ -142,7 +142,23 @@ async function moveStock(db, productId, change, info = {}) {
   return r.stock;
 }
 
+/* ---------- build info: version from package.json, "last updated" = when these files were deployed ---------- */
+const BUILD = (() => {
+  const fs = require("fs");
+  let version = "0.0.0"; try { version = require("./package.json").version; } catch (e) { /* keep */ }
+  const files = ["server.js", "server/db.js", ...fs.readdirSync(path.join(__dirname, "public")).map((f) => "public/" + f)];
+  let updated = 0; for (const f of files) { try { updated = Math.max(updated, fs.statSync(path.join(__dirname, f)).mtimeMs); } catch (e) { /* skip */ } }
+  return { version, updated: new Date(updated).toISOString(), commit: String(process.env.RENDER_GIT_COMMIT || "").slice(0, 7) };
+})();
+app.get("/api/build", (req, res) => { res.set("Cache-Control", "no-store"); res.json(BUILD); });
+
 /* ---------- public API ---------- */
+// changes whenever anything in the store changes; pages poll it and reload their data when it moves
+app.get("/api/version", wrap(async (req, res) => {
+  const { rows: [r] } = await q("select version from app_state where id = 1");
+  res.set("Cache-Control", "no-store");
+  res.json({ v: r ? Number(r.version) : 0 });
+}));
 app.get("/api/store", wrap(async (req, res) => {
   const s = await getSettings();
   const [{ rows: products }, { rows: reports }, { rows: shipping }] = await Promise.all([
@@ -172,11 +188,16 @@ app.get("/plogo/:id", wrap(async (req, res) => {
   const { rows: [m] } = await q("select logo, logo_type from products where id = $1 and logo is not null", [intOrNull(req.params.id)]);
   m ? sendMedia(res, m.logo, m.logo_type) : res.status(404).send("Not found");
 }));
-app.get("/vial-logo", wrap(async (req, res) => {
-  const { rows: [m] } = await q("select value from settings where key = 'vialLogo'");
-  if (!m || !m.value || !m.value.data) return res.status(404).send("Not found");
-  sendMedia(res, Buffer.from(m.value.data, "base64"), m.value.type);
-}));
+// logos: an uploaded one from Page setup, otherwise the bundled brand files
+async function sendLogo(res, key, fallback) {
+  const { rows: [m] } = await q("select value from settings where key = $1", [key]);
+  if (m && m.value && m.value.data) return sendMedia(res, Buffer.from(m.value.data, "base64"), m.value.type);
+  res.set("Cache-Control", "public, max-age=86400");
+  res.sendFile(path.join(__dirname, "public", fallback));
+}
+app.get("/vial-logo", wrap((req, res) => sendLogo(res, "vialLogo", "brand-vial-logo.png")));
+app.get("/site-logo", wrap((req, res) => sendLogo(res, "siteLogo", "brand-logo.png")));
+app.get("/vial-photo", wrap((req, res) => sendLogo(res, "vialPhoto", "vial-photo.jpg")));
 // a product document (SDS, spec sheet, certificate…); hidden ones open only for signed-in admins
 app.get("/doc/:id", wrap(async (req, res) => {
   const { rows: [d] } = await q("select d.file, d.file_type, d.file_name, d.public, p.active from documents d left join products p on p.id = d.product_id where d.id = $1", [intOrNull(req.params.id)]);
@@ -205,49 +226,60 @@ app.post("/api/orders", limit("order", 6, 15 * 60 * 1000), wrap(async (req, res)
   if (!address.line1 || !address.city || !address.state || !address.zip) return bad(res, "Enter a full shipping address.");
   const items = Array.isArray(b.items) ? b.items.slice(0, 50) : [];
   if (!items.length) return bad(res, "Your cart is empty.");
+  // the order belongs to the signed-in customer, or to a customer with the same email; their sales rep gets the commission
+  let cust = await customerFrom(req);
+  if (!cust) cust = (await q("select id, rep_id from customers where lower(email) = $1 and active", [email])).rows[0] || null;
+  else cust.rep_id = (await q("select rep_id from customers where id = $1", [cust.id])).rows[0]?.rep_id ?? null;
+  try {
+    const r = await createOrder({ name, email, phone, address, items, shippingMethodId: b.shippingMethodId, note: b.note, customerId: cust ? cust.id : null, repId: cust ? cust.rep_id : null,
+      placedBy: "Customer", event: "Order placed; customer confirmed research use and age", settings: s });
+    res.json({ ok: true, ...r, paymentInstructions: s.paymentInstructions });
+  } catch (e) { bad(res, e.message || "Could not place the order."); }
+}));
 
-  const client = await require("./server/db").pool.connect();
+// Creates an order in one transaction: checks price, limits and stock, takes the stock, records the rep and their rate.
+async function createOrder({ name, email, phone, address, items, shippingMethodId, note, customerId, repId, placedBy, event, settings }) {
+  const client = await pool.connect();
   try {
     await client.query("begin");
     let subtotal = 0; const lines = [];
     for (const it of items) {
-      const qty = Math.max(1, Math.min(99, intOrNull(it.qty) || 1));
-      const { rows: [p] } = await client.query("select * from products where id = $1 and active for update", [intOrNull(it.id)]);
-      if (!p) throw new Error("An item in your cart is no longer available. Remove it and try again.");
-      if (p.price_cents === null) throw new Error(`${p.name} ${p.strength} has no price yet. Remove it and contact us for a quote.`);
+      const qty = Math.max(1, Math.min(999, intOrNull(it.qty) || 1));
+      const { rows: [p] } = await client.query("select id, name, strength, manufacturer, price_cents, stock, max_per_order from products where id = $1 and active for update", [intOrNull(it.id)]);
+      if (!p) throw new Error("An item in the order is no longer available. Remove it and try again.");
+      if (p.price_cents === null) throw new Error(`${p.name} ${p.strength} has no price yet. Remove it or set a price first.`);
       if (p.max_per_order && qty > p.max_per_order) throw new Error(`${p.name} ${p.strength} is limited to ${p.max_per_order} per order.`);
       if (p.stock !== null && qty > p.stock) throw new Error(p.stock > 0 ? `Only ${p.stock} of ${p.name} ${p.strength} left.` : `${p.name} ${p.strength} is sold out.`);
-      // stock is taken when the order is placed and logged against the order below
       subtotal += p.price_cents * qty;
       lines.push({ p, qty });
     }
-    if (s.minOrderCents && subtotal < s.minOrderCents) throw new Error(`The minimum order is $${(s.minOrderCents / 100).toFixed(2)}.`);
+    if (settings.minOrderCents && subtotal < settings.minOrderCents) throw new Error(`The minimum order is $${(settings.minOrderCents / 100).toFixed(2)}.`);
     let shipName = "", shipCents = 0;
     const { rows: methods } = await client.query("select * from shipping_methods where active");
     if (methods.length) {
-      const m = methods.find((x) => x.id === intOrNull(b.shippingMethodId));
+      const m = methods.find((x) => x.id === intOrNull(shippingMethodId));
       if (!m) throw new Error("Choose a shipping option.");
       shipName = m.name; shipCents = m.free_over_cents !== null && subtotal >= m.free_over_cents ? 0 : m.price_cents;
     }
-    const cust = await customerFrom(req);
+    let rate = null;
+    if (repId) rate = (await client.query("select commission_rate from users where id = $1 and role = 'rep'", [repId])).rows[0]?.commission_rate ?? null;
+    if (rate === null) repId = null;
     const number = String(Date.now()).slice(-6) + crypto.randomInt(10, 99);
     const { rows: [o] } = await client.query(
-      `insert into orders(number,name,email,phone,address,shipping_method,shipping_cents,subtotal_cents,total_cents,customer_note,customer_id)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id`,
-      [number, name, email, phone, JSON.stringify(address), shipName, shipCents, subtotal, subtotal + shipCents, str(b.note, 1000), cust ? cust.id : null]);
+      `insert into orders(number,name,email,phone,address,shipping_method,shipping_cents,subtotal_cents,total_cents,customer_note,customer_id,rep_id,commission_rate,placed_by)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id`,
+      [number, name, email, phone, JSON.stringify(address), shipName, shipCents, subtotal, subtotal + shipCents, str(note, 1000), customerId, repId, rate, placedBy]);
     for (const { p, qty } of lines) {
       // the maker goes into the line name so orders show which one was bought
       await client.query("insert into order_items(order_id,product_id,name,strength,unit_cents,qty) values ($1,$2,$3,$4,$5,$6)", [o.id, p.id, p.manufacturer ? `${p.name} (${p.manufacturer})` : p.name, p.strength, p.price_cents, qty]);
-      if (p.stock !== null) await moveStock(client, p.id, -qty, { reason: "Order", ref: number, who: name });
+      if (p.stock !== null) await moveStock(client, p.id, -qty, { reason: "Order", ref: number, who: placedBy === "Customer" ? name : placedBy });
     }
-    await client.query("insert into order_events(order_id, who, text) values ($1, 'Customer', 'Order placed; customer confirmed research use and age')", [o.id]);
+    await client.query("insert into order_events(order_id, who, text) values ($1, $2, $3)", [o.id, placedBy, event]);
     await client.query("commit");
-    res.json({ ok: true, number, subtotalCents: subtotal, shippingCents: shipCents, totalCents: subtotal + shipCents, paymentInstructions: s.paymentInstructions });
-  } catch (e) {
-    await client.query("rollback").catch(() => {});
-    bad(res, e.message || "Could not place the order.");
-  } finally { client.release(); }
-}));
+    return { number, subtotalCents: subtotal, shippingCents: shipCents, totalCents: subtotal + shipCents };
+  } catch (e) { await client.query("rollback").catch(() => {}); throw e; }
+  finally { client.release(); }
+}
 
 // Customers check an order with its number + the email used.
 app.post("/api/orders/lookup", limit("lookup", 20, 15 * 60 * 1000), wrap(async (req, res) => {
@@ -328,6 +360,24 @@ app.patch("/api/account", jsonOnly, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+/* ---------- commissions ---------- */
+// commission = order subtotal after discount (not shipping) x the rep's rate when the order was placed.
+// pending: not paid by the customer yet · earned: paid/shipped/delivered, not paid out · paid: in a payout · void: cancelled
+const COMM_SQL = `select o.id, o.number, o.created_at, o.status, o.name customer, o.subtotal_cents, o.discount_cents, o.commission_rate, o.payout_id, o.rep_id,
+    u.name rep_name, u.email rep_email, p.paid_at payout_date,
+    round((o.subtotal_cents - o.discount_cents) * coalesce(o.commission_rate, 0) / 100.0)::int commission_cents,
+    case when o.status = 'cancelled' then 'void' when o.payout_id is not null then 'paid' when o.status in ('paid','shipped','delivered') then 'earned' else 'pending' end comm_status
+  from orders o join users u on u.id = o.rep_id left join commission_payouts p on p.id = o.payout_id`;
+async function commissionRows({ repId, from, to, status }) {
+  const where = [], args = [];
+  if (repId) { args.push(repId); where.push(`o.rep_id = $${args.length}`); }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(from || "")) { args.push(from); where.push(`o.created_at >= $${args.length}::date`); }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(to || "")) { args.push(to); where.push(`o.created_at < $${args.length}::date + 1`); }
+  const { rows } = await q(`${COMM_SQL} ${where.length ? "where " + where.join(" and ") : ""} order by o.created_at desc limit 2000`, args);
+  return ["pending", "earned", "paid", "void"].includes(status) ? rows.filter((r) => r.comm_status === status) : rows;
+}
+const commTotals = (rows) => rows.reduce((t, r) => { t[r.comm_status] = (t[r.comm_status] || 0) + r.commission_cents; t.sales += r.comm_status === "void" ? 0 : r.subtotal_cents - r.discount_cents; return t; }, { sales: 0, pending: 0, earned: 0, paid: 0, void: 0 });
+
 /* ---------- admin: sessions ---------- */
 app.post("/api/admin/login", limit("login", 10, 15 * 60 * 1000), wrap(async (req, res) => {
   const email = str(req.body?.email, 160).toLowerCase(), pass = String(req.body?.password || "");
@@ -357,6 +407,7 @@ app.post("/api/admin/password", wrap(auth), wrap(async (req, res) => {
 
 const admin = express.Router();
 admin.use(wrap(auth));
+admin.use((req, res, next) => (req.user.role === "rep" ? bad(res, "Sales reps use the rep app at /rep", 403) : next()));
 
 /* ---------- admin: dashboard ---------- */
 admin.get("/stats", wrap(async (req, res) => {
@@ -373,7 +424,7 @@ admin.get("/orders", wrap(async (req, res) => {
   const where = [], args = [];
   if (STATUSES.includes(status)) { args.push(status); where.push(`status = $${args.length}`); }
   if (term) { args.push("%" + term.toLowerCase() + "%"); where.push(`(lower(name) like $${args.length} or lower(email) like $${args.length} or number like $${args.length} or lower(tracking) like $${args.length})`); }
-  const { rows } = await q(`select id,number,status,name,email,total_cents,shipping_method,tracking,created_at,
+  const { rows } = await q(`select id,number,status,name,email,total_cents,shipping_method,tracking,created_at,placed_by,(select name from users where id = o.rep_id) rep_name,
       (select coalesce(sum(qty),0)::int from order_items i where i.order_id = o.id) items
     from orders o ${where.length ? "where " + where.join(" and ") : ""} order by created_at desc limit 300`, args);
   res.json({ orders: rows });
@@ -396,7 +447,9 @@ admin.get("/orders/:id", wrap(async (req, res) => {
   if (!o) return bad(res, "Not found", 404);
   const { rows: items } = await q("select * from order_items where order_id = $1 order by id", [id]);
   const { rows: events } = await q("select at, who, text from order_events where order_id = $1 order by at desc", [id]);
-  res.json({ order: o, items, events });
+  o.rep_name = o.rep_id ? (await q("select name from users where id = $1", [o.rep_id])).rows[0]?.name || "" : "";
+  const { rows: reps } = await q("select id, name, commission_rate from users where role = 'rep' and active order by name");
+  res.json({ order: o, items, events, reps });
 }));
 admin.patch("/orders/:id", wrap(async (req, res) => {
   const id = intOrNull(req.params.id), b = req.body || {};
@@ -420,6 +473,16 @@ admin.patch("/orders/:id", wrap(async (req, res) => {
   }
   for (const [k, col] of [["carrier", "carrier"], ["tracking", "tracking"], ["internalNote", "internal_note"]]) {
     if (b[k] !== undefined && str(b[k], 2000) !== o[col]) { set(col, str(b[k], 2000)); if (k !== "internalNote") log.push(`${k === "carrier" ? "Carrier" : "Tracking"} set to ${str(b[k], 200) || "(blank)"}`); else log.push("Internal note updated"); }
+  }
+  if (b.repId !== undefined && req.user.role === "owner" && (intOrNull(b.repId) || null) !== o.rep_id) {
+    const rid = intOrNull(b.repId) || null;
+    const rate = rid ? (await q("select commission_rate from users where id = $1 and role = 'rep'", [rid])).rows[0]?.commission_rate : null;
+    if (rid && rate === undefined) return bad(res, "Rep not found");
+    if (o.payout_id) return bad(res, "This commission is already paid out. Undo the payout first.");
+    set("rep_id", rid); set("commission_rate", rid ? rate : null); log.push(rid ? "Sales rep changed" : "Sales rep removed");
+  }
+  if (b.commissionRate !== undefined && req.user.role === "owner" && o.rep_id && !o.payout_id) {
+    const r = rateOf(b.commissionRate); if (r !== null && Number(r) !== Number(o.commission_rate)) { set("commission_rate", r); log.push(`Commission rate set to ${r}%`); }
   }
   if (b.shippingCents !== undefined && req.user.role === "owner") {
     const sc = Math.max(0, intOrNull(b.shippingCents) ?? o.shipping_cents);
@@ -446,7 +509,7 @@ admin.post("/orders/:id/note", wrap(async (req, res) => {
 /* ---------- admin: customers ---------- */
 admin.get("/customers", wrap(async (req, res) => {
   const term = str(req.query.q, 80).toLowerCase();
-  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.active, c.created_at, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at,
+  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.active, c.created_at, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.rep_id, (select name from users where id = c.rep_id) rep_name,
       count(o.id)::int orders, coalesce(sum(o.total_cents) filter (where o.status in ('paid','shipped','delivered')), 0)::int spent_cents, max(o.created_at) last_order
     from customers c left join orders o on o.customer_id = c.id
     where ($1 = '' or lower(c.name) like '%' || $1 || '%' or lower(c.email) like '%' || $1 || '%')
@@ -459,8 +522,9 @@ admin.post("/customers", owner, wrap(async (req, res) => {
   const { rows: [ex] } = await q("select id from customers where lower(email) = $1", [email]);
   if (ex) return bad(res, "A customer with that email already exists.");
   // they sign in with the PIN you give them; this random password is never shown to anyone
-  const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash) values ($1,$2,$3,$4,$5) returning id",
-    [email, str(b.name, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10)]);
+  const repId = intOrNull(b.repId) && (await q("select 1 from users where id = $1 and role = 'rep'", [intOrNull(b.repId)])).rows.length ? intOrNull(b.repId) : null;
+  const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash, rep_id) values ($1,$2,$3,$4,$5,$6) returning id",
+    [email, str(b.name, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId]);
   await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
   res.json({ ok: true, id: c.id });
 }));
@@ -488,7 +552,22 @@ admin.delete("/customers/:id/pin", owner, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 admin.patch("/customers/:id", owner, wrap(async (req, res) => {
-  const id = intOrNull(req.params.id), active = req.body?.active !== false;
+  const id = intOrNull(req.params.id);
+  if (req.body?.edit) {
+    const b = req.body, email = str(b.email, 160).toLowerCase();
+    if (!str(b.name, 120) || !isEmail(email)) return bad(res, "Enter a name and a valid email.");
+    const { rows: [dup] } = await q("select 1 from customers where lower(email) = $1 and id <> $2", [email, id]);
+    if (dup) return bad(res, "Another customer already uses that email.");
+    await q("update customers set name = $1, email = $2, phone = $3, address = $4 where id = $5", [str(b.name, 120), email, str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), id]);
+    return res.json({ ok: true });
+  }
+  if (req.body?.repId !== undefined) {
+    const rid = intOrNull(req.body.repId);
+    if (rid && !(await q("select 1 from users where id = $1 and role = 'rep'", [rid])).rows.length) return bad(res, "Rep not found");
+    await q("update customers set rep_id = $1 where id = $2", [rid, id]);
+    return res.json({ ok: true });
+  }
+  const active = req.body?.active !== false;
   await q("update customers set active = $1 where id = $2", [active, id]);
   if (!active) await q("delete from customer_sessions where customer_id = $1", [id]);
   pinCache.at = 0;
@@ -596,6 +675,30 @@ admin.delete("/products/:id/media/:kind", owner, wrap(async (req, res) => {
   await q(`update products set ${kind} = null, ${kind}_type = null, media_v = media_v + 1 where id = $1`, [intOrNull(req.params.id)]);
   res.json({ ok: true });
 }));
+admin.put("/vial-photo", owner, wrap(async (req, res) => {
+  const f = pictureFrom(req.body?.fileData); if (!f) return bad(res, "Use a JPG, PNG or WEBP under 5 MB.");
+  await q("insert into settings(key,value) values ('vialPhoto',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify({ type: f.type, data: f.buf.toString("base64") })]);
+  await q("update settings set value = to_jsonb(coalesce((value #>> '{}')::int, 0) + 1) where key = 'vialPhotoV'");
+  res.json({ ok: true });
+}));
+admin.delete("/vial-photo", owner, wrap(async (req, res) => {
+  await q("delete from settings where key = 'vialPhoto'");
+  await q("update settings set value = '1' where key = 'vialPhotoV'");
+  res.json({ ok: true });
+}));
+admin.put("/site-logo", owner, wrap(async (req, res) => {
+  const f = pictureFrom(req.body?.fileData); if (!f) return bad(res, "Use a JPG, PNG or WEBP under 5 MB.");
+  if (f.buf.length > 2 * 1024 * 1024) return bad(res, "Keep the logo under 2 MB.");
+  await q("insert into settings(key,value) values ('siteLogo',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify({ type: f.type, data: f.buf.toString("base64") })]);
+  await q("update settings set value = to_jsonb(coalesce((value #>> '{}')::int, 0) + 1) where key = 'siteLogoV'");
+  res.json({ ok: true });
+}));
+// "remove" the site logo = show the store name as text instead; the bundled logo comes back with restore
+admin.delete("/site-logo", owner, wrap(async (req, res) => {
+  await q("delete from settings where key = 'siteLogo'");
+  await q("update settings set value = $1 where key = 'siteLogoV'", [req.query.restore ? "1" : "0"]);
+  res.json({ ok: true });
+}));
 admin.put("/vial-logo", owner, wrap(async (req, res) => {
   const f = pictureFrom(req.body?.fileData); if (!f) return bad(res, "Use a JPG, PNG or WEBP under 5 MB.");
   if (f.buf.length > 1024 * 1024) return bad(res, "Keep the logo under 1 MB.");
@@ -605,7 +708,7 @@ admin.put("/vial-logo", owner, wrap(async (req, res) => {
 }));
 admin.delete("/vial-logo", owner, wrap(async (req, res) => {
   await q("delete from settings where key = 'vialLogo'");
-  await q("update settings set value = '0' where key = 'vialLogoV'");
+  await q("update settings set value = $1 where key = 'vialLogoV'", [req.query.restore ? "1" : "0"]);
   res.json({ ok: true });
 }));
 admin.post("/products/clear", owner, wrap(async (req, res) => {
@@ -670,6 +773,89 @@ admin.post("/reports/clear", owner, wrap(async (req, res) => {
   if (req.body?.confirm !== "DELETE") return bad(res, "Type DELETE to confirm.");
   const { rowCount } = await q("delete from reports");
   res.json({ ok: true, removed: rowCount });
+}));
+
+/* ---------- admin: sales reps ---------- */
+admin.get("/reps", wrap(async (req, res) => {
+  const { rows } = await q(`select u.id, u.name, u.email, u.phone, u.commission_rate, u.active, u.created_at,
+      (select count(*)::int from customers c where c.rep_id = u.id) customers,
+      (select count(*)::int from orders o where o.rep_id = u.id and o.status <> 'cancelled') orders,
+      coalesce((select sum(o.subtotal_cents - o.discount_cents) from orders o where o.rep_id = u.id and o.status <> 'cancelled'), 0)::int sales_cents,
+      coalesce((select sum(o.subtotal_cents - o.discount_cents) from orders o where o.rep_id = u.id and o.status <> 'cancelled' and o.created_at >= date_trunc('month', now())), 0)::int month_cents
+    from users u where u.role = 'rep' order by u.active desc, u.name`);
+  for (const r of rows) r.commission = commTotals(await commissionRows({ repId: r.id }));
+  res.json({ reps: rows });
+}));
+const rateOf = (v) => { const n = Number(String(v ?? "").replace(/[%\s]/g, "")); return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n * 100) / 100)) : null; };
+admin.post("/reps", owner, wrap(async (req, res) => {
+  const b = req.body || {}, email = str(b.email, 160).toLowerCase(), pass = String(b.password || "");
+  if (!str(b.name, 80) || !isEmail(email)) return bad(res, "Enter the rep's name and a valid email.");
+  if (pass.length < 8) return bad(res, "Give the rep a password of at least 8 characters.");
+  const rate = rateOf(b.rate); if (rate === null) return bad(res, "Enter the commission as a percent, e.g. 10.");
+  try {
+    const { rows: [u] } = await q("insert into users(email,name,role,pass_hash,phone,commission_rate) values ($1,$2,'rep',$3,$4,$5) returning id", [email, str(b.name, 80), await bcrypt.hash(pass, 11), str(b.phone, 40), rate]);
+    res.json({ ok: true, id: u.id });
+  } catch (e) { bad(res, "That email already has a login."); }
+}));
+admin.patch("/reps/:id", owner, wrap(async (req, res) => {
+  const id = intOrNull(req.params.id), b = req.body || {};
+  const { rows: [u] } = await q("select id from users where id = $1 and role = 'rep'", [id]);
+  if (!u) return bad(res, "Rep not found", 404);
+  if (b.name !== undefined) await q("update users set name = $1 where id = $2", [str(b.name, 80), id]);
+  if (b.phone !== undefined) await q("update users set phone = $1 where id = $2", [str(b.phone, 40), id]);
+  if (b.rate !== undefined) { const r = rateOf(b.rate); if (r === null) return bad(res, "Enter the commission as a percent."); await q("update users set commission_rate = $1 where id = $2", [r, id]); }
+  if (b.active !== undefined) { await q("update users set active = $1 where id = $2", [!!b.active, id]); if (!b.active) await q("delete from sessions where user_id = $1", [id]); }
+  if (b.password) {
+    if (String(b.password).length < 8) return bad(res, "Password needs at least 8 characters.");
+    await q("update users set pass_hash = $1 where id = $2", [await bcrypt.hash(String(b.password), 11), id]);
+    await q("delete from sessions where user_id = $1", [id]);
+  }
+  res.json({ ok: true });
+}));
+admin.get("/commissions", wrap(async (req, res) => {
+  const rows = await commissionRows({ repId: intOrNull(req.query.rep), from: req.query.from, to: req.query.to, status: req.query.status });
+  const { rows: payouts } = await q("select p.*, u.name rep_name from commission_payouts p left join users u on u.id = p.rep_id order by p.paid_at desc limit 200");
+  res.json({ rows, totals: commTotals(rows), payouts });
+}));
+admin.post("/commissions/payout", owner, wrap(async (req, res) => {
+  const b = req.body || {}, repId = intOrNull(b.repId);
+  const ids = (Array.isArray(b.orderIds) ? b.orderIds : []).map(intOrNull).filter(Boolean);
+  if (!repId || !ids.length) return bad(res, "Pick a rep and at least one earned commission.");
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const { rows } = await client.query(`select o.id, round((o.subtotal_cents - o.discount_cents) * coalesce(o.commission_rate,0) / 100.0)::int c from orders o
+      where o.id = any($1) and o.rep_id = $2 and o.payout_id is null and o.status in ('paid','shipped','delivered') for update`, [ids, repId]);
+    if (!rows.length) throw new Error("None of those commissions are earned and unpaid.");
+    const amount = rows.reduce((t, r) => t + r.c, 0);
+    const { rows: [p] } = await client.query("insert into commission_payouts(rep_id, amount_cents, orders, note, who) values ($1,$2,$3,$4,$5) returning id", [repId, amount, rows.length, str(b.note, 300), req.user.name || req.user.email]);
+    await client.query("update orders set payout_id = $1 where id = any($2)", [p.id, rows.map((r) => r.id)]);
+    await client.query("commit");
+    res.json({ ok: true, amountCents: amount, orders: rows.length });
+  } catch (e) { await client.query("rollback").catch(() => {}); bad(res, e.message); }
+  finally { client.release(); }
+}));
+admin.delete("/commissions/payout/:id", owner, wrap(async (req, res) => {
+  await q("update orders set payout_id = null where payout_id = $1", [intOrNull(req.params.id)]);
+  await q("delete from commission_payouts where id = $1", [intOrNull(req.params.id)]);
+  res.json({ ok: true });
+}));
+admin.get("/commissions.csv", owner, wrap(async (req, res) => {
+  const rows = await commissionRows({ repId: intOrNull(req.query.rep), from: req.query.from, to: req.query.to, status: req.query.status });
+  const cell = (v) => { const x = String(v ?? ""); return /[",\n]/.test(x) || /^[=+\-@]/.test(x) ? `"${x.replace(/^([=+\-@])/, "'$1").replace(/"/g, '""')}"` : x; };
+  const head = ["Order", "Date", "Rep", "Customer", "Order status", "Sales (after discount)", "Rate %", "Commission", "Commission status", "Paid out on"];
+  const out = rows.map((r) => [r.number, r.created_at.toISOString().slice(0, 10), r.rep_name, r.customer, r.status, ((r.subtotal_cents - r.discount_cents) / 100).toFixed(2), r.commission_rate ?? "", (r.commission_cents / 100).toFixed(2), r.comm_status, r.payout_date ? r.payout_date.toISOString().slice(0, 10) : ""].map(cell).join(","));
+  res.set("Content-Type", "text/csv"); res.set("Content-Disposition", "attachment; filename=commissions.csv");
+  res.send([head.join(","), ...out].join("\n"));
+}));
+
+// deleting a customer keeps their past orders (the orders keep the name and address they were placed with)
+admin.delete("/customers/:id", owner, wrap(async (req, res) => {
+  const id = intOrNull(req.params.id);
+  const { rows: [c] } = await q("select name from customers where id = $1", [id]);
+  if (!c) return bad(res, "Customer not found", 404);
+  await q("delete from customers where id = $1", [id]);
+  res.json({ ok: true });
 }));
 
 /* ---------- admin: product documents ---------- */
@@ -809,14 +995,15 @@ admin.put("/settings", owner, wrap(async (req, res) => {
   for (const k of Object.keys(DEFAULT_SETTINGS)) {
     if (b[k] === undefined || k === "pinOn") continue; // the PIN has its own endpoint
     let v = b[k];
-    if (k === "vialLogoV") continue; // changed only by uploading or removing the logo
+    if (k === "vialLogoV" || k === "siteLogoV" || k === "vialPhotoV") continue; // changed only by uploading or removing a logo
     if (k === "perks") {
       const ICONS = ["flask", "doc", "key", "shield", "truck", "star", "lock", "chat", "box", "check"];
       v = (Array.isArray(v) ? v : []).slice(0, 6).map((c) => ({ icon: ICONS.includes(c && c.icon) ? c.icon : "check", title: str(c && c.title, 60), text: str(c && c.text, 160) })).filter((c) => c.title || c.text);
     } else if (k === "vial") {
       const d = DEFAULT_SETTINGS.vial, x = v && typeof v === "object" ? v : {};
-      v = Object.fromEntries(Object.keys(d).map((key) => [key, key === "shape" ? (["vial", "tall", "round"].includes(x.shape) ? x.shape : "vial")
+      v = Object.fromEntries(Object.keys(d).map((key) => [key, key === "shape" ? (["photo", "vial", "tall", "round"].includes(x.shape) ? x.shape : "photo")
         : key === "labelShows" ? (["name", "code"].includes(x.labelShows) ? x.labelShows : "name")
+        : key === "photoTint" ? !!x.photoTint
         : /^#[0-9a-f]{6}$/i.test(String(x[key] || "")) ? x[key] : d[key]]));
     } else if (typeof DEFAULT_SETTINGS[k] === "boolean") v = !!v;
     else if (typeof DEFAULT_SETTINGS[k] === "number") v = Math.max(0, intOrNull(v) ?? DEFAULT_SETTINGS[k]);
@@ -851,7 +1038,7 @@ admin.put("/pin", owner, wrap(async (req, res) => {
 
 /* ---------- admin: users (owner only) ---------- */
 admin.get("/users", owner, wrap(async (req, res) => {
-  const { rows } = await q("select id,email,name,role,active,created_at from users order by role, name");
+  const { rows } = await q("select id,email,name,role,active,created_at from users where role <> 'rep' order by role, name");
   res.json({ users: rows });
 }));
 admin.post("/users", owner, wrap(async (req, res) => {
@@ -880,6 +1067,81 @@ admin.patch("/users/:id", owner, wrap(async (req, res) => {
 
 app.use("/api/admin", admin);
 
+/* ---------- sales rep app (/rep): a rep sees and works only their own customers and orders ---------- */
+const rep = express.Router();
+rep.use(wrap(auth));
+rep.use((req, res, next) => (req.user.role === "rep" ? next() : bad(res, "This page is for sales reps. Use /admin.", 403)));
+rep.get("/me", wrap(async (req, res) => {
+  const { rows: [u] } = await q("select id, name, email, phone, commission_rate from users where id = $1", [req.user.id]);
+  const rows = await commissionRows({ repId: req.user.id });
+  const month = rows.filter((r) => r.comm_status !== "void" && new Date(r.created_at) >= new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const { rows: [c] } = await q("select count(*)::int n from customers where rep_id = $1", [req.user.id]);
+  const s = await getSettings();
+  res.json({ rep: u, customers: c.n, totals: commTotals(rows), month: { orders: month.length, sales: month.reduce((t, r) => t + r.subtotal_cents - r.discount_cents, 0), commission: month.reduce((t, r) => t + r.commission_cents, 0) }, brand: s.brand });
+}));
+rep.get("/customers", wrap(async (req, res) => {
+  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.address, c.created_at, c.active,
+      (select count(*)::int from orders o where o.customer_id = c.id and o.status <> 'cancelled') orders,
+      coalesce((select sum(o.subtotal_cents - o.discount_cents) from orders o where o.customer_id = c.id and o.status <> 'cancelled'), 0)::int sales_cents,
+      (select max(created_at) from orders o where o.customer_id = c.id) last_order
+    from customers c where c.rep_id = $1 order by c.name`, [req.user.id]);
+  res.json({ customers: rows });
+}));
+rep.post("/customers", wrap(async (req, res) => {
+  const b = req.body || {}, email = str(b.email, 160).toLowerCase();
+  if (!str(b.name, 120) || !isEmail(email)) return bad(res, "Enter the customer's name and a valid email.");
+  const addr = cleanAddress(b.address);
+  if (!addr.line1 || !addr.city || !addr.state || !addr.zip) return bad(res, "Enter the customer's full shipping address.");
+  const { rows: [ex] } = await q("select id, rep_id from customers where lower(email) = $1", [email]);
+  if (ex) return bad(res, ex.rep_id === req.user.id ? "That customer is already on your list." : "A customer with that email already exists. Ask the office to assign them to you.");
+  const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash, rep_id) values ($1,$2,$3,$4,$5,$6) returning id",
+    [email, str(b.name, 120), str(b.phone, 40), JSON.stringify(addr), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), req.user.id]);
+  await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
+  res.json({ ok: true, id: c.id });
+}));
+rep.patch("/customers/:id", wrap(async (req, res) => {
+  const b = req.body || {}, id = intOrNull(req.params.id);
+  const { rows: [c] } = await q("select id from customers where id = $1 and rep_id = $2", [id, req.user.id]);
+  if (!c) return bad(res, "Customer not found", 404);
+  const addr = cleanAddress(b.address);
+  await q("update customers set name = coalesce(nullif($1,''), name), phone = $2, address = $3 where id = $4", [str(b.name, 120), str(b.phone, 40), JSON.stringify(addr), id]);
+  res.json({ ok: true });
+}));
+rep.get("/catalog", wrap(async (req, res) => {
+  const [{ rows: products }, { rows: shipping }] = await Promise.all([
+    q("select id, name, strength, manufacturer, sku, category, price_cents, stock, max_per_order from products where active order by sort, name, strength, manufacturer, id"),
+    q("select id, name, detail, price_cents, free_over_cents from shipping_methods where active order by sort, price_cents")
+  ]);
+  res.json({ products, shipping });
+}));
+rep.post("/orders", wrap(async (req, res) => {
+  const b = req.body || {};
+  const { rows: [c] } = await q("select id, name, email, phone, address from customers where id = $1 and rep_id = $2 and active", [intOrNull(b.customerId), req.user.id]);
+  if (!c) return bad(res, "Pick one of your customers.");
+  const items = (Array.isArray(b.items) ? b.items : []).filter((i) => intOrNull(i.qty) > 0).slice(0, 100);
+  if (!items.length) return bad(res, "Add at least one product.");
+  const a = c.address || {};
+  if (!a.line1 || !a.city || !a.state || !a.zip) return bad(res, "This customer has no full shipping address yet. Edit the customer first.");
+  try {
+    const r = await createOrder({ name: c.name, email: c.email, phone: c.phone, address: a, items, shippingMethodId: b.shippingMethodId, note: b.note, customerId: c.id, repId: req.user.id,
+      placedBy: `Rep: ${req.user.name || req.user.email}`, event: `Order placed by sales rep ${req.user.name || req.user.email}`, settings: await getSettings() });
+    res.json({ ok: true, ...r });
+  } catch (e) { bad(res, e.message || "Could not place the order."); }
+}));
+rep.get("/orders", wrap(async (req, res) => {
+  const { rows } = await q(`select o.number, o.status, o.name, o.total_cents, o.subtotal_cents, o.discount_cents, o.carrier, o.tracking, o.created_at, o.placed_by,
+      (select json_agg(json_build_object('name', i.name, 'strength', i.strength, 'qty', i.qty, 'unit', i.unit_cents) order by i.id) from order_items i where i.order_id = o.id) items
+    from orders o where o.rep_id = $1 order by o.created_at desc limit 300`, [req.user.id]);
+  res.json({ orders: rows });
+}));
+rep.get("/commissions", wrap(async (req, res) => {
+  const rows = await commissionRows({ repId: req.user.id, from: req.query.from, to: req.query.to });
+  const { rows: payouts } = await q("select amount_cents, orders, note, paid_at from commission_payouts where rep_id = $1 order by paid_at desc", [req.user.id]);
+  res.json({ rows: rows.map(({ rep_email, ...r }) => r), totals: commTotals(rows), payouts });
+}));
+app.use("/api/rep", rep);
+
+
 /* ---------- pages ---------- */
 app.use(express.static(path.join(__dirname, "public"), {
   extensions: ["html"], maxAge: "5m",
@@ -888,6 +1150,7 @@ app.use(express.static(path.join(__dirname, "public"), {
 }));
 app.get("/lab-reports", (req, res) => res.set("Cache-Control", "no-cache").sendFile(path.join(__dirname, "public", "index.html")));
 app.get("/admin", (req, res) => res.set("Cache-Control", "no-cache").sendFile(path.join(__dirname, "public", "admin.html")));
+app.get("/rep", (req, res) => res.set("Cache-Control", "no-cache").sendFile(path.join(__dirname, "public", "rep.html")));
 app.use("/api", (req, res) => bad(res, "Not found", 404));
 app.use((err, req, res, next) => { console.error(err); bad(res, "Something went wrong on our end.", 500); });
 

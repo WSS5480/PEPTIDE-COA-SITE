@@ -1,0 +1,240 @@
+/* Sales rep app: one rep's customers, orders and commissions. Signs in with the same login screen as admin; the server only shows this rep's own records. */
+(() => {
+const app = document.getElementById("app");
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const money = (c) => (c === null || c === undefined ? "" : "$" + (c / 100).toFixed(2));
+const when = (iso) => { if (!iso) return ""; const d = new Date(iso); return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); };
+const STATUS_TEXT = { new: "Received", confirmed: "Awaiting payment", paid: "Paid", shipped: "Shipped", delivered: "Delivered", cancelled: "Cancelled" };
+const pill = (s) => `<span class="pill st-${esc(s)}">${esc(STATUS_TEXT[s] || s)}</span>`;
+function toast(msg) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2000); }
+let me = null, view = "home", pick = null, paneDirty = false;
+const $ = (id) => document.getElementById(id);
+
+async function api(path, opts = {}) {
+  const method = opts.method || "GET", send = method !== "GET";
+  const res = await fetch("/api/rep" + path, { method, headers: send ? { "Content-Type": "application/json" } : {}, body: send ? JSON.stringify(opts.body || {}) : undefined, credentials: "same-origin" });
+  if (res.status === 401) { me = null; drawLogin(); throw new Error("signed out"); }
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) { toast(j.error || "That didn't work"); throw new Error(j.error || "error"); }
+  return j;
+}
+
+/* ---------- login ---------- */
+function drawLogin(msg) {
+  app.innerHTML = `<div class="login"><form id="lf">
+    <img src="/site-logo" alt="360 Medical" style="height:3rem;width:auto;max-width:15rem;object-fit:contain;justify-self:start">
+    <h1>Sales rep sign in</h1><p class="muted">Add customers, place their orders and see your commissions.</p>
+    <div class="field"><label class="eyebrow" for="le">Email</label><input id="le" type="email" autocomplete="username" required></div>
+    <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>
+    ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
+    <button class="btn solid wide rep">Sign in</button>
+    <button class="btn wide" type="button" data-install>Download rep app</button>
+    <p class="muted" style="text-align:center">Office staff? <a href="/admin">Sign in to admin</a></p></form></div>`;
+  $("lf").onsubmit = async (e) => {
+    e.preventDefault();
+    const res = await fetch("/api/admin/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: $("le").value, password: $("lp").value }) });
+    const j = await res.json();
+    if (!res.ok) return drawLogin(j.error);
+    if (j.user.role !== "rep") { await fetch("/api/admin/logout", { method: "POST" }); return drawLogin("That login is for the admin, not the rep app. Go to /admin."); }
+    me = j.user; shell();
+  };
+}
+
+/* ---------- shell ---------- */
+const NAV = [["home", "Home"], ["customers", "Customers"], ["neworder", "New order"], ["orders", "Orders"], ["commissions", "Commissions"], ["account", "Account"]];
+function shell() {
+  app.innerHTML = `<div class="rtop"><div style="display:flex;align-items:center;gap:.6rem"><span class="logopill"><img src="/site-logo" alt="360 Medical"></span><div class="logo"><span id="rbrand">Sales rep</span><small>${esc(me.name || me.email)}</small></div></div>
+      <div class="tools"><button type="button" data-refresh title="Refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button><button type="button" id="lo">Sign out</button></div></div>
+    <nav class="rnav" id="rnav"></nav><main class="rpane" id="pane"></main>`;
+  $("lo").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };
+  go(view);
+}
+function drawNav() { $("rnav").innerHTML = NAV.map(([k, l]) => `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${l}</button>`).join(""); }
+const pane = () => $("pane");
+function go(v, opts = {}) {
+  if (paneDirty && !opts.silent && !confirm("Leave this page? What you typed hasn't been saved.")) return;
+  paneDirty = false; view = v;
+  const pn = pane(); if (pn) { pn.onclick = null; pn.oninput = null; }
+  drawNav();
+  ({ home, customers, neworder, orders, commissions, account }[v] || home)();
+  if (!opts.keepScroll) window.scrollTo(0, 0);
+}
+document.addEventListener("input", (e) => { if (e.target.closest("#pane")) paneDirty = true; });
+document.addEventListener("click", (e) => { const n = e.target.closest("[data-nav]"); if (n) go(n.dataset.nav); });
+
+/* ---------- home ---------- */
+async function home() {
+  const d = await api("/me");
+  pane().innerHTML = `<header><h1>Hi ${esc((d.rep.name || "").split(" ")[0] || "there")}</h1><span class="muted">Commission rate ${d.rep.commission_rate}%</span></header>
+    <dl class="kpis">
+      <div class="kpi green"><dt>Earned, not yet paid</dt><dd>${money(d.totals.earned)}</dd></div>
+      <div class="kpi"><dt>Pending (orders unpaid)</dt><dd>${money(d.totals.pending)}</dd></div>
+      <div class="kpi"><dt>Paid out so far</dt><dd>${money(d.totals.paid)}</dd></div>
+      <div class="kpi"><dt>Sales this month</dt><dd>${money(d.month.sales)}</dd></div>
+      <div class="kpi"><dt>Orders this month</dt><dd>${d.month.orders}</dd></div>
+      <div class="kpi"><dt>My customers</dt><dd>${d.customers}</dd></div>
+    </dl>
+    <div class="row2"><button class="btn solid rep" data-nav="neworder" style="height:2.8rem">Place an order</button><button class="btn" data-nav="customers" style="height:2.8rem">Add a customer</button></div>
+    <div class="panel"><h2>How commissions work</h2><p class="muted">You earn ${d.rep.commission_rate}% of the product total (after any discount, before shipping) on every order from your customers, whether you place it or they order on the store themselves. Commission is <strong>pending</strong> until the office marks the order paid, then <strong>earned</strong> until it's paid out to you. Cancelled orders earn nothing.</p></div>`;
+}
+
+/* ---------- customers ---------- */
+let custList = [];
+async function customers(editId) {
+  const { customers: list } = await api("/customers"); custList = list;
+  const a = (c) => c.address || {};
+  pane().innerHTML = `<header><h1>My customers</h1><button class="btn solid rep" id="addC">Add customer</button></header>
+    <div id="cForm"></div>
+    <div class="filters"><input id="cq" type="search" placeholder="Search name, email or phone"></div>
+    <div class="list" id="cList"></div>`;
+  const draw = () => {
+    const t = ($("cq").value || "").toLowerCase();
+    const rows = list.filter((c) => !t || [c.name, c.email, c.phone].join(" ").toLowerCase().includes(t));
+    $("cList").innerHTML = rows.length ? rows.map((c) => `<div class="item" data-cid="${c.id}"><div class="top2"><span>${esc(c.name)}</span><span>${c.orders ? money(c.sales_cents) : ""}</span></div>
+      <small>${esc(c.email)}${c.phone ? " · " + esc(c.phone) : ""}</small><small>${[a(c).city, a(c).state].filter(Boolean).join(", ")}${c.orders ? ` · ${c.orders} order${c.orders === 1 ? "" : "s"} · last ${when(c.last_order)}` : " · no orders yet"}${c.active ? "" : " · account off"}</small></div>`).join("")
+      : `<p class="muted">${list.length ? "No customer matches." : "No customers yet. Add your first one."}</p>`;
+  };
+  draw(); $("cq").oninput = draw;
+  const form = (c) => {
+    const ad = c ? a(c) : {};
+    const f = (id, label, val = "", type = "text", ac = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}" value="${esc(val)}" autocomplete="${ac}"></div>`;
+    $("cForm").innerHTML = `<div class="panel"><h2>${c ? "Edit customer" : "New customer"}</h2>
+      <div class="grid2">${f("c-n", "Full name", c?.name, "text", "name")}${c ? `<div class="field"><label class="eyebrow">Email</label><input value="${esc(c.email)}" disabled></div>` : f("c-e", "Email", "", "email", "email")}${f("c-p", "Phone", c?.phone, "tel", "tel")}</div>
+      <div class="grid2"><div class="field" style="grid-column:1/-1">${""}<label class="eyebrow" for="c-1">Street address</label><input id="c-1" value="${esc(ad.line1)}" autocomplete="address-line1"></div>
+        ${f("c-2", "Apt, suite (optional)", ad.line2)}${f("c-c", "City", ad.city)}${f("c-s", "State", ad.state)}${f("c-z", "ZIP", ad.zip)}</div>
+      <div class="err" id="cErr" hidden></div>
+      <div class="row2"><button class="btn solid rep" id="cSave">${c ? "Save changes" : "Add customer"}</button>${c ? `<button class="btn" id="cOrder">Place an order for ${esc((c.name || "").split(" ")[0])}</button>` : ""}<button class="btn" id="cCancel">Cancel</button></div></div>`;
+    $("cForm").scrollIntoView({ behavior: "smooth", block: "start" });
+    const g = (x) => $(x).value.trim();
+    $("cCancel").onclick = () => { $("cForm").innerHTML = ""; paneDirty = false; };
+    if ($("cOrder")) $("cOrder").onclick = () => { paneDirty = false; pick = c.id; go("neworder"); };
+    $("cSave").onclick = async () => {
+      const body = { name: g("c-n"), phone: g("c-p"), address: { line1: g("c-1"), line2: g("c-2"), city: g("c-c"), state: g("c-s"), zip: g("c-z") } };
+      if (!c) body.email = g("c-e");
+      try {
+        if (c) { await api("/customers/" + c.id, { method: "PATCH", body }); toast("Customer updated"); }
+        else { const r = await api("/customers", { method: "POST", body }); toast("Customer added"); pick = r.id; }
+        paneDirty = false; customers();
+      } catch (e) { $("cErr").textContent = e.message; $("cErr").hidden = false; }
+    };
+  };
+  $("addC").onclick = () => form(null);
+  pane().onclick = (e) => { const it = e.target.closest("[data-cid]"); if (it) form(list.find((c) => String(c.id) === it.dataset.cid)); };
+  if (editId) form(list.find((c) => c.id === editId));
+}
+
+/* ---------- new order ---------- */
+async function neworder() {
+  const [{ customers: list }, { products, shipping }] = await Promise.all([api("/customers"), api("/catalog")]);
+  const sellable = products.filter((p) => p.price_cents !== null && (p.stock === null || p.stock > 0));
+  const label = (p) => `${p.name} ${p.strength}`.trim() + (p.manufacturer ? ` · ${p.manufacturer}` : "") + (p.sku ? ` · ${p.sku}` : "");
+  pane().innerHTML = `<header><h1>New order</h1></header>
+    ${!list.length ? `<div class="panel"><p>You need a customer first.</p><div><button class="btn solid rep" data-nav="customers">Add a customer</button></div></div>` : `
+    <div class="panel"><h2>1. Customer</h2>
+      <div class="field"><label class="eyebrow" for="oCust">Who is this order for?</label><select id="oCust"><option value="">Choose a customer…</option>${list.filter((c) => c.active).map((c) => `<option value="${c.id}"${pick === c.id ? " selected" : ""}>${esc(c.name)} — ${esc(c.email)}</option>`).join("")}</select></div>
+      <p class="muted" id="oAddr"></p></div>
+    <div class="panel"><h2>2. Products</h2>
+      <div class="filters"><input id="oq" type="search" placeholder="Filter products"></div>
+      <div class="lines" id="oLines">${sellable.map((p) => `<div class="line2" data-pid="${p.id}" data-txt="${esc(label(p).toLowerCase())}"><div class="nm">${esc(label(p))}<small>${money(p.price_cents)} each${p.stock !== null ? ` · ${p.stock} in stock` : ""}${p.max_per_order ? ` · max ${p.max_per_order}` : ""}</small></div>
+        <input data-qty inputmode="numeric" placeholder="0" max="${p.max_per_order || 999}"><div class="amt" data-amt></div></div>`).join("")}</div>
+      ${sellable.length ? "" : '<p class="muted">No products have a price yet.</p>'}</div>
+    <div class="panel"><h2>3. Shipping &amp; notes</h2>
+      ${shipping.length ? `<div class="field"><label class="eyebrow" for="oShip">Shipping</label><select id="oShip">${shipping.map((m) => `<option value="${m.id}">${esc(m.name)}${m.detail ? " · " + esc(m.detail) : ""} · ${m.price_cents ? money(m.price_cents) : "Free"}${m.free_over_cents !== null ? ` (free over ${money(m.free_over_cents)})` : ""}</option>`).join("")}</select></div>` : '<p class="muted">Shipping is confirmed by the office.</p>'}
+      <div class="field"><label class="eyebrow" for="oNote">Note for the office (optional)</label><textarea id="oNote" maxlength="1000"></textarea></div></div>
+    <div class="sticky-total"><div><strong id="oSub">$0.00</strong> <span class="muted" id="oCount">0 items</span></div><div class="err" id="oErr" hidden style="flex:1 1 100%"></div><button class="btn solid rep" id="oGo" style="height:2.8rem">Place order</button></div>
+    <div id="oDone"></div>`}`;
+  if (!list.length) return;
+  pick = null;
+  const addr = () => { const c = list.find((x) => String(x.id) === $("oCust").value); const a = c && c.address || {}; $("oAddr").textContent = c ? (a.line1 ? `Ships to ${[a.line1, a.line2, a.city, a.state, a.zip].filter(Boolean).join(", ")}` : "This customer has no address yet. Add it under Customers first.") : ""; };
+  const total = () => {
+    let sub = 0, n = 0;
+    document.querySelectorAll("#oLines [data-pid]").forEach((row) => { const p = sellable.find((x) => String(x.id) === row.dataset.pid); const q = parseInt(row.querySelector("[data-qty]").value) || 0; row.querySelector("[data-amt]").textContent = q ? money(p.price_cents * q) : ""; sub += q * p.price_cents; n += q; });
+    $("oSub").textContent = money(sub); $("oCount").textContent = `${n} item${n === 1 ? "" : "s"}`;
+  };
+  addr(); $("oCust").onchange = addr;
+  $("oq").oninput = () => { const t = $("oq").value.toLowerCase(); document.querySelectorAll("#oLines [data-pid]").forEach((r) => { r.hidden = t && !r.dataset.txt.includes(t) && !r.querySelector("[data-qty]").value; }); };
+  pane().oninput = (e) => { if (e.target.matches("[data-qty]")) total(); };
+  $("oGo").onclick = async () => {
+    const items = [...document.querySelectorAll("#oLines [data-pid]")].map((r) => ({ id: +r.dataset.pid, qty: parseInt(r.querySelector("[data-qty]").value) || 0 })).filter((i) => i.qty > 0);
+    $("oErr").hidden = true;
+    if (!$("oCust").value) { $("oErr").textContent = "Choose a customer."; $("oErr").hidden = false; return; }
+    if (!items.length) { $("oErr").textContent = "Enter a quantity for at least one product."; $("oErr").hidden = false; return; }
+    $("oGo").disabled = true;
+    try {
+      const r = await api("/orders", { method: "POST", body: { customerId: +$("oCust").value, items, shippingMethodId: $("oShip") ? +$("oShip").value : null, note: $("oNote").value } });
+      paneDirty = false;
+      $("oDone").innerHTML = `<div class="okbox"><span class="eyebrow">Order placed</span><span class="num" style="font:600 1.4rem/1 var(--mono)">${esc(r.number)}</span><span>Total ${money(r.totalCents)} (products ${money(r.subtotalCents)}${r.shippingCents ? `, shipping ${money(r.shippingCents)}` : ""})</span>
+        <span class="muted">The office will confirm it with the customer and collect payment. Your commission shows as pending until the order is paid.</span>
+        <div class="row2"><button class="btn solid rep" data-nav="orders">See my orders</button><button class="btn" data-nav="neworder">Another order</button></div></div>`;
+      $("oDone").scrollIntoView({ behavior: "smooth" });
+      document.querySelectorAll("#oLines [data-qty]").forEach((i) => { i.value = ""; }); total();
+    } catch (e) { $("oErr").textContent = e.message; $("oErr").hidden = false; }
+    finally { $("oGo").disabled = false; }
+  };
+}
+
+/* ---------- orders ---------- */
+async function orders() {
+  const { orders: list } = await api("/orders");
+  pane().innerHTML = `<header><h1>My orders</h1><span class="muted">${list.length} order${list.length === 1 ? "" : "s"}</span></header>
+    <div class="filters"><input id="oq2" type="search" placeholder="Search order #, customer or product"><select id="of2"><option value="">All statuses</option>${Object.entries(STATUS_TEXT).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></div>
+    <div class="list" id="oList"></div>`;
+  const draw = () => {
+    const t = ($("oq2").value || "").toLowerCase(), st = $("of2").value;
+    const rows = list.filter((o) => (!st || o.status === st) && (!t || [o.number, o.name, ...(o.items || []).map((i) => i.name)].join(" ").toLowerCase().includes(t)));
+    $("oList").innerHTML = rows.length ? rows.map((o) => `<div class="item" style="cursor:default"><div class="top2"><span>Order ${esc(o.number)} · ${esc(o.name)}</span><span>${money(o.total_cents)}</span></div>
+      <small>${when(o.created_at)} · ${pill(o.status)}${o.tracking ? ` · ${esc(o.carrier || "Tracking")} <span class="mono">${esc(o.tracking)}</span>` : ""}${o.placed_by && !o.placed_by.startsWith("Rep") ? " · placed by the customer" : ""}</small>
+      <small>${(o.items || []).map((i) => `${i.qty} × ${esc(i.name)} ${esc(i.strength)}`).join(", ")}</small></div>`).join("")
+      : `<p class="muted">${list.length ? "No order matches." : "No orders yet."}</p>`;
+  };
+  draw(); $("oq2").oninput = draw; $("of2").onchange = draw;
+}
+
+/* ---------- commissions ---------- */
+async function commissions() {
+  const qs = (f, t) => "?" + new URLSearchParams({ from: f || "", to: t || "" }).toString();
+  const load = async (f, t) => {
+    const d = await api("/commissions" + qs(f, t));
+    $("cmK").innerHTML = `<div class="kpi green"><dt>Earned, not yet paid</dt><dd>${money(d.totals.earned)}</dd></div><div class="kpi"><dt>Pending</dt><dd>${money(d.totals.pending)}</dd></div><div class="kpi"><dt>Paid out</dt><dd>${money(d.totals.paid)}</dd></div><div class="kpi"><dt>Sales (product total)</dt><dd>${money(d.totals.sales)}</dd></div>`;
+    $("cmT").innerHTML = d.rows.length ? `<div class="tblwrap"><table class="tbl"><tr><th>Date</th><th>Order</th><th>Customer</th><th class="num">Sales</th><th class="num">Rate</th><th class="num">Commission</th><th>Status</th></tr>
+      ${d.rows.map((r) => `<tr><td>${when(r.created_at)}</td><td class="mono">${esc(r.number)}</td><td>${esc(r.customer)}</td><td class="num">${money(r.subtotal_cents - r.discount_cents)}</td><td class="num">${r.commission_rate}%</td><td class="num"><strong>${money(r.commission_cents)}</strong></td><td><span class="pill st-${r.comm_status}">${r.comm_status}</span>${r.payout_date ? `<div class="muted" style="font-size:.72rem">paid ${when(r.payout_date)}</div>` : ""}</td></tr>`).join("")}</table></div>` : `<p class="muted">No orders in this period.</p>`;
+    $("cmP").innerHTML = d.payouts.length ? `<div class="panel"><h2>Payouts to me</h2><div class="tblwrap"><table class="tbl"><tr><th>Date</th><th class="num">Amount</th><th class="num">Orders</th><th>Note</th></tr>${d.payouts.map((p) => `<tr><td>${when(p.paid_at)}</td><td class="num"><strong>${money(p.amount_cents)}</strong></td><td class="num">${p.orders}</td><td>${esc(p.note)}</td></tr>`).join("")}</table></div></div>` : "";
+  };
+  pane().innerHTML = `<header><h1>My commissions</h1></header>
+    <div class="filters"><input id="cmF" type="date"><input id="cmTo" type="date"><button class="btn" id="cmAll" type="button">All time</button></div>
+    <dl class="kpis" id="cmK"></dl><div id="cmT"></div><div id="cmP"></div>
+    <p class="muted"><strong>Pending</strong> = the customer hasn't paid yet. <strong>Earned</strong> = order paid, commission owed to you. <strong>Paid</strong> = included in a payout.</p>`;
+  const run = () => load($("cmF").value, $("cmTo").value);
+  $("cmF").onchange = run; $("cmTo").onchange = run; $("cmAll").onclick = () => { $("cmF").value = ""; $("cmTo").value = ""; run(); };
+  run();
+}
+
+/* ---------- account ---------- */
+async function account() {
+  const d = await api("/me");
+  pane().innerHTML = `<header><h1>My account</h1></header>
+    <div class="panel"><h2>${esc(d.rep.name)}</h2><p class="muted">${esc(d.rep.email)}${d.rep.phone ? " · " + esc(d.rep.phone) : ""} · commission ${d.rep.commission_rate}%</p><p class="muted">To change your name, phone or rate, ask the office.</p></div>
+    <div class="panel"><h2>Change password</h2>
+      <div class="grid2"><div class="field"><label class="eyebrow" for="pc">Current password</label><input id="pc" type="password" autocomplete="current-password"></div><div class="field"><label class="eyebrow" for="pn">New password (10+ characters)</label><input id="pn" type="password" autocomplete="new-password"></div></div>
+      <div><button class="btn solid rep" id="pSave">Change password</button></div></div>
+    <div class="panel"><h2>Rep app on your phone</h2><p class="muted">Install it for one-tap access.</p><div><button class="btn" type="button" data-install>Download rep app</button></div></div>
+    <p class="muted" id="buildLine" style="text-align:center;font-size:.75rem"></p>`;
+  fetch("/api/build").then((r) => r.json()).then((b) => { $("buildLine").textContent = `Rep app v${b.version} · updated ${when(b.updated)}`; }).catch(() => {});
+  $("pSave").onclick = async () => {
+    const r = await fetch("/api/admin/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ current: $("pc").value, next: $("pn").value }) });
+    const j = await r.json(); toast(r.ok ? "Password changed" : j.error); if (r.ok) { $("pc").value = $("pn").value = ""; paneDirty = false; }
+  };
+}
+
+/* ---------- auto refresh ---------- */
+if (window.AppRefresh) window.AppRefresh.init({
+  version: "/api/version",
+  canAuto: () => !!me && !paneDirty && !document.querySelector("dialog[open]") && !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "") && view !== "neworder",
+  refresh: async () => { if (me) go(view, { keepScroll: true, silent: true }); }
+});
+
+(async () => {
+  const res = await fetch("/api/admin/me");
+  if (res.ok) { me = (await res.json()).user; if (me.role === "rep") shell(); else drawLogin("That login is for the admin, not the rep app. Go to /admin."); } else drawLogin();
+})();
+})();
