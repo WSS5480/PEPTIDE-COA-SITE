@@ -1254,12 +1254,16 @@ admin.post("/mail/test", owner, wrap(async (req, res) => {
   const s = await getSettings();
   const to = isEmail(str(req.body?.to, 160)) ? str(req.body.to, 160) : s.orderEmail;
   if (!isEmail(to || "")) return bad(res, "Set the order email address first.");
+  const mi = mail.info(s);
+  console.log(`Test email by ${req.user.email} to ${to}: ${mi.ready ? `${mi.detail} as ${mi.from} (${mi.source} settings)` : "no sending account"}`);
   const r = await mail.send({ to, subject: `Test email from ${s.brand}`, text: `This is a test from the store admin. Order emails are working.\n\nSent ${new Date().toLocaleString("en-US", { timeZone: "America/Chicago" })} (Central).` }, s);
+  console.log(`Test email result: ${r.ok ? "sent" : "FAILED: " + r.error}`);
   if (!r.ok) return bad(res, r.error);
   res.json({ ok: true, to });
 }));
 admin.put("/settings", owner, wrap(async (req, res) => {
   const b = req.body || {};
+  if (b.mailMode !== undefined) console.log(`Mail settings saved by ${req.user.email}: mode=${b.mailMode || "(none)"} host=${b.mailHost || ""} port=${b.mailPort || ""} login=${b.mailUser || ""} from=${b.mailFrom || "(login)"} password=${b.mailPass ? "typed" : "kept"} resendKey=${b.resendKey ? "typed" : "kept"}`);
   for (const k of Object.keys(DEFAULT_SETTINGS)) {
     if (b[k] === undefined || k === "pinOn") continue; // the PIN has its own endpoint
     let v = b[k];
