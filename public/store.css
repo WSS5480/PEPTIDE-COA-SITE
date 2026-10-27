@@ -314,3 +314,7 @@ a.doc { text-decoration: none; color: inherit; }
 .doclist small { color: var(--ink-2); font-size: .78rem; }
 .dtype { flex: none; display: grid; place-items: center; width: 2.4rem; height: 2.4rem; background: var(--blue-wash); color: var(--blue); border-radius: 8px; font: 700 .7rem/1 var(--body); }
 #rmBody > .block { margin-top: 1.25rem; }
+
+/* Download app button in the header (icon only on phones) */
+@media (max-width: 760px) { .appbtn span { display: none; } }
+.pinbox [data-install] { justify-self: stretch; }

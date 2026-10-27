@@ -7,9 +7,13 @@
 <title>Enter PIN</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Poppins:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="/store.css">
+<link rel="stylesheet" href="/store.css?v=1793126988">
 <link rel="icon" href="/icon-192.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest?v=3">
+<meta name="theme-color" content="#0b4d96">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="360 Peptides">
 <style>
 body { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 1rem;
   background: radial-gradient(40rem 30rem at 70% 30%, rgba(150,214,248,.35), rgba(11,77,150,0) 60%), linear-gradient(120deg, #07173a, #0b4d96); }
@@ -45,7 +49,9 @@ body { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center
     <button type="button">7</button><button type="button">8</button><button type="button">9</button>
     <button type="button" class="txt" data-k="clear">Clear</button><button type="button">0</button><button type="button" class="txt" data-k="go">Enter</button>
   </div>
+  <button class="btn wide" type="button" data-install style="height:2.8rem;font-weight:600">Download app</button>
 </form>
+<script src="/install.js?v=3"></script>
 <script>
 (() => {
   const pin = document.getElementById("pin"), dots = document.getElementById("dots"), msg = document.getElementById("msg");

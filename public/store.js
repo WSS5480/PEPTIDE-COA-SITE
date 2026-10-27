@@ -422,7 +422,6 @@ async function load() {
     if (LAB) $("hq").placeholder = "Search lab reports";
     $("brand").textContent = name; $("footBrand").textContent = name;
     if (S.tagline) { $("tagline").textContent = S.tagline; $("tagline").hidden = false; }
-    if (S.announcementOn && S.announcement) banner($("announce"), S);
     if (S.headline) $("headline").textContent = S.headline;
     if (S.heroEyebrow) $("heroEyebrow").textContent = S.heroEyebrow; else $("heroEyebrow").hidden = true;
     if (S.intro) $("lede").textContent = S.intro; else $("lede").hidden = true;

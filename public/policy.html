@@ -7,7 +7,7 @@
 <title>Policies</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Poppins:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="/store.css?v=1793122447">
+<link rel="stylesheet" href="/store.css?v=1793126988">
 <style>
 .pol { display: grid; grid-template-columns: 14rem minmax(0, 1fr); gap: 2rem; padding-block: 2rem 4rem; align-items: start; }
 .pol nav { position: sticky; top: 5rem; display: grid; gap: .2rem; }
@@ -20,7 +20,6 @@
 </style>
 </head>
 <body>
-<div class="announce" id="announce" hidden></div>
 <header class="top"><div class="wrap">
   <a class="logo" href="/" style="text-decoration:none"><span id="brand">360 Medical Peptides</span></a>
   <a class="btn" href="/" style="display:inline-grid;place-items:center;text-decoration:none">← Back to store</a>
@@ -41,11 +40,6 @@
   const { settings: S } = await (await fetch("/api/store")).json();
   const name = S.brand || "360 Medical Peptides";
   document.title = "Policies · " + name; $("brand").textContent = name;
-  if (S.announcementOn && S.announcement) {
-    const el = $("announce"); el.hidden = false;
-    if (S.bannerScroll) { const i = `<span>${esc(S.announcement)}</span>`.repeat(6); el.classList.add("scroll"); el.innerHTML = `<div class="mq">${i}</div><div class="mq" aria-hidden="true">${i}</div>`; }
-    else el.textContent = S.announcement;
-  }
   const block = (id, title, items) => `<section id="${id}"><h2 class="title">${title}</h2>${(items || []).map((t) => `<p>${para(t)}</p>`).join("") || "<p>Coming soon.</p>"}</section>`;
   $("body").innerHTML = [
     block("terms", "Terms of service", S.policyTerms),

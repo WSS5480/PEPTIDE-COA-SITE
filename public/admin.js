@@ -697,10 +697,6 @@ async function settings() {
       <div class="field" style="max-width:24rem"><label class="eyebrow" for="s-productLabel">Show products by</label>
       <select id="s-productLabel"${ro()}>${[["name", "Name and size (Retatrutide 30 mg)"], ["code", "Code (RT30)"], ["both", "Both (Retatrutide 30 mg · RT30)"]].map(([v, l]) => `<option value="${v}"${(s.productLabel || "name") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
       <span class="muted">Products without a code always show their name. Search finds products by name or code either way.</span></div></div>
-    <div class="panel"><h2>Banner</h2>
-      <label class="chk"><input type="checkbox" id="s-announcementOn"${s.announcementOn ? " checked" : ""}${ro()}> Show the banner across the top of every page</label>
-      <label class="chk"><input type="checkbox" id="s-bannerScroll"${s.bannerScroll ? " checked" : ""}${ro()}> Scroll the text across the banner</label>
-      ${t("announcement", "Banner text")}</div>
     <div class="panel"><h2>Home page header</h2>
       ${t("heroEyebrow", "Small line above the headline")}
       ${t("headline", "Headline")}
@@ -736,11 +732,11 @@ async function settings() {
   document.getElementById("sSave").onclick = async () => {
     const v = (k) => document.getElementById("s-" + k);
     const body = {};
-    ["brand", "tagline", "contact", "distributorOf", "brandUrl", "announcement", "intro", "paymentInstructions", "priceNote", "heroEyebrow", "headline"].forEach((k) => { body[k] = v(k).value; });
+    ["brand", "tagline", "contact", "distributorOf", "brandUrl", "intro", "paymentInstructions", "priceNote", "heroEyebrow", "headline"].forEach((k) => { body[k] = v(k).value; });
     body.storeOpen = v("storeOpen").checked; body.ageGate = v("ageGate").checked; body.minAge = v("minAge").value;
     body.minOrderCents = Math.round(parseFloat(v("minOrder").value || 0) * 100);
     ["footerNotice", "disclaimers", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"].forEach((k) => { body[k] = v(k).value.split("\n").map((x) => x.trim()).filter(Boolean); });
-    body.announcementOn = v("announcementOn").checked; body.productLabel = v("productLabel").value; body.bannerScroll = v("bannerScroll").checked;
+    body.announcementOn = false; body.productLabel = v("productLabel").value;
     await api("/settings", { method: "PUT", body }); toast("Settings saved");
   };
 }

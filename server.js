@@ -70,7 +70,7 @@ const owner = (req, res, next) => (req.user.role === "owner" ? next() : bad(res,
 // When the owner turns the PIN on, nothing on the store (pages, products, lab reports, orders)
 // is served until the visitor enters it. The admin, its login and the files it needs stay open.
 const PIN_OPEN = [/^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/pin(\.html)?$/, /^\/api\/pin$/,
-  /^\/store\.css$/, /^\/install\.js$/, /^\/sw\.js$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
+  /^\/store\.css$/, /^\/install\.js$/, /^\/sw\.js$/, /^\/manifest\.webmanifest$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
 let pinCache = { at: 0, on: false, hash: "", secret: "", customerPins: 0 };
 async function pinState() {
   if (Date.now() - pinCache.at < 5000) return pinCache;
