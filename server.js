@@ -1239,13 +1239,13 @@ admin.delete("/discounts/:id", owner, wrap(async (req, res) => {
 /* ---------- admin: settings ---------- */
 admin.get("/settings", wrap(async (req, res) => {
   const st = await getSettings();
-  const out = { ...st, mailPassSet: !!st.mailPass, resendKeySet: !!st.resendKey };
-  for (const k of ["pinHash", "pinSecret", "mailPass", "resendKey"]) delete out[k];
+  const out = { ...st, mailPassSet: !!st.mailPass, resendKeySet: !!st.resendKey, graphSecretSet: !!st.graphSecret };
+  for (const k of ["pinHash", "pinSecret", "mailPass", "resendKey", "graphSecret"]) delete out[k];
   res.json({ settings: out, stripe: stripeInfo(), mail: mail.info(st), baseUrl: BASE_URL });
 }));
 // forget the saved mail password / API key (then the host's settings, if any, are used again)
 admin.post("/mail/clear", owner, wrap(async (req, res) => {
-  await q("update settings set value = '\"\"' where key in ('mailPass','resendKey')");
+  await q("update settings set value = '\"\"' where key in ('mailPass','resendKey','graphSecret')");
   await q(`update settings set value = '""' where key = 'mailMode'`);
   res.json({ ok: true });
 }));
@@ -1263,14 +1263,14 @@ admin.post("/mail/test", owner, wrap(async (req, res) => {
 }));
 admin.put("/settings", owner, wrap(async (req, res) => {
   const b = req.body || {};
-  if (b.mailMode !== undefined) console.log(`Mail settings saved by ${req.user.email}: mode=${b.mailMode || "(none)"} host=${b.mailHost || ""} port=${b.mailPort || ""} login=${b.mailUser || ""} from=${b.mailFrom || "(login)"} password=${b.mailPass ? "typed" : "kept"} resendKey=${b.resendKey ? "typed" : "kept"}`);
+  if (b.mailMode !== undefined) console.log(`Mail settings saved by ${req.user.email}: mode=${b.mailMode || "(none)"} host=${b.mailHost || ""} port=${b.mailPort || ""} login/mailbox=${b.mailUser || ""} from=${b.mailFrom || "(login)"} tenant=${b.graphTenant || ""} client=${b.graphClient || ""} password=${b.mailPass ? "typed" : "kept"} resendKey=${b.resendKey ? "typed" : "kept"} appSecret=${b.graphSecret ? "typed" : "kept"}`);
   for (const k of Object.keys(DEFAULT_SETTINGS)) {
     if (b[k] === undefined || k === "pinOn") continue; // the PIN has its own endpoint
     let v = b[k];
     if (k === "vialLogoV" || k === "siteLogoV" || k === "vialPhotoV") continue; // changed only by uploading or removing a logo
     if (k === "orderEmail") { v = str(v, 160).toLowerCase(); if (v && !isEmail(v)) return bad(res, "The order email address doesn't look right."); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; }
-    if (k === "mailPass" || k === "resendKey") { v = String(v || ""); if (!v.trim()) continue; v = v.trim().slice(0, 300); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; } // blank = keep the saved one
-    if (k === "mailMode") v = ["smtp", "resend"].includes(v) ? v : "";
+    if (k === "mailPass" || k === "resendKey" || k === "graphSecret") { v = String(v || ""); if (!v.trim()) continue; v = v.trim().slice(0, 300); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; } // blank = keep the saved one
+    if (k === "mailMode") v = ["smtp", "resend", "graph"].includes(v) ? v : "";
     if (k === "mailFrom" && v && !/^[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+$/.test(String(v).trim()) && !/^[^<>]+<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>$/.test(String(v).trim())) return bad(res, 'The From address should look like "Name <you@domain.com>" or just the address.');
     if (k === "perks") {
       const ICONS = ["flask", "doc", "key", "shield", "truck", "star", "lock", "chat", "box", "check"];

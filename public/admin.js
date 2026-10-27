@@ -1006,7 +1006,7 @@ async function settings() {
   const ta = (k, label, help = "") => `<div class="field"><label class="eyebrow" for="s-${k}">${label}</label><textarea id="s-${k}"${ro()}>${esc(s[k])}</textarea>${help ? `<span class="muted">${help}</span>` : ""}</div>`;
   const site = baseUrl || location.origin;
   // which sending account is picked: what's saved, else Microsoft 365 (so the login boxes show right away), unless the host already has settings
-  const prov0 = s.mailMode === "resend" ? "resend" : s.mailMode === "smtp" ? (/office365|outlook/i.test(s.mailHost || "") ? "microsoft" : /gmail|google/i.test(s.mailHost || "") ? "google" : "smtp") : (ml && ml.ready && ml.source === "host" ? "" : "microsoft");
+  const prov0 = s.mailMode === "resend" ? "resend" : s.mailMode === "graph" ? "graph" : s.mailMode === "smtp" ? (/office365|outlook/i.test(s.mailHost || "") ? "microsoft" : /gmail|google/i.test(s.mailHost || "") ? "google" : "smtp") : (ml && ml.ready && ml.source === "host" ? "" : "graph");
   pane().innerHTML = `<header><h1>Site settings</h1></header>
     <div class="panel"><h2>Store</h2>
       <label class="chk"><input type="checkbox" id="s-storeOpen"${s.storeOpen ? " checked" : ""}${ro()}> Taking orders (untick to pause checkout)</label>
@@ -1043,23 +1043,34 @@ async function settings() {
       <label class="chk"><input type="checkbox" id="s-orderEmailOn"${s.orderEmailOn ? " checked" : ""}${ro()}> Email me every order</label>
       <label class="chk"><input type="checkbox" id="s-customerEmailOn"${s.customerEmailOn ? " checked" : ""}${ro()}> Email the customer a confirmation (and a receipt when they pay by card)</label>
       <h2 style="font-size:1.05rem;margin-top:.4rem">Sending account</h2>
-      <p class="muted">The mailbox the store sends from. On Microsoft 365 use a real mailbox's email and password (its <em>Authenticated SMTP</em> must be on in the Microsoft 365 admin center: Users → the user → Mail → Manage email apps). Emails come from that address unless you set a different From address it is allowed to send as.</p>
+      <p class="muted">How the store sends. <strong>Microsoft 365 app</strong> is the one to use here: no mailbox password, unaffected by MFA, and it can send straight from the shared noreply@ address. (The store's host blocks plain mail-server connections on its free plan, so the "mailbox login" option only works on a paid host plan and without MFA.)</p>
       <div class="grid2">
         <div class="field"><label class="eyebrow" for="s-mailProvider">Mail provider</label><select id="s-mailProvider"${ro()}>
-          <option value="microsoft"${prov0 === "microsoft" ? " selected" : ""}>Microsoft 365 / Outlook</option>
+          <option value="graph"${prov0 === "graph" ? " selected" : ""}>Microsoft 365 app (no password; works with MFA)</option>
+          <option value="microsoft"${prov0 === "microsoft" ? " selected" : ""}>Microsoft 365 mailbox login (SMTP)</option>
           <option value="google"${prov0 === "google" ? " selected" : ""}>Google Workspace / Gmail</option>
           <option value="smtp"${prov0 === "smtp" ? " selected" : ""}>Other mail server (SMTP)</option>
           <option value="resend"${prov0 === "resend" ? " selected" : ""}>Resend (API key)</option>
           <option value=""${prov0 === "" ? " selected" : ""}>Not set here (use the host's settings)</option></select></div>
-        <div class="field mail-smtp"><label class="eyebrow" for="s-mailUser">Login email</label><input id="s-mailUser" value="${esc(s.mailUser)}" autocomplete="off" placeholder="name@360medical.net"${ro()}></div>
+        <div class="field mail-graph"><label class="eyebrow" for="s-graphTenant">Directory (tenant) ID</label><input id="s-graphTenant" value="${esc(s.graphTenant)}" autocomplete="off" placeholder="xxxxxxxx-xxxx-…"${ro()}></div>
+        <div class="field mail-graph"><label class="eyebrow" for="s-graphClient">Application (client) ID</label><input id="s-graphClient" value="${esc(s.graphClient)}" autocomplete="off" placeholder="xxxxxxxx-xxxx-…"${ro()}></div>
+        <div class="field mail-graph"><label class="eyebrow" for="s-graphSecret">Client secret (value)</label><input id="s-graphSecret" type="password" autocomplete="new-password" placeholder="${s.graphSecretSet ? "•••••••• saved — type to change" : "Secret value from Certificates & secrets"}"${ro()}></div>
+        <div class="field mail-smtp mail-graph"><label class="eyebrow" for="s-mailUser"><span class="mail-smtp">Login email</span><span class="mail-graph">Mailbox to send from</span></label><input id="s-mailUser" value="${esc(s.mailUser)}" autocomplete="off" placeholder="noreply@360medical.net"${ro()}></div>
         <div class="field mail-smtp"><label class="eyebrow" for="s-mailPass">Password</label><input id="s-mailPass" type="password" autocomplete="new-password" placeholder="${s.mailPassSet ? "•••••••• saved — type to change" : "Mailbox password"}"${ro()}></div>
         <div class="field mail-resend"><label class="eyebrow" for="s-resendKey">Resend API key</label><input id="s-resendKey" type="password" autocomplete="new-password" placeholder="${s.resendKeySet ? "•••••••• saved — type to change" : "re_…"}"${ro()}></div>
-        <div class="field mail-smtp mail-resend"><label class="eyebrow" for="s-mailFrom">From (optional)</label><input id="s-mailFrom" value="${esc(s.mailFrom)}" placeholder="360 Medical Peptides <noreply@360medical.net>"${ro()}><span class="muted">Blank = the login address</span></div>
+        <div class="field mail-smtp mail-resend mail-graph"><label class="eyebrow" for="s-mailFrom">From (optional)</label><input id="s-mailFrom" value="${esc(s.mailFrom)}" placeholder="360 Medical Peptides <noreply@360medical.net>"${ro()}><span class="muted">Blank = the login / mailbox address</span></div>
         <div class="field mail-smtp"><label class="eyebrow" for="s-mailHost">Mail server</label><input id="s-mailHost" value="${esc(s.mailHost)}"${ro()}></div>
         <div class="field mail-smtp"><label class="eyebrow" for="s-mailPort">Port</label><input id="s-mailPort" value="${esc(s.mailPort)}" inputmode="numeric"${ro()}></div></div>
-      ${isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" id="mailSave">Save sending account</button><button class="btn" id="mailTest">Send a test email</button>${s.mailPassSet || s.resendKeySet ? `<button class="btn" id="mailClear">Forget saved password</button>` : ""}<span class="muted" id="mailTestOut"></span></div>` : ""}
-      <details><summary style="cursor:pointer;font-weight:600">Help: Microsoft 365, Google, Resend</summary>
-        <p class="muted" style="margin-top:.6rem"><strong>Microsoft 365:</strong> pick Microsoft 365, enter a real mailbox's email and password. Shared mailboxes have no password: either use a real user that has <em>Send as</em> on the shared address (put the shared address in From), or send as the user's own address. If the test says the login was rejected, the tenant blocks app sign-ins (Security defaults / MFA) — ask your Microsoft admin to allow this mailbox, or use Resend.</p>
+      ${isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" id="mailSave">Save sending account</button><button class="btn" id="mailTest">Send a test email</button>${s.mailPassSet || s.resendKeySet || s.graphSecretSet ? `<button class="btn" id="mailClear">Forget saved password / secret</button>` : ""}<span class="muted" id="mailTestOut"></span></div>` : ""}
+      <details><summary style="cursor:pointer;font-weight:600">Help: Microsoft 365 app, mailbox login, Google, Resend</summary>
+        <p class="muted" style="margin-top:.6rem"><strong>Microsoft 365 app (recommended):</strong> one-time setup by a Microsoft 365 admin, about 10 minutes.</p><ol class="muted" style="margin:.3rem 0 0 1.2rem;display:grid;gap:.35rem">
+        <li>Go to <a href="https://entra.microsoft.com" target="_blank" rel="noopener">entra.microsoft.com</a> → Identity → Applications → <strong>App registrations</strong> → <strong>New registration</strong>. Name: <em>Peptide store mail</em>. Leave "single tenant" selected → Register.</li>
+        <li>On the app's Overview page copy the <strong>Application (client) ID</strong> and the <strong>Directory (tenant) ID</strong> into the boxes above.</li>
+        <li><strong>API permissions</strong> → Add a permission → Microsoft Graph → <strong>Application permissions</strong> → search <em>Mail.Send</em> → tick it → Add. Then click <strong>Grant admin consent for 360 Medical</strong> → Yes.</li>
+        <li><strong>Certificates &amp; secrets</strong> → New client secret → Add → copy the <strong>Value</strong> column (not the ID) into the Client secret box above. Note its expiry (pick 24 months); you'll paste a new one then.</li>
+        <li>Mailbox to send from: <span class="mono">noreply@360medical.net</span> (works for shared mailboxes). Click <strong>Send a test email</strong>.</li></ol>
+        <p class="muted" style="margin-top:.4rem">Optional, for IT: limit the app to that one mailbox with an application access policy (New-ApplicationAccessPolicy in Exchange Online PowerShell).</p>
+        <p class="muted" style="margin-top:.6rem"><strong>Microsoft 365 mailbox login (SMTP):</strong> pick Microsoft 365, enter a real mailbox's email and password. Shared mailboxes have no password: either use a real user that has <em>Send as</em> on the shared address (put the shared address in From), or send as the user's own address. If the test says the login was rejected, the tenant blocks app sign-ins (Security defaults / MFA) — ask your Microsoft admin to allow this mailbox, or use Resend.</p>
         <p class="muted" style="margin-top:.6rem"><strong>Google Workspace / Gmail:</strong> turn on 2-Step Verification, create an app password at myaccount.google.com/apppasswords and use it as the password.</p>
         <p class="muted" style="margin-top:.6rem"><strong>Resend</strong> (no mailbox password needed): sign up at resend.com, add and verify the domain 360medical.net with the DNS records they show, create an API key and paste it here with a From address on that domain.</p></details></div>
     ${isOwner() ? `<div class="panel" id="pinPanel"><h2>Site PIN</h2>
@@ -1114,7 +1125,7 @@ async function settings() {
   const mailFields = () => {
     const p = prov.value;
     const isSmtp = p === "microsoft" || p === "google" || p === "smtp";
-    pane().querySelectorAll(".mail-smtp, .mail-resend").forEach((el) => { el.hidden = !((el.classList.contains("mail-smtp") && isSmtp) || (el.classList.contains("mail-resend") && p === "resend")); });
+    pane().querySelectorAll(".mail-smtp, .mail-resend, .mail-graph").forEach((el) => { el.hidden = !((el.classList.contains("mail-smtp") && isSmtp) || (el.classList.contains("mail-resend") && p === "resend") || (el.classList.contains("mail-graph") && p === "graph")); });
     const host = document.getElementById("s-mailHost"), port = document.getElementById("s-mailPort");
     if (p === "microsoft") { host.value = "smtp.office365.com"; port.value = "587"; }
     if (p === "google") { host.value = "smtp.gmail.com"; port.value = "465"; }
@@ -1124,13 +1135,15 @@ async function settings() {
   const mailBody = () => {
     const v = (k) => document.getElementById("s-" + k);
     const p = prov.value;
-    return { mailMode: p === "resend" ? "resend" : p ? "smtp" : "", mailHost: v("mailHost").value, mailPort: v("mailPort").value, mailUser: v("mailUser").value, mailPass: v("mailPass").value, mailFrom: v("mailFrom").value, resendKey: v("resendKey").value,
+    return { mailMode: p === "resend" ? "resend" : p === "graph" ? "graph" : p ? "smtp" : "", mailHost: v("mailHost").value, mailPort: v("mailPort").value, mailUser: v("mailUser").value, mailPass: v("mailPass").value, mailFrom: v("mailFrom").value, resendKey: v("resendKey").value,
+      graphTenant: v("graphTenant").value, graphClient: v("graphClient").value, graphSecret: v("graphSecret").value,
       orderEmail: v("orderEmail").value, orderEmailOn: v("orderEmailOn").checked, customerEmailOn: v("customerEmailOn").checked };
   };
   if (document.getElementById("mailSave")) document.getElementById("mailSave").onclick = async () => {
     const b = mailBody();
     if (b.mailMode === "smtp" && (!b.mailUser || (!b.mailPass && !s.mailPassSet))) return toast("Enter the login email and password");
     if (b.mailMode === "resend" && !b.resendKey && !s.resendKeySet) return toast("Paste the Resend API key");
+    if (b.mailMode === "graph" && (!b.graphTenant || !b.graphClient || !b.mailUser || (!b.graphSecret && !s.graphSecretSet))) return toast("Enter the tenant ID, client ID, secret and the mailbox");
     await api("/settings", { method: "PUT", body: b }); toast("Sending account saved"); paneDirty = false; settings();
   };
   if (document.getElementById("mailClear")) document.getElementById("mailClear").onclick = async () => {
@@ -1142,12 +1155,13 @@ async function settings() {
     const body = mailBody();
     if (body.mailMode === "smtp" && (!body.mailUser || (!body.mailPass && !s.mailPassSet))) { out.textContent = "Enter the login email and password first, then test."; return; }
     if (body.mailMode === "resend" && !body.resendKey && !s.resendKeySet) { out.textContent = "Paste the Resend API key first, then test."; return; }
+    if (body.mailMode === "graph" && (!body.graphTenant || !body.graphClient || !body.mailUser || (!body.graphSecret && !s.graphSecretSet))) { out.textContent = "Enter the tenant ID, client ID, secret and the mailbox first, then test."; return; }
     b.disabled = true; out.textContent = "Saving and sending…";
     try {
       if (body.mailMode) await api("/settings", { method: "PUT", body }); // test what's on screen
       const r = await api("/mail/test", { method: "POST", body: { to: document.getElementById("s-orderEmail").value } });
       out.textContent = `Sent to ${r.to}. Check the inbox (and spam).`;
-      const ms = pane().querySelector("#s-mailPass"); if (ms) { ms.value = ""; ms.placeholder = "•••••••• saved — type to change"; }
+      pane().querySelectorAll("#s-mailPass, #s-graphSecret, #s-resendKey").forEach((ms) => { if (ms.value) { ms.value = ""; ms.placeholder = "•••••••• saved — type to change"; } });
     } catch (e) { out.textContent = "Not sent: " + e.message; }
     finally { b.disabled = false; }
   };

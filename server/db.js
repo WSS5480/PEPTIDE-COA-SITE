@@ -283,6 +283,9 @@ const DEFAULT_SETTINGS = {
   mailPass: "",            // never sent to the browser
   mailFrom: "",            // e.g. 360 Medical Peptides <noreply@360medical.net>; blank = the login address
   resendKey: "",           // never sent to the browser
+  graphTenant: "",         // Microsoft 365 app (Graph): Directory (tenant) ID
+  graphClient: "",         // Application (client) ID
+  graphSecret: "",         // client secret; never sent to the browser
   priceNote: "Prices in US dollars, per vial.",
   paymentInstructions: "We'll review your order and reach out with the total and payment options. Your order ships once payment is received.",
   intro: "Many of our products come with an independent lab report. Open one to see the results, then check it on the lab's own site with the key printed on it.",
