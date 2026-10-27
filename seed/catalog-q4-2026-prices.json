@@ -1,0 +1,491 @@
+[
+ {
+  "name": "AOD-9604",
+  "strength": "10 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 36.34
+ },
+ {
+  "name": "ARA-290",
+  "strength": "12 mg",
+  "category": "Tissue repair research",
+  "description": "",
+  "price": 24.62
+ },
+ {
+  "name": "BPC-157 + TB-500 (5 mg / 5 mg)",
+  "strength": "10 mg",
+  "category": "Blends",
+  "description": "",
+  "price": 27.42
+ },
+ {
+  "name": "BPC-157 + TB-500 (10 mg / 10 mg)",
+  "strength": "20 mg",
+  "category": "Blends",
+  "description": "",
+  "price": 42.1
+ },
+ {
+  "name": "BPC-157",
+  "strength": "10 mg",
+  "category": "Tissue repair research",
+  "description": "",
+  "price": 25.98
+ },
+ {
+  "name": "BPC-157 + GHK-Cu + TB-500 (10 / 30 / 10 mg)",
+  "strength": "50 mg",
+  "category": "Blends",
+  "description": "",
+  "price": 44.54
+ },
+ {
+  "name": "BPC-157 + GHK-Cu + TB-500 (10 / 50 / 10 mg)",
+  "strength": "70 mg",
+  "category": "Blends",
+  "description": "",
+  "price": 46.74
+ },
+ {
+  "name": "BPC-157 + GHK-Cu + TB-500 + KPV (10 / 50 / 10 / 10 mg)",
+  "strength": "80 mg",
+  "category": "Blends",
+  "description": "",
+  "price": 50.74
+ },
+ {
+  "name": "Cagrilintide",
+  "strength": "5 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 42.0
+ },
+ {
+  "name": "Cardiogen",
+  "strength": "20 mg",
+  "category": "Longevity research",
+  "description": "",
+  "price": 25.98
+ },
+ {
+  "name": "Cartalax",
+  "strength": "20 mg",
+  "category": "Longevity research",
+  "description": "",
+  "price": 25.14
+ },
+ {
+  "name": "Cerebrolysin",
+  "strength": "60 mg",
+  "category": "Cognitive research",
+  "description": "",
+  "price": 21.94
+ },
+ {
+  "name": "CJC-1295 with DAC",
+  "strength": "5 mg",
+  "category": "Growth hormone research",
+  "description": "",
+  "price": 33.42
+ },
+ {
+  "name": "CJC-1295 without DAC",
+  "strength": "5 mg",
+  "category": "Growth hormone research",
+  "description": "",
+  "price": 18.68
+ },
+ {
+  "name": "CJC-1295 without DAC",
+  "strength": "10 mg",
+  "category": "Growth hormone research",
+  "description": "",
+  "price": 31.8
+ },
+ {
+  "name": "CJC-1295 without DAC + Ipamorelin (5 mg / 5 mg)",
+  "strength": "10 mg",
+  "category": "Blends",
+  "description": "",
+  "price": 28.88
+ },
+ {
+  "name": "CJC-1295 without DAC + Ipamorelin (10 mg / 10 mg)",
+  "strength": "20 mg",
+  "category": "Blends",
+  "description": "",
+  "price": 38.32
+ },
+ {
+  "name": "DSIP",
+  "strength": "5 mg",
+  "category": "Cognitive research",
+  "description": "",
+  "price": 17.22
+ },
+ {
+  "name": "DSIP",
+  "strength": "10 mg",
+  "category": "Cognitive research",
+  "description": "",
+  "price": 22.78
+ },
+ {
+  "name": "Epithalon",
+  "strength": "20 mg",
+  "category": "Longevity research",
+  "description": "",
+  "price": 23.54
+ },
+ {
+  "name": "Epithalon",
+  "strength": "50 mg",
+  "category": "Longevity research",
+  "description": "",
+  "price": 44.92
+ },
+ {
+  "name": "NA Epithalon Amidate",
+  "strength": "50 mg",
+  "category": "Longevity research",
+  "description": "",
+  "price": 52.14
+ },
+ {
+  "name": "Follistatin 344",
+  "strength": "1 mg",
+  "category": "Muscle research",
+  "description": "",
+  "price": 62.76
+ },
+ {
+  "name": "FOXO4-DRI",
+  "strength": "10 mg",
+  "category": "Longevity research",
+  "description": "",
+  "price": 58.04
+ },
+ {
+  "name": "GHK-Cu",
+  "strength": "100 mg",
+  "category": "Skin and hair research",
+  "description": "",
+  "price": 30.34
+ },
+ {
+  "name": "GHRP-2 Acetate",
+  "strength": "10 mg",
+  "category": "Growth hormone research",
+  "description": "",
+  "price": 24.52
+ },
+ {
+  "name": "Glutathione",
+  "strength": "1500 mg",
+  "category": "Longevity research",
+  "description": "",
+  "price": 77.0
+ },
+ {
+  "name": "HCG",
+  "strength": "10,000 IU",
+  "category": "Hormone research",
+  "description": ""
+ },
+ {
+  "name": "IGF-1 LR3",
+  "strength": "1 mg",
+  "category": "Growth hormone research",
+  "description": "",
+  "price": 39.1
+ },
+ {
+  "name": "Ipamorelin",
+  "strength": "10 mg",
+  "category": "Growth hormone research",
+  "description": "",
+  "price": 28.72
+ },
+ {
+  "name": "Kisspeptin-10",
+  "strength": "10 mg",
+  "category": "Hormone research",
+  "description": "",
+  "price": 36.18
+ },
+ {
+  "name": "KPV",
+  "strength": "10 mg",
+  "category": "Tissue repair research",
+  "description": "",
+  "price": 36.18
+ },
+ {
+  "name": "LL-37",
+  "strength": "10 mg",
+  "category": "Immune research",
+  "description": "",
+  "price": 25.98
+ },
+ {
+  "name": "Melanotan II",
+  "strength": "10 mg",
+  "category": "Skin and hair research",
+  "description": "",
+  "price": 25.98
+ },
+ {
+  "name": "MOTS-C",
+  "strength": "40 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 58.04
+ },
+ {
+  "name": "NAD+",
+  "strength": "500 mg",
+  "category": "Longevity research",
+  "description": "",
+  "price": 33.26
+ },
+ {
+  "name": "NAD+",
+  "strength": "1000 mg",
+  "category": "Longevity research",
+  "description": "",
+  "price": 44.34
+ },
+ {
+  "name": "Oxytocin Acetate",
+  "strength": "2 mg",
+  "category": "Hormone research",
+  "description": "",
+  "price": 14.68
+ },
+ {
+  "name": "Oxytocin Acetate",
+  "strength": "5 mg",
+  "category": "Hormone research",
+  "description": "",
+  "price": 18.26
+ },
+ {
+  "name": "PE-22-28",
+  "strength": "10 mg",
+  "category": "Cognitive research",
+  "description": "",
+  "price": 25.98
+ },
+ {
+  "name": "Pinealon",
+  "strength": "20 mg",
+  "category": "Cognitive research",
+  "description": "",
+  "price": 23.74
+ },
+ {
+  "name": "PNC-27",
+  "strength": "10 mg",
+  "category": "Other research",
+  "description": "",
+  "price": 26.56
+ },
+ {
+  "name": "Prostamax",
+  "strength": "20 mg",
+  "category": "Longevity research",
+  "description": "",
+  "price": 31.06
+ },
+ {
+  "name": "PT-141",
+  "strength": "10 mg",
+  "category": "Hormone research",
+  "description": "",
+  "price": 30.34
+ },
+ {
+  "name": "Retatrutide",
+  "strength": "10 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 35.94
+ },
+ {
+  "name": "Retatrutide",
+  "strength": "20 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 45.9
+ },
+ {
+  "name": "Retatrutide",
+  "strength": "30 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 56.56
+ },
+ {
+  "name": "Retatrutide",
+  "strength": "60 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 66.74
+ },
+ {
+  "name": "Selank",
+  "strength": "10 mg",
+  "category": "Cognitive research",
+  "description": "",
+  "price": 31.8
+ },
+ {
+  "name": "NA Selank Amidate",
+  "strength": "30 mg",
+  "category": "Cognitive research",
+  "description": "",
+  "price": 30.5
+ },
+ {
+  "name": "Semaglutide",
+  "strength": "5 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 18.68
+ },
+ {
+  "name": "Semaglutide",
+  "strength": "10 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 24.52
+ },
+ {
+  "name": "Semaglutide",
+  "strength": "20 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 33.26
+ },
+ {
+  "name": "Semax",
+  "strength": "10 mg",
+  "category": "Cognitive research",
+  "description": "",
+  "price": 21.6
+ },
+ {
+  "name": "Semax",
+  "strength": "30 mg",
+  "category": "Cognitive research",
+  "description": "",
+  "price": 34.72
+ },
+ {
+  "name": "NA Semax Amidate",
+  "strength": "10 mg",
+  "category": "Cognitive research",
+  "description": "",
+  "price": 19.92
+ },
+ {
+  "name": "Sermorelin Acetate",
+  "strength": "10 mg",
+  "category": "Growth hormone research",
+  "description": "",
+  "price": 33.62
+ },
+ {
+  "name": "SLU-PP-322",
+  "strength": "5 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 34.72
+ },
+ {
+  "name": "SS-31",
+  "strength": "50 mg",
+  "category": "Longevity research",
+  "description": "",
+  "price": 58.04
+ },
+ {
+  "name": "TB-500",
+  "strength": "10 mg",
+  "category": "Tissue repair research",
+  "description": "Thymosin beta-4 acetate.",
+  "price": 34.72
+ },
+ {
+  "name": "Tesamorelin",
+  "strength": "10 mg",
+  "category": "Growth hormone research",
+  "description": "",
+  "price": 38.5
+ },
+ {
+  "name": "Tesamorelin",
+  "strength": "20 mg",
+  "category": "Growth hormone research",
+  "description": "",
+  "price": 51.52
+ },
+ {
+  "name": "Tesamorelin + Ipamorelin (10 mg / 5 mg)",
+  "strength": "15 mg",
+  "category": "Blends",
+  "description": "",
+  "price": 47.3
+ },
+ {
+  "name": "Thymalin",
+  "strength": "10 mg",
+  "category": "Immune research",
+  "description": "",
+  "price": 21.8
+ },
+ {
+  "name": "Thymosin Alpha-1",
+  "strength": "10 mg",
+  "category": "Immune research",
+  "description": "",
+  "price": 33.26
+ },
+ {
+  "name": "Tirzepatide",
+  "strength": "10 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 24.52
+ },
+ {
+  "name": "Tirzepatide",
+  "strength": "30 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 47.84
+ },
+ {
+  "name": "Tirzepatide",
+  "strength": "60 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 81.88
+ },
+ {
+  "name": "Tirzepatide",
+  "strength": "100 mg",
+  "category": "Metabolic research",
+  "description": "",
+  "price": 142.96
+ },
+ {
+  "name": "VIP",
+  "strength": "5 mg",
+  "category": "Other research",
+  "description": "",
+  "price": 21.96
+ }
+]

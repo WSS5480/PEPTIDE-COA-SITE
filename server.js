@@ -1220,10 +1220,11 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
       let added = 0, updated = 0, sort = have.reduce((m, p) => Math.max(m, p.sort || 0), 0);
       for (const r of list) {
         const m = have.find((p) => p.name.toLowerCase() === r.name.toLowerCase() && sz(p.strength) === sz(r.strength) && !p.manufacturer);
+        const price = typeof r.price === "number" ? Math.round(r.price * 100) : null; // a price in the list sets the store price
         if (m) { await q(`update products set category = $1,
-            price_cents = case when description like 'Sample listing%' then null else price_cents end,
-            description = case when $2 <> '' then $2 when description like 'Sample listing%' then '' else description end where id = $3`, [r.category, r.description || "", m.id]); updated++; }
-        else { await q("insert into products(name, strength, category, description, sort) values ($1,$2,$3,$4,$5)", [r.name, r.strength, r.category, r.description || "", ++sort]); added++; }
+            price_cents = case when $4::int is not null then $4::int when description like 'Sample listing%' then null else price_cents end,
+            description = case when $2 <> '' then $2 when description like 'Sample listing%' then '' else description end where id = $3`, [r.category, r.description || "", m.id, price]); updated++; }
+        else { await q("insert into products(name, strength, category, description, sort, price_cents) values ($1,$2,$3,$4,$5,$6)", [r.name, r.strength, r.category, r.description || "", ++sort, price]); added++; }
       }
       await q("insert into settings(key,value) values ('catalogImportMark',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(importTag)]);
       console.log(`Catalog import (${importTag}): added ${added}, updated ${updated}`);
