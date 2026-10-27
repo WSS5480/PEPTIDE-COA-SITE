@@ -220,6 +220,18 @@ main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
 .line .amt { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
 .line .ctl { display: flex; align-items: center; gap: .6rem; }
 .linkbtn { padding: 0; background: none; border: 0; color: var(--ink-2); font-size: .82rem; text-decoration: underline; cursor: pointer; }
+/* checkout: ship or local delivery, discount code */
+.choicebox { margin: 0; padding: 0; border: 0; min-width: 0; }
+.choicebox legend { padding: 0; margin-bottom: .35rem; }
+.choices { display: grid; gap: .5rem; }
+.choice-opt { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .7rem; align-items: center; padding: .7rem .9rem; background: var(--card); border: 1px solid var(--line-strong); border-radius: 10px; cursor: pointer; }
+.choice-opt:has(input:checked) { border-color: var(--blue); background: var(--blue-wash); box-shadow: inset 0 0 0 1px var(--blue); }
+.choice-opt input { width: 1.1rem; height: 1.1rem; margin: 0; accent-color: var(--blue); }
+.choice-opt strong { display: block; font-weight: 600; } .choice-opt small { display: block; color: var(--ink-2); font-size: .8rem; }
+.choice-opt .amt { font-weight: 700; white-space: nowrap; }
+.coderow { display: flex; gap: .5rem; } .coderow input { flex: 1; text-transform: uppercase; } .coderow .btn { height: 3.1rem; flex: none; }
+.coderow input::placeholder { text-transform: none; }
+.totals .off { color: var(--pass); }
 .totals { display: grid; gap: .3rem; font-variant-numeric: tabular-nums; }
 .totals div { display: flex; justify-content: space-between; }
 .totals .big { font-size: 1.15rem; font-weight: 700; }

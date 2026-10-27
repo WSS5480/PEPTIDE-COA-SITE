@@ -125,7 +125,7 @@ async function customers(editId) {
 
 /* ---------- new order ---------- */
 async function neworder() {
-  const [{ customers: list }, { products, shipping }] = await Promise.all([api("/customers"), api("/catalog")]);
+  const [{ customers: list }, { products, fulfillment: ful, cardPayments }] = await Promise.all([api("/customers"), api("/catalog")]);
   const sellable = products.filter((p) => p.price_cents !== null && (p.stock === null || p.stock > 0));
   const label = (p) => `${p.name} ${p.strength}`.trim() + (p.manufacturer ? ` · ${p.manufacturer}` : "");
   pane().innerHTML = `<header><h1>New order</h1></header>
@@ -138,22 +138,42 @@ async function neworder() {
       <div class="lines" id="oLines">${sellable.map((p) => `<div class="line2" data-pid="${p.id}" data-txt="${esc(label(p).toLowerCase())}"><div class="nm">${esc(label(p))}<small>${money(p.price_cents)} each${p.stock !== null ? ` · ${p.stock} in stock` : ""}${p.max_per_order ? ` · max ${p.max_per_order}` : ""}</small></div>
         <input data-qty inputmode="numeric" placeholder="0" max="${p.max_per_order || 999}"><div class="amt" data-amt></div></div>`).join("")}</div>
       ${sellable.length ? "" : '<p class="muted">No products have a price yet.</p>'}</div>
-    <div class="panel"><h2>3. Shipping &amp; notes</h2>
-      ${shipping.length ? `<div class="field"><label class="eyebrow" for="oShip">Shipping</label><select id="oShip">${shipping.map((m) => `<option value="${m.id}">${esc(m.name)}${m.detail ? " · " + esc(m.detail) : ""} · ${m.price_cents ? money(m.price_cents) : "Free"}${m.free_over_cents !== null ? ` (free over ${money(m.free_over_cents)})` : ""}</option>`).join("")}</select></div>` : '<p class="muted">Shipping is confirmed by the office.</p>'}
+    <div class="panel"><h2>3. Ship or deliver, discount, notes</h2>
+      ${ful.length ? `<div class="choices" id="oFul">${ful.map((f, i) => `<label class="choice-opt"><input type="radio" name="oFul" value="${esc(f.key)}"${i === 0 ? " checked" : ""}><span><strong>${esc(f.label)}</strong>${f.note || f.freeOverCents ? `<small>${esc(f.note)}${f.freeOverCents ? `${f.note ? " · " : ""}Free over ${money(f.freeOverCents)}` : ""}</small>` : ""}</span><span class="amt" data-fulamt="${esc(f.key)}">${f.cents ? money(f.cents) : "Free"}</span></label>`).join("")}</div>` : '<p class="muted">Shipping is confirmed by the office.</p>'}
+      <div class="field"><label class="eyebrow" for="oCode">Discount code (optional)</label><div class="coderow"><input id="oCode" autocomplete="off" autocapitalize="characters" placeholder="Enter a code" style="height:2.6rem"><button class="btn" type="button" id="oCodeApply" style="height:2.6rem">Apply</button></div><span class="muted" id="oCodeMsg"></span></div>
+      ${cardPayments ? `<label class="chk" style="display:flex;gap:.5rem;align-items:center"><input type="checkbox" id="oPayLink" checked> Get a card payment link to send the customer</label>` : ""}
       <div class="field"><label class="eyebrow" for="oNote">Note for the office (optional)</label><textarea id="oNote" maxlength="1000"></textarea></div></div>
     <div class="sticky-total"><div><strong id="oSub">$0.00</strong> <span class="muted" id="oCount">0 items</span></div><div class="err" id="oErr" hidden style="flex:1 1 100%"></div><button class="btn solid rep" id="oGo" style="height:2.8rem">Place order</button></div>
     <div id="oDone"></div>`}`;
   if (!list.length) return;
   pick = null;
-  const addr = () => { const c = list.find((x) => String(x.id) === $("oCust").value); const a = c && c.address || {}; $("oAddr").textContent = c ? (a.line1 ? `Ships to ${[a.line1, a.line2, a.city, a.state, a.zip].filter(Boolean).join(", ")}` : "This customer has no address yet. Add it under Customers first.") : ""; };
+  let code = null; // applied discount code { code, kind, value, minSubtotalCents }
+  const addr = () => { const c = list.find((x) => String(x.id) === $("oCust").value); const a = c && c.address || {}; $("oAddr").textContent = c ? (a.line1 ? `Ships or delivers to ${[a.line1, a.line2, a.city, a.state, a.zip].filter(Boolean).join(", ")}` : "This customer has no address yet. Add it under Customers first.") : ""; };
+  const chosen = () => ful.find((f) => f.key === (document.querySelector("#oFul input:checked") || {}).value) || ful[0] || null;
+  const shipCost = (f, sub) => (!f ? 0 : f.freeOverCents > 0 && sub >= f.freeOverCents ? 0 : f.cents);
   const total = () => {
     let sub = 0, n = 0;
     document.querySelectorAll("#oLines [data-pid]").forEach((row) => { const p = sellable.find((x) => String(x.id) === row.dataset.pid); const q = parseInt(row.querySelector("[data-qty]").value) || 0; row.querySelector("[data-amt]").textContent = q ? money(p.price_cents * q) : ""; sub += q * p.price_cents; n += q; });
-    $("oSub").textContent = money(sub); $("oCount").textContent = `${n} item${n === 1 ? "" : "s"}`;
+    ful.forEach((f) => { const el = document.querySelector(`[data-fulamt="${f.key}"]`); if (el) el.textContent = shipCost(f, sub) ? money(shipCost(f, sub)) : "Free"; });
+    const off = !code || !sub || (code.minSubtotalCents && sub < code.minSubtotalCents) ? 0 : Math.max(0, Math.min(sub, code.kind === "percent" ? Math.round(sub * code.value / 100) : code.value));
+    const sc = shipCost(chosen(), sub);
+    $("oSub").textContent = money(sub - off + sc); $("oCount").textContent = `${n} item${n === 1 ? "" : "s"}${off ? ` · −${money(off)} ${code.code}` : ""}${sc ? ` · +${money(sc)} ${chosen().label}` : ""}`;
+  };
+  $("oCodeApply").onclick = async () => {
+    const c = $("oCode").value.trim().toUpperCase(); $("oCodeMsg").textContent = "";
+    if (!c) { code = null; total(); return; }
+    let sub = 0; document.querySelectorAll("#oLines [data-pid]").forEach((row) => { const p = sellable.find((x) => String(x.id) === row.dataset.pid); sub += (parseInt(row.querySelector("[data-qty]").value) || 0) * p.price_cents; });
+    try {
+      const r = await fetch("/api/discount", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: c, subtotalCents: sub }) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || "That code didn't work.");
+      code = { code: j.code, kind: j.kind, value: j.value, minSubtotalCents: j.minSubtotalCents || 0 }; $("oCode").value = j.code; $("oCodeMsg").textContent = `${j.label} applied.`;
+    } catch (e) { code = null; $("oCodeMsg").textContent = e.message; }
+    total();
   };
   addr(); $("oCust").onchange = addr;
   $("oq").oninput = () => { const t = $("oq").value.toLowerCase(); document.querySelectorAll("#oLines [data-pid]").forEach((r) => { r.hidden = t && !r.dataset.txt.includes(t) && !r.querySelector("[data-qty]").value; }); };
   pane().oninput = (e) => { if (e.target.matches("[data-qty]")) total(); };
+  pane().onchange = (e) => { if (e.target.matches("#oFul input")) total(); };
   $("oGo").onclick = async () => {
     const items = [...document.querySelectorAll("#oLines [data-pid]")].map((r) => ({ id: +r.dataset.pid, qty: parseInt(r.querySelector("[data-qty]").value) || 0 })).filter((i) => i.qty > 0);
     $("oErr").hidden = true;
@@ -161,11 +181,14 @@ async function neworder() {
     if (!items.length) { $("oErr").textContent = "Enter a quantity for at least one product."; $("oErr").hidden = false; return; }
     $("oGo").disabled = true;
     try {
-      const r = await api("/orders", { method: "POST", body: { customerId: +$("oCust").value, items, shippingMethodId: $("oShip") ? +$("oShip").value : null, note: $("oNote").value } });
+      const f = chosen();
+      const r = await api("/orders", { method: "POST", body: { customerId: +$("oCust").value, items, fulfillment: f ? f.key : "ship", discountCode: code ? code.code : "", payLink: !!($("oPayLink") && $("oPayLink").checked), note: $("oNote").value } });
       paneDirty = false;
-      $("oDone").innerHTML = `<div class="okbox"><span class="eyebrow">Order placed</span><span class="num" style="font:600 1.4rem/1 var(--mono)">${esc(r.number)}</span><span>Total ${money(r.totalCents)} (products ${money(r.subtotalCents)}${r.shippingCents ? `, shipping ${money(r.shippingCents)}` : ""})</span>
-        <span class="muted">The office will confirm it with the customer and collect payment. Your commission shows as pending until the order is paid.</span>
+      $("oDone").innerHTML = `<div class="okbox"><span class="eyebrow">Order placed</span><span class="num" style="font:600 1.4rem/1 var(--mono)">${esc(r.number)}</span><span>Total ${money(r.totalCents)} (products ${money(r.subtotalCents)}${r.discountCents ? `, discount −${money(r.discountCents)}` : ""}${r.shippingCents ? `, ${esc(r.shippingName || "shipping")} ${money(r.shippingCents)}` : r.shippingName ? `, ${esc(r.shippingName)} free` : ""})</span>
+        ${r.payUrl ? `<span><strong>Card payment link</strong> (send it to the customer; the order marks itself paid when they pay):<br><a href="${esc(r.payUrl)}" target="_blank" rel="noopener" style="word-break:break-all">${esc(r.payUrl)}</a></span><div class="row2"><button class="btn" type="button" data-copy="${esc(r.payUrl)}">Copy link</button><a class="btn" href="sms:?&body=${encodeURIComponent(`Here's the secure card payment link for your order ${r.number}: ${r.payUrl}`)}">Text it</a><a class="btn" href="mailto:?subject=${encodeURIComponent("Payment link for order " + r.number)}&body=${encodeURIComponent(`Here's the secure card payment link for your order ${r.number}: ${r.payUrl}`)}">Email it</a></div>` : ""}
+        <span class="muted">${r.payUrl ? "Until the customer pays, the order stays pending." : "The office will confirm it with the customer and collect payment."} Your commission shows as pending until the order is paid.</span>
         <div class="row2"><button class="btn solid rep" data-nav="orders">See my orders</button><button class="btn" data-nav="neworder">Another order</button></div></div>`;
+      const cp = $("oDone").querySelector("[data-copy]"); if (cp) cp.onclick = () => navigator.clipboard?.writeText(cp.dataset.copy).then(() => toast("Link copied"), () => toast("Copy failed"));
       $("oDone").scrollIntoView({ behavior: "smooth" });
       document.querySelectorAll("#oLines [data-qty]").forEach((i) => { i.value = ""; }); total();
     } catch (e) { $("oErr").textContent = e.message; $("oErr").hidden = false; }
@@ -183,7 +206,7 @@ async function orders() {
     const t = ($("oq2").value || "").toLowerCase(), st = $("of2").value;
     const rows = list.filter((o) => (!st || o.status === st) && (!t || [o.number, o.name, ...(o.items || []).map((i) => i.name)].join(" ").toLowerCase().includes(t)));
     $("oList").innerHTML = rows.length ? rows.map((o) => `<div class="item" style="cursor:default"><div class="top2"><span>Order ${esc(o.number)} · ${esc(o.name)}</span><span>${money(o.total_cents)}</span></div>
-      <small>${when(o.created_at)} · ${pill(o.status)}${o.tracking ? ` · ${esc(o.carrier || "Tracking")} <span class="mono">${esc(o.tracking)}</span>` : ""}${o.placed_by && !o.placed_by.startsWith("Rep") ? " · placed by the customer" : ""}</small>
+      <small>${when(o.created_at)} · ${pill(o.status)}${o.shipping_method ? ` · ${esc(o.shipping_method)}` : ""}${o.paid_at ? " · paid by card" : o.pay_method === "card" ? " · card payment pending" : ""}${o.discount_code ? ` · code ${esc(o.discount_code)}` : ""}${o.tracking ? ` · ${esc(o.carrier || "Tracking")} <span class="mono">${esc(o.tracking)}</span>` : ""}${o.placed_by && !o.placed_by.startsWith("Rep") ? " · placed by the customer" : ""}</small>
       <small>${(o.items || []).map((i) => `${i.qty} × ${esc(i.name)} ${esc(i.strength)}`).join(", ")}</small></div>`).join("")
       : `<p class="muted">${list.length ? "No order matches." : "No orders yet."}</p>`;
   };

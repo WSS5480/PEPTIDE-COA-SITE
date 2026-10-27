@@ -52,7 +52,7 @@ function drawLogin(msg) {
 }
 
 /* ---------- shell ---------- */
-const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Customers"], ["reps", "Sales reps", true], ["commissions", "Commissions", true], ["products", "Products & prices"], ["inventory", "Inventory"], ["reports", "Lab reports"], ["shipping", "Shipping"], ["page", "Page setup"], ["settings", "Site settings"], ["staff", "Staff logins", true], ["account", "My account"]];
+const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Customers"], ["reps", "Sales reps", true], ["commissions", "Commissions", true], ["products", "Products & prices"], ["inventory", "Inventory"], ["reports", "Lab reports"], ["discounts", "Discount codes", true], ["page", "Page setup"], ["settings", "Site settings"], ["staff", "Staff logins", true], ["account", "My account"]];
 function shell() {
   app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><span><button type="button" data-refresh title="Refresh"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button> <button type="button" id="mm">Menu</button></span></div>
   <div class="adm" id="adm"><aside class="side">
@@ -63,7 +63,7 @@ function shell() {
   document.getElementById("lo").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };
   fetch("/api/build").then((r) => r.json()).then((b) => { document.getElementById("buildLine").textContent = `v${b.version} · updated ${when(b.updated)}`; }).catch(() => {});
   document.getElementById("mm").onclick = () => document.getElementById("adm").classList.toggle("menu");
-  go(view);
+  go(view, orderId);
 }
 async function drawNav() {
   try { stats = await api("/stats"); } catch (e) { return; }
@@ -79,7 +79,7 @@ function go(v, id, opts = {}) {
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  ({ dashboard, orders, customers, reps, commissions, products, inventory, reports, shipping, page, settings, staff, account }[v] || dashboard)();
+  ({ dashboard, orders, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account }[v] || dashboard)();
   if (!opts.keepScroll) window.scrollTo(0, 0);
 }
 const pane = () => document.getElementById("pane");
@@ -105,7 +105,7 @@ async function dashboard() {
     <div id="linkCheck"></div>
     ${s.unpriced ? `<div class="panel"><strong>${s.unpriced} product${s.unpriced === 1 ? " has" : "s have"} no price.</strong><span class="muted">They show "Ask for price" and can't be added to the cart.</span><div><button class="btn" data-nav="products">Set prices</button></div></div>` : ""}
     ${s.lowStock.length ? `<div class="panel"><h2>Low stock</h2><div class="tblwrap"><table class="tbl"><tr><th>Product</th><th class="num">Left</th><th class="num">Reorder at</th></tr>${s.lowStock.map((p) => `<tr><td>${esc(p.name)} ${esc(p.strength)}${p.manufacturer ? ` · ${esc(p.manufacturer)}` : ""}</td><td class="num">${p.stock}</td><td class="num">${p.reorder_at}</td></tr>`).join("")}</table></div><div><button class="btn" data-nav="inventory">Open inventory</button></div></div>` : ""}
-    <div class="panel"><h2>How orders flow</h2><p class="muted">New → Confirmed (you've sent the total and payment info) → Paid → Shipped (add carrier and tracking) → Delivered. Cancelling puts the stock back.</p></div>`;
+    <div class="panel"><h2>How orders flow</h2><p class="muted">New → Confirmed (you've sent the total and payment info) → Paid → Shipped (add carrier and tracking) or Delivered. Orders paid by card through Stripe arrive already <em>paid</em>. Cancelling puts the stock back. Every order is also emailed to the address under Site settings → Order emails.</p></div>`;
 }
 
 /* ---------- orders ---------- */
@@ -119,38 +119,51 @@ async function orders() {
   const load = async () => {
     const qs = new URLSearchParams(oFilter).toString();
     const { orders: list } = await api("/orders?" + qs);
-    document.getElementById("ot").innerHTML = list.length ? `<table class="tbl"><tr><th>Order</th><th>Placed</th><th>Customer</th><th>Rep</th><th class="num">Items</th><th class="num">Total</th><th>Status</th><th>Tracking</th></tr>
-      ${list.map((o) => `<tr class="click" data-order="${o.id}"><td class="mono">${esc(o.number)}</td><td>${when(o.created_at)}</td><td>${esc(o.name)}<br><span class="muted">${esc(o.email)}</span></td><td>${esc(o.rep_name || "")}${o.placed_by && o.placed_by.startsWith("Rep") ? '<div class="muted" style="font-size:.72rem">placed by rep</div>' : ""}</td><td class="num">${o.items}</td><td class="num">${money(o.total_cents)}</td><td>${pill(o.status)}</td><td class="mono">${esc(o.tracking)}</td></tr>`).join("")}</table>` : `<p class="muted">No orders${oFilter.status || oFilter.q ? " match" : " yet"}.</p>`;
+    const payTxt = (o) => (o.paid_at ? '<span class="pill st-paid">card paid</span>' : o.pay_method === "card" ? '<span class="pill st-new">card pending</span>' : '<span class="muted">request</span>');
+    document.getElementById("ot").innerHTML = list.length ? `<table class="tbl"><tr><th>Order</th><th>Placed</th><th>Customer</th><th>Rep</th><th class="num">Items</th><th class="num">Total</th><th>Get it</th><th>Payment</th><th>Status</th><th>Tracking</th></tr>
+      ${list.map((o) => `<tr class="click" data-order="${o.id}"><td class="mono">${esc(o.number)}</td><td>${when(o.created_at)}</td><td>${esc(o.name)}<br><span class="muted">${esc(o.email)}</span></td><td>${esc(o.rep_name || "")}${o.placed_by && o.placed_by.startsWith("Rep") ? '<div class="muted" style="font-size:.72rem">placed by rep</div>' : ""}</td><td class="num">${o.items}</td><td class="num">${money(o.total_cents)}${o.discount_code ? `<div class="muted" style="font-size:.72rem">code ${esc(o.discount_code)}</div>` : ""}</td><td>${o.fulfillment === "delivery" ? "Delivery" : "Ship"}</td><td>${payTxt(o)}</td><td>${pill(o.status)}</td><td class="mono">${esc(o.tracking)}</td></tr>`).join("")}</table>` : `<p class="muted">No orders${oFilter.status || oFilter.q ? " match" : " yet"}.</p>`;
   };
   document.getElementById("of").onchange = (e) => { oFilter.status = e.target.value; load(); };
   let t; document.getElementById("oq").oninput = (e) => { clearTimeout(t); t = setTimeout(() => { oFilter.q = e.target.value; load(); }, 250); };
   load();
 }
 async function orderDetail(id) {
-  const { order: o, items, events, reps: repOpts } = await api("/orders/" + id);
+  const { order: o, items, events, reps: repOpts, fedexAccount, stripe: st } = await api("/orders/" + id);
   const comm = o.rep_id && o.commission_rate !== null ? Math.round((o.subtotal_cents - o.discount_cents) * o.commission_rate / 100) : 0;
   const a = o.address || {};
   const addr = [a.line1, a.line2, `${a.city || ""}, ${a.state || ""} ${a.zip || ""}`].filter((x) => x && x.trim() !== ",").map(esc).join("<br>");
+  const delivery = o.fulfillment === "delivery";
+  const unpaid = !o.paid_at && o.status !== "cancelled";
+  const stripeLink = o.stripe_pi ? `https://dashboard.stripe.com/${st && st.mode === "test" ? "test/" : ""}payments/${encodeURIComponent(o.stripe_pi)}` : "";
   pane().innerHTML = `<header><h1>Order ${esc(o.number)}</h1><button class="btn" data-nav="orders">← All orders</button></header>
   <div class="two">
     <div class="stack">
       <div class="panel"><h2>Items</h2><div class="tblwrap"><table class="tbl"><tr><th>Product</th><th class="num">Qty</th><th class="num">Each</th><th class="num">Line</th></tr>
         ${items.map((i) => `<tr><td class="namecol">${esc(i.name)} ${esc(i.strength)}</td><td class="num">${i.qty}</td><td class="num">${money(i.unit_cents)}</td><td class="num">${money(i.unit_cents * i.qty)}</td></tr>`).join("")}
         <tr><td colspan="3">Subtotal</td><td class="num">${money(o.subtotal_cents)}</td></tr>
-        <tr><td colspan="3">Discount</td><td class="num">${isOwner() ? `<input id="odisc" value="${dollars(o.discount_cents)}" inputmode="decimal" style="max-width:7rem;margin-left:auto">` : money(o.discount_cents)}</td></tr>
-        <tr><td colspan="3">Shipping${o.shipping_method ? ` (${esc(o.shipping_method)})` : ""}</td><td class="num">${isOwner() ? `<input id="oship" value="${dollars(o.shipping_cents)}" inputmode="decimal" style="max-width:7rem;margin-left:auto">` : money(o.shipping_cents)}</td></tr>
+        <tr><td colspan="3">Discount${o.discount_code ? ` (code <span class="mono">${esc(o.discount_code)}</span>)` : ""}</td><td class="num">${isOwner() ? `<input id="odisc" value="${dollars(o.discount_cents)}" inputmode="decimal" style="max-width:7rem;margin-left:auto">` : money(o.discount_cents)}</td></tr>
+        <tr><td colspan="3">${esc(o.shipping_method || (delivery ? "Local delivery" : "Shipping"))}</td><td class="num">${isOwner() ? `<input id="oship" value="${dollars(o.shipping_cents)}" inputmode="decimal" style="max-width:7rem;margin-left:auto">` : money(o.shipping_cents)}</td></tr>
         <tr><td colspan="3"><strong>Total</strong></td><td class="num"><strong>${money(o.total_cents)}</strong></td></tr></table></div>
-        ${isOwner() ? `<div><button class="btn" id="saveMoney">Update charges</button></div>` : ""}</div>
+        ${isOwner() ? `<div><button class="btn" id="saveMoney"${o.paid_at ? ' title="Already paid: changing charges will not change what was collected"' : ""}>Update charges</button></div>` : ""}</div>
+      <div class="panel"><h2>Payment</h2>
+        ${o.paid_at ? `<p><span class="pill st-paid">paid</span> ${money(o.paid_cents ?? o.total_cents)} ${o.pay_method === "card" ? "by card through Stripe" : ""} on ${when(o.paid_at)}${stripeLink ? ` · <a href="${stripeLink}" target="_blank" rel="noopener">Open in Stripe ↗</a>` : ""}</p>`
+          : o.pay_method === "card" ? `<p><span class="pill st-new">card pending</span> The customer went to the card payment page but hasn't finished. Send them the link below, or wait.</p>`
+          : `<p>Order request: no payment taken yet. Confirm the total with the customer and collect payment${st && st.on ? ", or send a card payment link" : ""}.</p>`}
+        ${unpaid && st && st.ready ? `<div class="row2"><button class="btn" id="payLink">Create card payment link</button><span class="muted" style="align-self:center">${st.on ? "" : "Card payments are off for customers; links you create still work."}</span></div><div id="payLinkOut"></div>` : ""}
+        ${!st || !st.ready ? `<p class="muted">Card payments aren't set up: add the Stripe key on the host (see Site settings → Payments).</p>` : ""}
+        <div class="row2"><button class="btn" id="resendMail">Send order email again</button></div></div>
       <div class="panel"><h2>Customer</h2>
         <p><strong>${esc(o.name)}</strong><br><a href="mailto:${esc(o.email)}?subject=${encodeURIComponent("Your order " + o.number)}">${esc(o.email)}</a>${o.phone ? `<br><a href="tel:${esc(o.phone)}">${esc(o.phone)}</a>` : ""}</p>
-        <p>${addr}</p>
+        <p class="eyebrow">${delivery ? "Deliver to" : "Ship to"}</p><p>${addr}</p>
         ${o.customer_note ? `<p class="muted"><strong>Customer note:</strong> ${esc(o.customer_note)}</p>` : ""}
-        <div class="row2"><button class="btn" id="copyAddr">Copy shipping label address</button></div></div>
+        <div class="row2"><button class="btn" id="copyAddr">Copy ${delivery ? "delivery" : "shipping label"} address</button></div></div>
     </div>
     <div class="stack">
       <div class="panel"><h2>Status &amp; delivery</h2>
-        <div class="field"><label class="eyebrow" for="ost">Status</label><select id="ost">${STATUSES.map((s) => `<option${s === o.status ? " selected" : ""}>${s}</option>`).join("")}</select></div>
-        <div class="field"><label class="eyebrow" for="ocar">Carrier</label><input id="ocar" list="carriers" value="${esc(o.carrier)}"><datalist id="carriers"><option>USPS</option><option>UPS</option><option>FedEx</option><option>DHL</option></datalist></div>
+        <div class="grid2"><div class="field"><label class="eyebrow" for="ost">Status</label><select id="ost">${STATUSES.map((s) => `<option${s === o.status ? " selected" : ""}>${s}</option>`).join("")}</select></div>
+        <div class="field"><label class="eyebrow" for="oful">Ship or deliver</label><select id="oful"><option value="ship"${!delivery ? " selected" : ""}>Ship</option><option value="delivery"${delivery ? " selected" : ""}>Local delivery (free)</option></select></div></div>
+        ${!delivery && fedexAccount ? `<p class="muted">FedEx account <span class="mono">${esc(fedexAccount)}</span> <button class="linkbtn" type="button" id="copyFedex">copy</button> — use it when you make the label.</p>` : ""}
+        <div class="field"><label class="eyebrow" for="ocar">Carrier</label><input id="ocar" list="carriers" value="${esc(o.carrier || (!delivery && fedexAccount ? "FedEx" : ""))}"><datalist id="carriers"><option>FedEx</option><option>USPS</option><option>UPS</option><option>DHL</option><option>Hand delivered</option></datalist></div>
         <div class="field"><label class="eyebrow" for="otr">Tracking number</label><input id="otr" value="${esc(o.tracking)}"></div>
         <div class="field"><label class="eyebrow" for="oin">Internal note (staff only)</label><textarea id="oin">${esc(o.internal_note)}</textarea></div>
         <button class="btn solid" id="saveO">Save</button>
@@ -167,10 +180,23 @@ async function orderDetail(id) {
   </div>`;
   const $ = (x) => document.getElementById(x);
   $("saveO").onclick = async () => {
-    if ($("ost").value === "shipped" && !$("otr").value.trim() && !confirm("Mark shipped without a tracking number?")) return;
-    await api("/orders/" + id, { method: "PATCH", body: { status: $("ost").value, carrier: $("ocar").value, tracking: $("otr").value, internalNote: $("oin").value } });
+    if ($("ost").value === "shipped" && $("oful").value === "ship" && !$("otr").value.trim() && !confirm("Mark shipped without a tracking number?")) return;
+    await api("/orders/" + id, { method: "PATCH", body: { status: $("ost").value, fulfillment: $("oful").value, carrier: $("ocar").value, tracking: $("otr").value, internalNote: $("oin").value } });
     toast("Saved"); orderDetail(id); drawNav();
   };
+  if ($("copyFedex")) $("copyFedex").onclick = () => navigator.clipboard?.writeText(fedexAccount).then(() => toast("FedEx account copied"), () => toast("Copy failed"));
+  if ($("payLink")) $("payLink").onclick = async () => {
+    $("payLink").disabled = true;
+    try {
+      const r = await api(`/orders/${id}/paylink`, { method: "POST" });
+      const msg = `Here's the secure card payment link for your order ${o.number}: ${r.url}`;
+      $("payLinkOut").innerHTML = `<p><a href="${esc(r.url)}" target="_blank" rel="noopener" style="word-break:break-all">${esc(r.url)}</a></p>
+        <div class="row2"><button class="btn" id="copyPay">Copy link</button><a class="btn" style="display:inline-grid;place-items:center;text-decoration:none" href="mailto:${esc(o.email)}?subject=${encodeURIComponent("Payment link for order " + o.number)}&body=${encodeURIComponent(msg)}">Email it to ${esc(o.email)}</a>${o.phone ? `<a class="btn" style="display:inline-grid;place-items:center;text-decoration:none" href="sms:${esc(o.phone)}?&body=${encodeURIComponent(msg)}">Text it</a>` : ""}</div>
+        <p class="muted">The link works for 24 hours. When the customer pays, the order marks itself paid.</p>`;
+      $("copyPay").onclick = () => navigator.clipboard?.writeText(r.url).then(() => toast("Link copied"), () => toast("Copy failed"));
+    } finally { $("payLink").disabled = false; }
+  };
+  $("resendMail").onclick = async () => { $("resendMail").disabled = true; try { const r = await api(`/orders/${id}/email`, { method: "POST" }); toast(`Sent ${r.sent} email${r.sent === 1 ? "" : "s"}`); } finally { $("resendMail").disabled = false; } };
   if ($("saveMoney")) $("saveMoney").onclick = async () => {
     await api("/orders/" + id, { method: "PATCH", body: { shippingCents: Math.round(parseFloat($("oship").value || 0) * 100), discountCents: Math.round(parseFloat($("odisc").value || 0) * 100) } });
     toast("Charges updated"); orderDetail(id);
@@ -390,14 +416,15 @@ async function commissions() {
 async function products() {
   const [{ products: list }, { reports: reps }] = await Promise.all([api("/products"), api("/reports")]);
   const repFor = (p) => reps.filter((r) => r.active && reportMatches(p, r));
-  const COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"], ["report", "Lab report"], ["docs", "Docs"]];
-  const NUM = new Set(["price", "stock", "maxPerOrder", "sort"]);
+  const COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["cost", "Cost $"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"], ["report", "Lab report"], ["docs", "Docs"]];
+  const NUM = new Set(["cost", "price", "stock", "maxPerOrder", "sort"]);
   const inp = (k, v, ph = "", extra = "") => `<input data-k="${k}" value="${esc(v)}" placeholder="${ph}"${extra}${ro()}>`;
   const row = (p) => `<tr data-id="${p ? p.id : ""}"${p ? "" : ' class="dirty"'}>
     <td>${inp("name", p?.name, "Name", ' style="min-width:16rem"')}</td>
     <td>${inp("strength", p?.strength, "10 mg", ' style="min-width:4.5rem"')}</td>
     <td>${inp("category", p?.category ?? "Research peptide", "Category", ' list="catlist" style="min-width:9rem"')}</td>
     <td>${inp("manufacturer", p?.manufacturer, "e.g. XINT", ' list="mfrlist" style="min-width:7rem"')}</td>
+    <td>${inp("cost", dollars(p?.cost_cents), "—", ' inputmode="decimal" style="min-width:4.5rem" title="Our cost per vial (staff never see it on the store)"')}</td>
     <td>${inp("price", dollars(p?.price_cents), "Ask", ' inputmode="decimal" style="min-width:5rem"')}</td>
     <td>${inp("stock", p?.stock ?? "", "∞", ' inputmode="numeric" style="min-width:4rem"')}</td>
     <td>${inp("maxPerOrder", p?.max_per_order ?? "", "—", ' inputmode="numeric" style="min-width:4rem"')}</td>
@@ -410,10 +437,19 @@ async function products() {
   </tr>`;
   const cats = [...new Set(list.map((p) => p.category).filter(Boolean))];
   const saveBar = isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" data-saveall disabled>Save all changes</button><span class="muted" data-dirtycount></span></div>` : "";
+  const savedMk = localStorage.getItem("markup") || "100";
+  const markupBar = isOwner() ? `<div class="panel" style="gap:.6rem"><div class="row2" style="align-items:center">
+      <strong>Markup from cost:</strong>
+      <select id="mkSel" style="height:2.4rem;padding:0 .6rem;border:1px solid var(--line-strong);border-radius:8px;font:inherit;background:var(--card)">${["50", "75", "100", "150"].map((m) => `<option value="${m}"${savedMk === m ? " selected" : ""}>+${m}%</option>`).join("")}<option value="custom"${!["50", "75", "100", "150"].includes(savedMk) ? " selected" : ""}>Enter new…</option></select>
+      <span id="mkCustomWrap"${["50", "75", "100", "150"].includes(savedMk) ? " hidden" : ""}><input id="mkCustom" inputmode="decimal" value="${["50", "75", "100", "150"].includes(savedMk) ? "" : esc(savedMk)}" placeholder="e.g. 125" style="width:5.5rem;height:2.4rem;padding:0 .6rem;border:1px solid var(--line-strong);border-radius:8px;font:inherit"> %</span>
+      <label class="chk"><input type="checkbox" id="mkRound"${localStorage.getItem("markupRound") === "1" ? " checked" : ""}> Round to whole dollars</label>
+      <button class="btn" id="mkApply">Set all prices from cost</button><span class="muted" id="mkNote"></span></div>
+      <span class="muted">Price = cost + markup (a $20 cost at +100% is $40). Only products with a cost change; the new prices show in the table until you click Save all changes. Costs come from the cost sheet, the Cost column or Inventory → Receive.</span></div>` : "";
   pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>${list.length ? `<button class="btn danger" id="clrP">Remove all products</button>` : ""}` : ""}</div></header>
     <div id="impBox"></div><div id="manageBox"></div>
-    <p class="muted">Click a column name to sort. Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). Untick Active to hide a product. A lab report attaches to a product when the peptide name, size and manufacturer match.</p>
+    <p class="muted">Click a column name to sort. Cost = what you pay per vial (never shown on the store). Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). Untick Active to hide a product. A lab report attaches to a product when the peptide name, size and manufacturer match.</p>
     ${(() => { const n = list.filter((p) => p.active && !repFor(p).length).length; return n ? `<p class="muted"><strong>${n} active product${n === 1 ? " has" : "s have"} no lab report.</strong> Sort by the Lab report column to see them.</p>` : ""; })()}
+    ${markupBar}
     ${saveBar}
     <datalist id="catlist">${cats.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
     <datalist id="mfrlist">${[...new Set(list.map((p) => p.manufacturer).filter(Boolean))].map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
@@ -460,6 +496,27 @@ async function products() {
     if (!fail) products();
   };
   document.querySelectorAll("[data-saveall]").forEach((b) => (b.onclick = saveAll));
+  if (document.getElementById("mkApply")) {
+    const sel = document.getElementById("mkSel"), custom = document.getElementById("mkCustom");
+    sel.onchange = () => { document.getElementById("mkCustomWrap").hidden = sel.value !== "custom"; if (sel.value === "custom") custom.focus(); };
+    document.getElementById("mkApply").onclick = () => {
+      const pct = sel.value === "custom" ? parseFloat(custom.value) : parseFloat(sel.value);
+      if (!Number.isFinite(pct) || pct < 0) return toast("Enter the markup as a number, like 125");
+      const round = document.getElementById("mkRound").checked;
+      localStorage.setItem("markup", sel.value === "custom" ? String(pct) : sel.value); localStorage.setItem("markupRound", round ? "1" : "0");
+      let set = 0, noCost = 0;
+      pb.querySelectorAll("tr").forEach((tr) => {
+        const cost = parseFloat(String(tr.querySelector('[data-k="cost"]').value).replace(/[$,]/g, ""));
+        if (!Number.isFinite(cost) || cost <= 0) { noCost++; return; }
+        const price = cost * (1 + pct / 100);
+        tr.querySelector('[data-k="price"]').value = round ? String(Math.round(price)) : price.toFixed(2);
+        set++;
+      });
+      refresh();
+      document.getElementById("mkNote").textContent = set ? `${set} price${set === 1 ? "" : "s"} set at +${pct}%${noCost ? ` · ${noCost} without a cost left alone` : ""}. Click Save all changes to keep them.` : "No product has a cost yet. Enter costs in the Cost column first.";
+      if (set) toast(`${set} prices set, not saved yet`);
+    };
+  }
   if (document.getElementById("impP")) document.getElementById("impP").onclick = () => importBox(list);
   if (document.getElementById("addP")) document.getElementById("addP").onclick = () => { pb.insertAdjacentHTML("afterbegin", row(null)); refresh(); pb.querySelector("tr input").focus(); };
   if (document.getElementById("clrP")) document.getElementById("clrP").onclick = async () => {
@@ -689,9 +746,9 @@ async function manageProduct(p, reps) {
 }
 
 /* ---------- product import from Excel / CSV ---------- */
-const IMPORT_COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["price", "Price"], ["stock", "Stock"], ["maxPerOrder", "Max per order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
+const IMPORT_COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["cost", "Cost"], ["price", "Price"], ["stock", "Stock"], ["maxPerOrder", "Max per order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
 const HEADER_ALIASES = { name: ["name", "product", "productname", "peptide", "item"], strength: ["size", "strength", "mg", "dose", "amount", "vialsize"],
-  category: ["category", "cat", "type"], manufacturer: ["manufacturer", "mfr", "mfg", "maker", "brand", "supplier", "lab"], price: ["price", "cost", "retail", "priceusd", "price$"],
+  category: ["category", "cat", "type"], manufacturer: ["manufacturer", "mfr", "mfg", "maker", "brand", "supplier", "lab"], price: ["price", "retail", "priceusd", "price$", "sellprice", "storeprice"], cost: ["cost", "ourcost", "costusd", "cost$", "wholesale", "unitcost"],
   stock: ["stock", "qty", "quantity", "onhand", "inventory"], maxPerOrder: ["maxperorder", "max", "limit", "maxorder", "max/order"],
   sort: ["sort", "order", "position"], active: ["active", "show", "visible", "enabled"], description: ["description", "desc", "notes", "details"] };
 const normH = (h) => String(h || "").toLowerCase().replace(/[^a-z0-9$/]/g, "");
@@ -811,29 +868,42 @@ async function reports() {
   pane().querySelector(".tbl").onclick = (e) => { const tr = e.target.closest("[data-rid]"); if (tr) { form(list.find((x) => String(x.id) === tr.dataset.rid)); window.scrollTo(0, 0); } };
 }
 
-/* ---------- shipping ---------- */
-async function shipping() {
-  const { shipping: list } = await api("/shipping");
-  const row = (m) => `<tr data-id="${m ? m.id : ""}">
-    <td><input data-k="name" value="${esc(m?.name)}" placeholder="USPS Priority"${ro()}></td>
-    <td><input data-k="detail" value="${esc(m?.detail)}" placeholder="2 to 3 business days"${ro()}></td>
-    <td><input data-k="price" value="${dollars(m?.price_cents ?? 0)}" inputmode="decimal"${ro()}></td>
-    <td><input data-k="freeOver" value="${dollars(m?.free_over_cents)}" placeholder="—" inputmode="decimal"${ro()}></td>
-    <td><input data-k="sort" value="${m?.sort ?? 0}" inputmode="numeric"${ro()}></td>
-    <td><input type="checkbox" data-k="active"${!m || m.active ? " checked" : ""}${ro()}></td>
-    ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-save>Save</button>${m ? `<button class="btn" data-del>Delete</button>` : ""}</td>` : ""}</tr>`;
-  pane().innerHTML = `<header><h1>Shipping</h1>${isOwner() ? `<button class="btn solid" id="addS">Add option</button>` : ""}</header>
-    <p class="muted">Customers pick one active option at checkout. "Free over" makes it free once the subtotal reaches that amount. With no active options, checkout says shipping is confirmed with the order and you set it on the order.</p>
-    <div class="tblwrap"><table class="tbl" id="st"><tr><th>Name</th><th>Detail shown</th><th>Price $</th><th>Free over $</th><th>Sort</th><th>Active</th>${isOwner() ? "<th></th>" : ""}</tr>${list.map(row).join("")}</table></div>`;
-  const st = document.getElementById("st");
-  if (document.getElementById("addS")) document.getElementById("addS").onclick = () => st.insertAdjacentHTML("beforeend", row(null));
-  st.onclick = async (e) => {
-    const tr = e.target.closest("tr"); if (!tr) return; const id = tr.dataset.id;
-    if (e.target.closest("[data-del]")) { if (!confirm("Delete this shipping option?")) return; await api("/shipping/" + id, { method: "DELETE" }); return shipping(); }
-    if (!e.target.closest("[data-save]")) return;
-    const body = {}; tr.querySelectorAll("[data-k]").forEach((i) => { body[i.dataset.k] = i.type === "checkbox" ? i.checked : i.value; });
-    await api(id ? "/shipping/" + id : "/shipping", { method: id ? "PATCH" : "POST", body }); toast("Saved"); shipping();
+/* ---------- discount codes (owner) ---------- */
+async function discounts() {
+  if (!isOwner()) return dashboard();
+  const { codes } = await api("/discounts");
+  const today = new Date().toISOString().slice(0, 10);
+  const state = (c) => (!c.active ? ["off", "st-cancelled"] : c.expired ? ["expired", "st-cancelled"] : c.max_uses !== null && c.used >= c.max_uses ? ["used up", "st-cancelled"] : ["live", "st-shipped"]);
+  pane().innerHTML = `<header><h1>Discount codes</h1></header>
+    <div class="panel"><h2>Make a code</h2>
+      <p class="muted">Customers type the code at checkout (sales reps can too). It comes off the product subtotal, before shipping. Commissions are paid on the discounted amount.</p>
+      <div class="grid2" style="grid-template-columns:repeat(auto-fit,minmax(11rem,1fr))">
+        <div class="field"><label class="eyebrow" for="dcCode">Code</label><div class="row2" style="flex-wrap:nowrap"><input id="dcCode" placeholder="e.g. WELCOME10" autocapitalize="characters" style="text-transform:uppercase;flex:1;min-width:0"><button class="btn" type="button" id="dcGen" title="Make a random code">Generate</button></div></div>
+        <div class="field"><label class="eyebrow" for="dcKind">Type</label><select id="dcKind"><option value="percent">Percent off</option><option value="amount">Dollars off</option></select></div>
+        <div class="field"><label class="eyebrow" for="dcValue">Amount</label><input id="dcValue" inputmode="decimal" placeholder="10"></div>
+        <div class="field"><label class="eyebrow" for="dcMin">Minimum order $ (optional)</label><input id="dcMin" inputmode="decimal" placeholder="None"></div>
+        <div class="field"><label class="eyebrow" for="dcUses">Number of uses (optional)</label><input id="dcUses" inputmode="numeric" placeholder="Unlimited"></div>
+        <div class="field"><label class="eyebrow" for="dcExp">Expires (optional)</label><input id="dcExp" type="date" min="${today}"></div>
+        <div class="field" style="grid-column:1/-1"><label class="eyebrow" for="dcNote">Note to yourself (optional)</label><input id="dcNote" placeholder="e.g. October promo, handed out at the clinic"></div></div>
+      <div class="row2"><button class="btn solid" id="dcSave">Create code</button></div></div>
+    <div class="panel"><h2>Codes</h2>
+      ${codes.length ? `<div class="tblwrap"><table class="tbl"><tr><th>Code</th><th>Takes off</th><th>Minimum</th><th class="num">Used</th><th>Expires</th><th>State</th><th class="num">Orders</th><th class="num">Given</th><th>Note</th><th></th></tr>
+        ${codes.map((c) => { const [st, cls] = state(c); return `<tr data-id="${c.id}"><td class="mono"><strong>${esc(c.code)}</strong></td><td>${esc(c.label)}</td><td>${c.min_subtotal_cents ? money(c.min_subtotal_cents) : "—"}</td><td class="num">${c.used}${c.max_uses !== null ? ` / ${c.max_uses}` : ""}</td><td>${c.expires ? esc(String(c.expires).slice(0, 10)) : "—"}</td><td><span class="pill ${cls}">${st}</span></td><td class="num">${c.orders}</td><td class="num">${money(c.given_cents)}</td><td class="muted">${esc(c.note)}</td>
+          <td class="row2" style="flex-wrap:nowrap"><button class="btn" data-copy="${esc(c.code)}">Copy</button><button class="btn" data-toggle="${c.active ? 0 : 1}">${c.active ? "Turn off" : "Turn on"}</button><button class="btn danger" data-del>Delete</button></td></tr>`; }).join("")}</table></div>` : `<p class="muted">No codes yet.</p>`}</div>`;
+  const $ = (x) => document.getElementById(x);
+  $("dcGen").onclick = async () => { const r = await api("/discounts/new-code?prefix=" + encodeURIComponent($("dcCode").value.replace(/-.*$/, "").trim())); $("dcCode").value = r.code; };
+  $("dcSave").onclick = async () => {
+    const body = { code: $("dcCode").value, kind: $("dcKind").value, value: $("dcValue").value, minSubtotal: $("dcMin").value, maxUses: $("dcUses").value, expires: $("dcExp").value, note: $("dcNote").value };
+    if (!body.code.trim()) { const r = await api("/discounts/new-code"); body.code = r.code; }
+    const r = await api("/discounts", { method: "POST", body });
+    toast(`Code ${r.code} created`); paneDirty = false; discounts();
   };
+  pane().querySelectorAll("tr[data-id]").forEach((tr) => {
+    const id = tr.dataset.id;
+    tr.querySelector("[data-copy]").onclick = (e) => navigator.clipboard?.writeText(e.target.dataset.copy).then(() => toast("Code copied"), () => toast("Copy failed"));
+    tr.querySelector("[data-toggle]").onclick = async (e) => { await api("/discounts/" + id, { method: "PATCH", body: { active: e.target.dataset.toggle === "1" } }); discounts(); };
+    tr.querySelector("[data-del]").onclick = async () => { if (!confirm("Delete this code? Orders that used it keep their discount.")) return; await api("/discounts/" + id, { method: "DELETE" }); toast("Deleted"); discounts(); };
+  });
 }
 
 /* ---------- page setup: home page header, feature cards, vial look ---------- */
@@ -926,17 +996,54 @@ async function page() {
 
 /* ---------- settings ---------- */
 async function settings() {
-  const { settings: s } = await api("/settings");
+  const { settings: s, stripe: st, mail: ml, baseUrl } = await api("/settings");
   const t = (k, label, help = "") => `<div class="field"><label class="eyebrow" for="s-${k}">${label}</label><input id="s-${k}" value="${esc(s[k])}"${ro()}>${help ? `<span class="muted">${help}</span>` : ""}</div>`;
   const ta = (k, label, help = "") => `<div class="field"><label class="eyebrow" for="s-${k}">${label}</label><textarea id="s-${k}"${ro()}>${esc(s[k])}</textarea>${help ? `<span class="muted">${help}</span>` : ""}</div>`;
+  const site = baseUrl || location.origin;
   pane().innerHTML = `<header><h1>Site settings</h1></header>
     <div class="panel"><h2>Store</h2>
       <label class="chk"><input type="checkbox" id="s-storeOpen"${s.storeOpen ? " checked" : ""}${ro()}> Taking orders (untick to pause checkout)</label>
       <div class="grid2">${t("brand", "Store name", "Shown top left and in the footer")}${t("tagline", "Tagline (optional)")}${t("contact", "Contact for customers", "Phone, text or email")}
       ${t("distributorOf", "Brand you distribute", 'Shows "Authorized ___ distributor"')}${t("brandUrl", "Brand's website (https)")}</div>
-      ${ta("paymentInstructions", "What customers see after ordering", "Explain how you'll confirm and how they pay")}
       <div class="grid2">${t("priceNote", "Note under products")}
         <div class="field"><label class="eyebrow" for="s-minOrder">Minimum order $</label><input id="s-minOrder" value="${dollars(s.minOrderCents) || ""}" placeholder="None" inputmode="decimal"${ro()}></div></div></div>
+    <div class="panel"><h2>Shipping &amp; local delivery</h2>
+      <p class="muted">Customers (and sales reps) choose one at checkout. Shipping is charged; local delivery is free. Orders show which one was picked.</p>
+      <div class="grid2">
+        <div class="stack"><label class="chk"><input type="checkbox" id="s-shippingOn"${s.shippingOn ? " checked" : ""}${ro()}> Offer shipping</label>
+          ${t("shippingLabel", "Shipping name shown", "e.g. FedEx shipping")}
+          <div class="field"><label class="eyebrow" for="s-shippingAmt">Shipping charge $</label><input id="s-shippingAmt" value="${dollars(s.shippingCents)}" inputmode="decimal"${ro()}></div>
+          <div class="field"><label class="eyebrow" for="s-shippingFree">Free shipping on orders over $ (optional)</label><input id="s-shippingFree" value="${s.shippingFreeOverCents ? dollars(s.shippingFreeOverCents) : ""}" placeholder="Never free" inputmode="decimal"${ro()}></div>
+          ${t("shippingNote", "Note under it", "e.g. Ships in 1 to 3 business days")}
+          ${t("fedexAccount", "FedEx account number", "Shown to staff on orders to ship, with a copy button. Customers never see it.")}</div>
+        <div class="stack"><label class="chk"><input type="checkbox" id="s-deliveryOn"${s.deliveryOn ? " checked" : ""}${ro()}> Offer local delivery (free)</label>
+          ${t("deliveryLabel", "Delivery name shown", "e.g. Local delivery")}
+          ${t("deliveryNote", "Note under it", "e.g. Free in the McAllen area. We'll call to set a time.")}</div></div></div>
+    <div class="panel"><h2>Payments</h2>
+      <p>${st && st.ready ? `<span class="pill st-shipped">Stripe connected</span> ${st.mode === "live" ? "Live key: real cards are charged." : "Test key: only Stripe test cards work (4242 4242 4242 4242)."} ${st.webhook ? "Webhook secret set." : "No webhook secret yet (payments still record when the customer returns to the site; the webhook is the backup)."}` : `<span class="pill st-cancelled">Stripe not connected</span> Checkout takes order requests until the Stripe key is on the host.`}</p>
+      <label class="chk"><input type="checkbox" id="s-cardPayments"${s.cardPayments ? " checked" : ""}${ro()}${st && st.ready ? "" : " disabled"}> Take card payments at checkout (Stripe)${st && st.ready ? "" : " — connect Stripe first"}</label>
+      <p class="muted">With this on, the Checkout button becomes <strong>Pay with card</strong>: the customer pays on Stripe's secure page and the order marks itself <em>paid</em>. Off, customers submit order requests and you collect payment yourself; you can still send any unpaid order a card payment link from the order page.</p>
+      ${ta("paymentInstructions", "What customers see after an order request", "Explain how you'll confirm and how they pay (shown when card payments are off)")}
+      <details><summary style="cursor:pointer;font-weight:600">How to connect Stripe (one time)</summary><ol class="muted" style="margin:.6rem 0 0 1.2rem;display:grid;gap:.35rem">
+        <li>Create the account at <a href="https://dashboard.stripe.com/register" target="_blank" rel="noopener">dashboard.stripe.com/register</a> with your business details and bank account. Stripe reviews what you sell; research peptides can be declined, so wait for the account to be approved before turning this on.</li>
+        <li>In Stripe go to <strong>Developers → API keys</strong> and copy the <strong>Secret key</strong> (starts with <span class="mono">sk_live_</span>; use <span class="mono">sk_test_</span> to try it first).</li>
+        <li>In Render open the <strong>peptide-store</strong> service → <strong>Environment</strong> → add <span class="mono">STRIPE_SECRET_KEY</span> = that key → Save. The service restarts by itself.</li>
+        <li>Back in Stripe: <strong>Developers → Webhooks → Add endpoint</strong>, URL <span class="mono">${esc(site)}/api/stripe/webhook</span>, event <span class="mono">checkout.session.completed</span>. Copy its <strong>Signing secret</strong> (<span class="mono">whsec_…</span>) into Render as <span class="mono">STRIPE_WEBHOOK_SECRET</span>.</li>
+        <li>Reload this page: it should say <em>Stripe connected</em>. Tick the box above and Save.</li></ol></details></div>
+    <div class="panel"><h2>Order emails</h2>
+      <p>${ml && ml.ready ? `<span class="pill st-shipped">Email connected</span> Sending through ${esc(ml.detail)} from ${esc(ml.from)}.` : `<span class="pill st-cancelled">Email not connected</span> Orders are saved here, but no emails go out until the email settings are on the host (steps below).`}</p>
+      <div class="grid2">${t("orderEmail", "Send every order to", "You get a message for each new order and each card payment")}</div>
+      <label class="chk"><input type="checkbox" id="s-orderEmailOn"${s.orderEmailOn ? " checked" : ""}${ro()}> Email me every order</label>
+      <label class="chk"><input type="checkbox" id="s-customerEmailOn"${s.customerEmailOn ? " checked" : ""}${ro()}> Email the customer a confirmation (and a receipt when they pay by card)</label>
+      ${isOwner() ? `<div class="row2" style="align-items:center"><button class="btn" id="mailTest"${ml && ml.ready ? "" : " disabled"}>Send a test email</button><span class="muted" id="mailTestOut"></span></div>` : ""}
+      <details><summary style="cursor:pointer;font-weight:600">How to connect email (one time)</summary>
+        <p class="muted" style="margin-top:.6rem"><strong>Option A — your Google Workspace / Gmail address (orders@360medical.net):</strong></p><ol class="muted" style="margin:.3rem 0 0 1.2rem;display:grid;gap:.35rem">
+        <li>Sign in to that Google account, turn on 2-Step Verification, then open <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a> and create an app password (16 letters).</li>
+        <li>In Render → peptide-store → Environment add: <span class="mono">SMTP_HOST</span> = smtp.gmail.com · <span class="mono">SMTP_PORT</span> = 465 · <span class="mono">SMTP_USER</span> = orders@360medical.net · <span class="mono">SMTP_PASS</span> = the app password · <span class="mono">MAIL_FROM</span> = 360 Medical Peptides &lt;orders@360medical.net&gt;</li></ol>
+        <p class="muted" style="margin-top:.6rem"><strong>Option B — Resend (free for 3,000 emails a month):</strong></p><ol class="muted" style="margin:.3rem 0 0 1.2rem;display:grid;gap:.35rem">
+        <li>Sign up at <a href="https://resend.com" target="_blank" rel="noopener">resend.com</a>, add and verify the domain 360medical.net (they give you DNS records), then create an API key.</li>
+        <li>In Render add <span class="mono">RESEND_API_KEY</span> = that key and <span class="mono">MAIL_FROM</span> = 360 Medical Peptides &lt;orders@360medical.net&gt;.</li></ol>
+        <p class="muted" style="margin-top:.6rem">Either way, reload this page afterwards and click <em>Send a test email</em>.</p></details></div>
     ${isOwner() ? `<div class="panel" id="pinPanel"><h2>Site PIN</h2>
       <p class="muted">When on, nobody can see the store, products, prices or lab reports until they enter a PIN. Two kinds work: the <strong>shared PIN</strong> below, which anyone can use, and each customer's <strong>own PIN</strong>, which you give out under Customers. Admin stays open to you. Changing the shared PIN makes everyone using it enter the new one.</p>
       <label class="chk"><input type="checkbox" id="pinOn"> Require the PIN to view the store</label>
@@ -975,12 +1082,22 @@ async function settings() {
   document.getElementById("sSave").onclick = async () => {
     const v = (k) => document.getElementById("s-" + k);
     const body = {};
-    ["brand", "tagline", "contact", "distributorOf", "brandUrl", "paymentInstructions", "priceNote"].forEach((k) => { body[k] = v(k).value; });
-    body.storeOpen = v("storeOpen").checked; body.ageGate = v("ageGate").checked; body.minAge = v("minAge").value;
-    body.minOrderCents = Math.round(parseFloat(v("minOrder").value || 0) * 100);
+    ["brand", "tagline", "contact", "distributorOf", "brandUrl", "paymentInstructions", "priceNote", "shippingLabel", "shippingNote", "fedexAccount", "deliveryLabel", "deliveryNote", "orderEmail"].forEach((k) => { body[k] = v(k).value; });
+    ["storeOpen", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn"].forEach((k) => { body[k] = v(k).checked; });
+    body.minAge = v("minAge").value;
+    const cents = (id) => Math.max(0, Math.round(parseFloat(String(v(id).value).replace(/[$,]/g, "") || 0) * 100));
+    body.minOrderCents = cents("minOrder"); body.shippingCents = cents("shippingAmt"); body.shippingFreeOverCents = cents("shippingFree");
     ["footerNotice", "disclaimers", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"].forEach((k) => { body[k] = v(k).value.split("\n").map((x) => x.trim()).filter(Boolean); });
     body.announcementOn = false;
-    await api("/settings", { method: "PUT", body }); toast("Settings saved");
+    if (!v("shippingOn").checked && !v("deliveryOn").checked && !confirm("Neither shipping nor delivery is offered: checkout will say shipping is confirmed with the order. Save anyway?")) return;
+    await api("/settings", { method: "PUT", body }); toast("Settings saved"); paneDirty = false;
+  };
+  if (document.getElementById("mailTest")) document.getElementById("mailTest").onclick = async () => {
+    const b = document.getElementById("mailTest"), out = document.getElementById("mailTestOut");
+    b.disabled = true; out.textContent = "Sending…";
+    try { const r = await api("/mail/test", { method: "POST", body: { to: document.getElementById("s-orderEmail").value } }); out.textContent = `Sent to ${r.to}. Check the inbox (and spam).`; }
+    catch (e) { out.textContent = "Not sent: " + e.message; }
+    finally { b.disabled = false; }
   };
 }
 
@@ -1042,6 +1159,9 @@ if (window.AppRefresh) window.AppRefresh.init({
 });
 
 (async () => {
+  // order emails link straight to an order: /admin#order-123
+  const m = /^#order-(\d+)$/.exec(location.hash);
+  if (m) { view = "orders"; orderId = m[1]; history.replaceState(null, "", location.pathname); }
   const res = await fetch("/api/admin/me");
   if (res.ok) { me = (await res.json()).user; shell(); } else drawLogin();
 })();

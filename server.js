@@ -4,10 +4,18 @@ const crypto = require("crypto");
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const { q, pool, init, getSettings, DEFAULT_SETTINGS } = require("./server/db");
+const mail = require("./server/mail");
+
+/* ---------- Stripe: card payments, on once STRIPE_SECRET_KEY is set on the host ---------- */
+const STRIPE_KEY = String(process.env.STRIPE_SECRET_KEY || "").trim();
+const stripe = STRIPE_KEY ? require("stripe")(STRIPE_KEY) : null;
+const stripeInfo = () => ({ ready: !!stripe, mode: STRIPE_KEY.startsWith("sk_live") ? "live" : stripe ? "test" : "", webhook: !!process.env.STRIPE_WEBHOOK_SECRET });
 
 const app = express();
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
+// Stripe signs its webhook calls over the raw body, so that one route reads the body before the JSON parser
+app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req, res, next) => stripeWebhook(req, res).catch(next));
 app.use(express.json({ limit: "16mb" }));
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
@@ -30,8 +38,17 @@ const parseCookies = (h) => Object.fromEntries(String(h || "").split(/;\s*/).fil
 const SECURE = process.env.NODE_ENV === "production" || !!process.env.RENDER;
 
 function publicSettings(s) {
-  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"];
-  return Object.fromEntries(keys.map((k) => [k, s[k]]));
+  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy",
+    "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote"];
+  // card payments only work once the Stripe key is on the host, so the store is told the effective state
+  return { ...Object.fromEntries(keys.map((k) => [k, s[k]])), cardPayments: !!(s.cardPayments && stripe) };
+}
+// The two ways to get an order, as the store, the rep app and order creation see them.
+function fulfillmentOptions(s) {
+  const out = [];
+  if (s.shippingOn) out.push({ key: "ship", label: s.shippingLabel || "Shipping", note: s.shippingNote || "", cents: s.shippingCents || 0, freeOverCents: s.shippingFreeOverCents || 0 });
+  if (s.deliveryOn) out.push({ key: "delivery", label: s.deliveryLabel || "Local delivery", note: s.deliveryNote || "", cents: 0, freeOverCents: 0 });
+  return out;
 }
 const reportOut = (r) => ({
   id: r.id, product: r.product, strength: r.strength, sample: r.sample, task: r.task, key: r.key, verifyUrl: r.verify_url,
@@ -69,7 +86,7 @@ const owner = (req, res, next) => (req.user.role === "owner" ? next() : bad(res,
 /* ---------- site PIN ---------- */
 // When the owner turns the PIN on, nothing on the store (pages, products, lab reports, orders)
 // is served until the visitor enters it. The admin, its login and the files it needs stay open.
-const PIN_OPEN = [/^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/,
+const PIN_OPEN = [/^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/api\/stripe\//, /^\/pay\//,
   /^\/store\.css$/, /^\/install\.js$/, /^\/refresh\.js$/, /^\/sw\.js$/, /^\/manifest\.webmanifest$/, /^\/vial\.js$/, /^\/vial-logo$/, /^\/site-logo$/, /^\/vial-photo$/, /^\/vial-photo\.jpg$/, /^\/brand-(logo|mark|vial-logo)\.png$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
 let pinCache = { at: 0, on: false, hash: "", secret: "", customerPins: 0 };
 async function pinState() {
@@ -161,14 +178,13 @@ app.get("/api/version", wrap(async (req, res) => {
 }));
 app.get("/api/store", wrap(async (req, res) => {
   const s = await getSettings();
-  const [{ rows: products }, { rows: reports }, { rows: shipping }] = await Promise.all([
+  const [{ rows: products }, { rows: reports }] = await Promise.all([
     q("select id,name,strength,manufacturer,category,description,price_cents,stock,max_per_order,vial_label,media_v,(image is not null) has_image,(logo is not null) has_logo from products where active order by sort, name, strength, manufacturer, id"),
-    q(`select ${REPORT_COLS} from reports where active order by product, tested desc nulls last`),
-    q("select id,name,detail,price_cents,free_over_cents from shipping_methods where active order by sort, price_cents")
+    q(`select ${REPORT_COLS} from reports where active order by product, tested desc nulls last`)
   ]);
   const { rows: documents } = await q("select d.id, d.product_id, d.title, d.kind, d.file_type, d.size from documents d join products p on p.id = d.product_id where d.public and p.active order by d.sort, d.created_at");
   res.set("Cache-Control", "no-store");
-  res.json({ settings: publicSettings(s), products, reports: reports.map(reportOut), shipping, documents });
+  res.json({ settings: publicSettings(s), products, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents });
 }));
 
 app.get("/coa/:id", wrap(async (req, res) => {
@@ -213,7 +229,7 @@ app.get("/doc/:id", wrap(async (req, res) => {
   res.send(d.file);
 }));
 
-app.post("/api/orders", limit("order", 6, 15 * 60 * 1000), wrap(async (req, res) => {
+app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res) => {
   const s = await getSettings();
   if (!s.storeOpen) return bad(res, "Ordering is paused right now. Please check back soon.");
   const b = req.body || {};
@@ -230,15 +246,24 @@ app.post("/api/orders", limit("order", 6, 15 * 60 * 1000), wrap(async (req, res)
   let cust = await customerFrom(req);
   if (!cust) cust = (await q("select id, rep_id from customers where lower(email) = $1 and active", [email])).rows[0] || null;
   else cust.rep_id = (await q("select rep_id from customers where id = $1", [cust.id])).rows[0]?.rep_id ?? null;
+  const payCard = b.pay === "card";
+  if (payCard && !(s.cardPayments && stripe)) return bad(res, "Card payments aren't available right now. Please submit the order as a request instead.");
   try {
-    const r = await createOrder({ name, email, phone, address, items, shippingMethodId: b.shippingMethodId, note: b.note, customerId: cust ? cust.id : null, repId: cust ? cust.rep_id : null,
-      placedBy: "Customer", event: "Order placed; customer confirmed research use and age", settings: s });
+    const r = await createOrder({ name, email, phone, address, items, fulfillment: b.fulfillment, payMethod: payCard ? "card" : "request", discountCode: b.discountCode, note: b.note, customerId: cust ? cust.id : null, repId: cust ? cust.rep_id : null,
+      placedBy: "Customer", event: `Order placed; customer confirmed research use and age${payCard ? "; paying by card" : ""}`, settings: s });
+    if (payCard) {
+      // the customer pays on Stripe's page; the order is marked paid when they come back (and by the webhook)
+      const payUrl = await payLinkFor(r.id, originOf(req), "Customer");
+      return res.json({ ok: true, ...r, payUrl });
+    }
+    notifyOrder(r.id, "new").catch((e) => console.error("Order email failed:", e.message));
     res.json({ ok: true, ...r, paymentInstructions: s.paymentInstructions });
   } catch (e) { bad(res, e.message || "Could not place the order."); }
 }));
 
 // Creates an order in one transaction: checks price, limits and stock, takes the stock, records the rep and their rate.
-async function createOrder({ name, email, phone, address, items, shippingMethodId, note, customerId, repId, placedBy, event, settings }) {
+// fulfillment: "ship" (charged) or "delivery" (free), from Site settings.
+async function createOrder({ name, email, phone, address, items, fulfillment, payMethod = "request", discountCode, note, customerId, repId, placedBy, event, settings }) {
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -254,42 +279,220 @@ async function createOrder({ name, email, phone, address, items, shippingMethodI
       lines.push({ p, qty });
     }
     if (settings.minOrderCents && subtotal < settings.minOrderCents) throw new Error(`The minimum order is $${(settings.minOrderCents / 100).toFixed(2)}.`);
-    let shipName = "", shipCents = 0;
-    const { rows: methods } = await client.query("select * from shipping_methods where active");
-    if (methods.length) {
-      const m = methods.find((x) => x.id === intOrNull(shippingMethodId));
-      if (!m) throw new Error("Choose a shipping option.");
-      shipName = m.name; shipCents = m.free_over_cents !== null && subtotal >= m.free_over_cents ? 0 : m.price_cents;
+    // ship (charged, free over a threshold if one is set) or local delivery (free); with neither offered, shipping is settled later
+    const opts = fulfillmentOptions(settings);
+    let f = opts.find((o) => o.key === fulfillment) || null;
+    if (!f && opts.length) { if (opts.length === 1) f = opts[0]; else throw new Error("Choose shipping or local delivery."); }
+    const fulfil = f ? f.key : "ship";
+    const shipName = f ? f.label : "", shipCents = f ? (f.freeOverCents > 0 && subtotal >= f.freeOverCents ? 0 : f.cents) : 0;
+    // a discount code: checked and counted inside the same transaction, so a limited code can't be overused
+    let discount = 0, codeUsed = "";
+    const codeText = normCode(discountCode);
+    if (codeText) {
+      const { rows: [dc] } = await client.query(`select ${DISCOUNT_COLS} from discount_codes where code = $1 for update`, [codeText]);
+      discount = discountValue(dc, subtotal); codeUsed = dc.code;
+      await client.query("update discount_codes set used = used + 1 where id = $1", [dc.id]);
     }
     let rate = null;
     if (repId) rate = (await client.query("select commission_rate from users where id = $1 and role = 'rep'", [repId])).rows[0]?.commission_rate ?? null;
     if (rate === null) repId = null;
     const number = String(Date.now()).slice(-6) + crypto.randomInt(10, 99);
+    const total = subtotal - discount + shipCents;
     const { rows: [o] } = await client.query(
-      `insert into orders(number,name,email,phone,address,shipping_method,shipping_cents,subtotal_cents,total_cents,customer_note,customer_id,rep_id,commission_rate,placed_by)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id`,
-      [number, name, email, phone, JSON.stringify(address), shipName, shipCents, subtotal, subtotal + shipCents, str(note, 1000), customerId, repId, rate, placedBy]);
+      `insert into orders(number,name,email,phone,address,shipping_method,shipping_cents,subtotal_cents,discount_cents,discount_code,total_cents,customer_note,customer_id,rep_id,commission_rate,placed_by,fulfillment,pay_method)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) returning id`,
+      [number, name, email, phone, JSON.stringify(address), shipName, shipCents, subtotal, discount, codeUsed, total, str(note, 1000), customerId, repId, rate, placedBy, fulfil, payMethod === "card" ? "card" : "request"]);
     for (const { p, qty } of lines) {
       // the maker goes into the line name so orders show which one was bought
       await client.query("insert into order_items(order_id,product_id,name,strength,unit_cents,qty) values ($1,$2,$3,$4,$5,$6)", [o.id, p.id, p.manufacturer ? `${p.name} (${p.manufacturer})` : p.name, p.strength, p.price_cents, qty]);
       if (p.stock !== null) await moveStock(client, p.id, -qty, { reason: "Order", ref: number, who: placedBy === "Customer" ? name : placedBy });
     }
-    await client.query("insert into order_events(order_id, who, text) values ($1, $2, $3)", [o.id, placedBy, event]);
+    await client.query("insert into order_events(order_id, who, text) values ($1, $2, $3)", [o.id, placedBy, event + (codeUsed ? `; discount code ${codeUsed} (−$${(discount / 100).toFixed(2)})` : "")]);
     await client.query("commit");
-    return { number, subtotalCents: subtotal, shippingCents: shipCents, totalCents: subtotal + shipCents };
+    return { id: o.id, number, subtotalCents: subtotal, discountCents: discount, discountCode: codeUsed, shippingCents: shipCents, totalCents: total, fulfillment: fulfil, shippingName: shipName };
   } catch (e) { await client.query("rollback").catch(() => {}); throw e; }
   finally { client.release(); }
 }
 
+/* ---------- discount codes ---------- */
+const DISCOUNT_COLS = "id, code, kind, value, min_subtotal_cents, max_uses, used, expires, active, note, created_at, (expires is not null and expires < current_date) expired";
+const normCode = (v) => String(v ?? "").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 24);
+// What a code takes off a subtotal; throws the reason a customer sees when it can't be used.
+function discountValue(dc, subtotal) {
+  if (!dc || !dc.active) throw new Error("That discount code isn't valid.");
+  if (dc.expired) throw new Error("That discount code has expired.");
+  if (dc.max_uses !== null && dc.used >= dc.max_uses) throw new Error("That discount code has already been used up.");
+  if (dc.min_subtotal_cents && subtotal < dc.min_subtotal_cents) throw new Error(`That code needs an order of at least $${(dc.min_subtotal_cents / 100).toFixed(2)}.`);
+  const cents = dc.kind === "percent" ? Math.round(subtotal * dc.value / 100) : dc.value;
+  return Math.max(0, Math.min(subtotal, cents));
+}
+const codeOut = (d) => ({ ...d, label: d.kind === "percent" ? `${d.value}% off` : `$${(d.value / 100).toFixed(2)} off` });
+// The store checks a code before the order is placed, to show the discount in the totals.
+app.post("/api/discount", limit("discount", 30, 15 * 60 * 1000), wrap(async (req, res) => {
+  const code = normCode(req.body?.code), subtotal = Math.max(0, intOrNull(req.body?.subtotalCents) || 0);
+  if (!code) return bad(res, "Type a discount code.");
+  const { rows: [dc] } = await q(`select ${DISCOUNT_COLS} from discount_codes where code = $1`, [code]);
+  try {
+    const cents = discountValue(dc, subtotal);
+    res.json({ ok: true, code: dc.code, kind: dc.kind, value: dc.value, label: codeOut(dc).label, discountCents: cents, minSubtotalCents: dc.min_subtotal_cents });
+  } catch (e) { bad(res, e.message); }
+}));
+
 // Customers check an order with its number + the email used.
+const canPayByCard = (o, s) => !!(stripe && s.cardPayments && !o.paid_at && o.status !== "cancelled");
 app.post("/api/orders/lookup", limit("lookup", 20, 15 * 60 * 1000), wrap(async (req, res) => {
   const number = str(req.body?.number, 20), email = str(req.body?.email, 160).toLowerCase();
-  const { rows: [o] } = await q("select id,number,status,shipping_method,shipping_cents,subtotal_cents,total_cents,carrier,tracking,created_at,shipped_at from orders where number = $1 and lower(email) = $2", [number, email]);
+  const { rows: [o] } = await q("select id,number,status,shipping_method,shipping_cents,subtotal_cents,discount_cents,total_cents,carrier,tracking,created_at,shipped_at,paid_at,fulfillment,pay_method from orders where number = $1 and lower(email) = $2", [number, email]);
   if (!o) return bad(res, "No order matches that number and email.", 404);
   const { rows: items } = await q("select name,strength,unit_cents,qty from order_items where order_id = $1 order by id", [o.id]);
   delete o.id;
-  res.json({ order: o, items });
+  res.json({ order: { ...o, canPay: canPayByCard(o, await getSettings()) }, items });
 }));
+// A customer pays an unpaid order by card: same check as the lookup (number + email), then off to Stripe.
+app.post("/api/orders/pay", limit("pay", 12, 15 * 60 * 1000), wrap(async (req, res) => {
+  const s = await getSettings();
+  if (!(s.cardPayments && stripe)) return bad(res, "Card payments aren't available right now.");
+  const number = str(req.body?.number, 20), email = str(req.body?.email, 160).toLowerCase();
+  const { rows: [o] } = await q("select id from orders where number = $1 and lower(email) = $2", [number, email]);
+  if (!o) return bad(res, "No order matches that number and email.", 404);
+  try { res.json({ ok: true, payUrl: await payLinkFor(o.id, originOf(req), "Customer") }); } catch (e) { bad(res, e.message); }
+}));
+
+/* ---------- Stripe card payments ---------- */
+const originOf = (req) => `${req.protocol}://${req.get("host")}`;
+// Builds Stripe's hosted payment page for an unpaid order (items, shipping, any discount) and remembers the
+// session on the order. The order is marked paid when the customer returns, and again by the webhook (whichever is first).
+async function payLinkFor(orderId, origin, who) {
+  if (!stripe) throw new Error("Card payments aren't set up yet.");
+  const { rows: [o] } = await q("select * from orders where id = $1", [orderId]);
+  if (!o) throw new Error("Order not found.");
+  if (o.paid_at) throw new Error("This order is already paid.");
+  if (o.status === "cancelled") throw new Error("This order was cancelled.");
+  const { rows: items } = await q("select name, strength, unit_cents, qty from order_items where order_id = $1 order by id", [orderId]);
+  const s = await getSettings();
+  const line_items = items.map((i) => ({ quantity: i.qty, price_data: { currency: "usd", unit_amount: i.unit_cents, product_data: { name: `${i.name} ${i.strength}`.trim().slice(0, 250) } } }));
+  if (o.shipping_cents > 0) line_items.push({ quantity: 1, price_data: { currency: "usd", unit_amount: o.shipping_cents, product_data: { name: o.shipping_method || "Shipping" } } });
+  const extra = {};
+  if (o.discount_cents > 0) {
+    const c = await stripe.coupons.create({ amount_off: Math.min(o.discount_cents, o.subtotal_cents), currency: "usd", duration: "once", name: `Discount on order ${o.number}`, max_redemptions: 1 });
+    extra.discounts = [{ coupon: c.id }];
+  }
+  const session = await stripe.checkout.sessions.create({
+    mode: "payment", customer_email: o.email, client_reference_id: o.number,
+    metadata: { orderId: String(o.id), number: o.number },
+    payment_intent_data: { description: `${s.brand} order ${o.number}`, metadata: { orderId: String(o.id), number: o.number } },
+    line_items, ...extra,
+    success_url: `${origin}/pay/done?o=${encodeURIComponent(o.number)}&s={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${origin}/?pay=cancelled&o=${encodeURIComponent(o.number)}`
+  });
+  await q("update orders set stripe_session = $1, updated_at = now() where id = $2", [session.id, o.id]);
+  await q("insert into order_events(order_id, who, text) values ($1, $2, $3)", [o.id, who || "Stripe", who === "Customer" ? "Customer went to the card payment page" : "Card payment link created"]);
+  return session.url;
+}
+// Records a Stripe payment once (safe to call from the return page and the webhook).
+async function markPaid(o, session) {
+  const amount = session.amount_total ?? o.total_cents;
+  const pi = typeof session.payment_intent === "string" ? session.payment_intent : (session.payment_intent && session.payment_intent.id) || "";
+  const { rowCount } = await q(`update orders set status = case when status in ('new','confirmed') then 'paid' else status end, paid_at = now(), pay_method = 'card',
+    stripe_pi = $1, paid_cents = $2, updated_at = now() where id = $3 and paid_at is null`, [pi, amount, o.id]);
+  if (!rowCount) return false;
+  await q("insert into order_events(order_id, who, text) values ($1, 'Stripe', $2)",
+    [o.id, `Paid $${(amount / 100).toFixed(2)} by card${amount !== o.total_cents ? ` (order total was $${(o.total_cents / 100).toFixed(2)})` : ""}${pi ? ` · ${pi}` : ""}`]);
+  notifyOrder(o.id, "paid").catch((e) => console.error("Order email failed:", e.message));
+  return true;
+}
+// Stripe sends the customer back here after paying.
+app.get("/pay/done", wrap(async (req, res) => {
+  const number = str(req.query.o, 20), sid = str(req.query.s, 120);
+  const { rows: [o] } = await q("select * from orders where number = $1 and stripe_session = $2", [number, sid]);
+  if (!o || !stripe) return res.redirect("/?pay=unknown");
+  if (!o.paid_at) {
+    const session = await stripe.checkout.sessions.retrieve(sid).catch(() => null);
+    if (session && session.payment_status === "paid") await markPaid(o, session);
+    else return res.redirect(`/?pay=pending&o=${encodeURIComponent(number)}`);
+  }
+  res.redirect(`/?paid=${encodeURIComponent(number)}`);
+}));
+// Stripe's server-to-server confirmation (needs STRIPE_WEBHOOK_SECRET on the host).
+async function stripeWebhook(req, res) {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!stripe || !secret) return res.status(400).send("Webhook not configured");
+  let event;
+  try { event = stripe.webhooks.constructEvent(req.body, req.headers["stripe-signature"], secret); } catch (e) { return res.status(400).send("Bad signature"); }
+  if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
+    const session = event.data.object;
+    if (session.payment_status === "paid") {
+      const { rows: [o] } = await q("select * from orders where stripe_session = $1", [session.id]);
+      if (o) await markPaid(o, session);
+    }
+  }
+  res.json({ received: true });
+}
+// Card orders the customer started but never paid: tell the store once, after half an hour.
+async function sweepUnpaidCardOrders() {
+  const { rows } = await q(`select id from orders o where pay_method = 'card' and paid_at is null and status <> 'cancelled' and created_at < now() - interval '30 minutes'
+    and not exists (select 1 from order_events e where e.order_id = o.id and e.text like 'Card payment not finished%') limit 20`);
+  for (const r of rows) {
+    await q("insert into order_events(order_id, who, text) values ($1, 'Stripe', 'Card payment not finished after 30 minutes')", [r.id]);
+    await notifyOrder(r.id, "unpaid").catch((e) => console.error("Order email failed:", e.message));
+  }
+}
+
+/* ---------- order emails ---------- */
+const BASE_URL = String(process.env.BASE_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "");
+const escHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const mailHtml = (text) => `<div style="font:15px/1.5 -apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#111;white-space:pre-wrap;max-width:40rem">${escHtml(text).replace(/(https?:\/\/[^\s]+)/g, '<a href="$1">$1</a>')}</div>`;
+// kind: "new" (order request placed) · "paid" (card payment received) · "unpaid" (card order never finished)
+async function notifyOrder(orderId, kind) {
+  const s = await getSettings();
+  const { rows: [o] } = await q("select * from orders where id = $1", [orderId]);
+  if (!o) return;
+  const { rows: items } = await q("select name, strength, unit_cents, qty from order_items where order_id = $1 order by id", [orderId]);
+  const rep = o.rep_id ? (await q("select name, email from users where id = $1", [o.rep_id])).rows[0] : null;
+  const $ = (c) => "$" + ((c || 0) / 100).toFixed(2);
+  const a = o.address || {};
+  const addr = [a.line1, a.line2, `${a.city || ""}, ${a.state || ""} ${a.zip || ""}`].filter((x) => x && x.trim() !== ",").join("\n");
+  const delivery = o.fulfillment === "delivery";
+  const how = o.shipping_method || (delivery ? "Local delivery" : "Shipping");
+  const lines = items.map((i) => `${i.qty} x ${`${i.name} ${i.strength}`.trim()} @ ${$(i.unit_cents)} = ${$(i.unit_cents * i.qty)}`);
+  const totals = [`Products: ${$(o.subtotal_cents)}`, o.discount_cents ? `Discount${o.discount_code ? ` (code ${o.discount_code})` : ""}: -${$(o.discount_cents)}` : "", `${how}: ${o.shipping_cents ? $(o.shipping_cents) : "Free"}`, `TOTAL: ${$(o.total_cents)}`].filter(Boolean);
+  const payLine = o.paid_at ? `PAID ${$(o.paid_cents ?? o.total_cents)} by card through Stripe${o.stripe_pi ? ` (${o.stripe_pi})` : ""}`
+    : o.pay_method === "card" ? "Card payment started but not finished. Send the customer a payment link from the order, or wait."
+    : "Order request, not paid yet. Confirm the total with the customer and collect payment.";
+  const link = BASE_URL ? `${BASE_URL}/admin#order-${o.id}` : "";
+  const results = [];
+  if (s.orderEmailOn && isEmail(s.orderEmail || "")) {
+    const head = kind === "paid" ? "PAID" : kind === "unpaid" ? "UNPAID card" : "New";
+    const subject = `${head} order ${o.number} · ${$(o.total_cents)} · ${o.name} · ${delivery ? "Delivery" : "Ship"}`;
+    const text = [
+      `${kind === "paid" ? "Payment received for order" : kind === "unpaid" ? "Card payment not finished for order" : "New order"} ${o.number} — ${s.brand}`, "",
+      `Customer: ${o.name}`, `Email: ${o.email}`, o.phone ? `Phone: ${o.phone}` : "", `Placed by: ${o.placed_by || "Customer"}${rep ? ` · Sales rep: ${rep.name}` : ""}`, "",
+      `${delivery ? "DELIVER TO" : "SHIP TO"} (${how}):`, o.name, addr, "",
+      "ITEMS:", ...lines, "", ...totals, "", `Payment: ${payLine}`, o.customer_note ? `\nCustomer note: ${o.customer_note}` : "",
+      link ? `\nOpen in admin: ${link}` : ""
+    ].filter((x) => x !== null && x !== undefined).join("\n");
+    const r = await mail.send({ to: s.orderEmail, subject, text, html: mailHtml(text), replyTo: o.email });
+    if (!r.ok) console.error(`Order email to ${s.orderEmail} failed: ${r.error}`);
+    results.push(r);
+  }
+  if (s.customerEmailOn && isEmail(o.email) && kind !== "unpaid") {
+    const byRep = /^Rep/.test(o.placed_by || "");
+    const subject = kind === "paid" ? `Payment received · order ${o.number} · ${s.brand}` : `Your order ${o.number} · ${s.brand}`;
+    const intro = kind === "paid" ? `Thank you! We received your card payment of ${$(o.paid_cents ?? o.total_cents)} and your order is being prepared.`
+      : byRep ? `Your sales rep${rep ? ` ${rep.name}` : ""} placed this order for you.` : "We received your order request.";
+    const next = kind === "paid" ? (delivery ? "We'll contact you to arrange the delivery." : "You'll get the tracking number when it ships.") : (s.paymentInstructions || "");
+    const text = [
+      `Hi ${o.name},`, "", intro, "", `Order number: ${o.number}`, `${delivery ? "Delivery" : "Shipping"}: ${how}${o.shipping_cents ? ` (${$(o.shipping_cents)})` : " (free)"}`, "",
+      "ITEMS:", ...lines, "", ...totals, "", next, "",
+      `You can check this order any time under "Check an order"${BASE_URL ? ` at ${BASE_URL}` : ""} with this email and your order number.`,
+      s.contact ? `\nQuestions? ${s.contact}` : "", "", `— ${s.brand}`
+    ].join("\n");
+    const r = await mail.send({ to: o.email, subject, text, html: mailHtml(text), replyTo: isEmail(s.orderEmail || "") ? s.orderEmail : undefined });
+    if (!r.ok) console.error(`Customer email to ${o.email} failed: ${r.error}`);
+    results.push(r);
+  }
+  return results;
+}
 
 /* ---------- customer accounts ---------- */
 async function customerFrom(req) {
@@ -340,10 +543,11 @@ app.get("/api/account", wrap(async (req, res) => {
   const c = await customerFrom(req);
   res.set("Cache-Control", "no-store");
   if (!c) return res.json({ customer: null });
-  const { rows: orders } = await q(`select o.id, o.number, o.status, o.total_cents, o.carrier, o.tracking, o.created_at,
+  const { rows: orders } = await q(`select o.id, o.number, o.status, o.total_cents, o.carrier, o.tracking, o.created_at, o.paid_at, o.pay_method, o.fulfillment, o.shipping_method,
       (select json_agg(json_build_object('name', i.name, 'strength', i.strength, 'qty', i.qty) order by i.id) from order_items i where i.order_id = o.id) items
     from orders o where o.customer_id = $1 order by o.created_at desc limit 100`, [c.id]);
-  orders.forEach((o) => delete o.id);
+  const s = await getSettings();
+  orders.forEach((o) => { o.canPay = canPayByCard(o, s); delete o.id; });
   res.json({ customer: c, orders });
 }));
 app.patch("/api/account", jsonOnly, wrap(async (req, res) => {
@@ -424,19 +628,20 @@ admin.get("/orders", wrap(async (req, res) => {
   const where = [], args = [];
   if (STATUSES.includes(status)) { args.push(status); where.push(`status = $${args.length}`); }
   if (term) { args.push("%" + term.toLowerCase() + "%"); where.push(`(lower(name) like $${args.length} or lower(email) like $${args.length} or number like $${args.length} or lower(tracking) like $${args.length})`); }
-  const { rows } = await q(`select id,number,status,name,email,total_cents,shipping_method,tracking,created_at,placed_by,(select name from users where id = o.rep_id) rep_name,
+  const { rows } = await q(`select id,number,status,name,email,total_cents,shipping_method,tracking,created_at,placed_by,fulfillment,pay_method,paid_at,discount_code,(select name from users where id = o.rep_id) rep_name,
       (select coalesce(sum(qty),0)::int from order_items i where i.order_id = o.id) items
     from orders o ${where.length ? "where " + where.join(" and ") : ""} order by created_at desc limit 300`, args);
   res.json({ orders: rows });
 }));
 admin.get("/orders.csv", wrap(async (req, res) => {
-  const { rows } = await q(`select o.number, o.created_at, o.status, o.name, o.email, o.phone, o.address, o.shipping_method, o.subtotal_cents, o.shipping_cents, o.total_cents, o.carrier, o.tracking,
+  const { rows } = await q(`select o.number, o.created_at, o.status, o.name, o.email, o.phone, o.address, o.fulfillment, o.shipping_method, o.subtotal_cents, o.discount_cents, o.discount_code, o.shipping_cents, o.total_cents, o.pay_method, o.paid_at, o.carrier, o.tracking,
      (select string_agg(i.qty || ' x ' || i.name || ' ' || i.strength, '; ') from order_items i where i.order_id = o.id) items from orders o order by o.created_at desc`);
   const cell = (v) => { const s = String(v ?? ""); return /[",\n]/.test(s) || /^[=+\-@]/.test(s) ? `"${s.replace(/^([=+\-@])/, "'$1").replace(/"/g, '""')}"` : s; };
-  const head = ["Order", "Date", "Status", "Name", "Email", "Phone", "Address", "Shipping", "Subtotal", "Shipping cost", "Total", "Carrier", "Tracking", "Items"];
+  const head = ["Order", "Date", "Status", "Name", "Email", "Phone", "Address", "Ship or delivery", "Method", "Subtotal", "Discount", "Discount code", "Shipping cost", "Total", "Payment", "Paid", "Carrier", "Tracking", "Items"];
   const lines = rows.map((r) => [r.number, r.created_at.toISOString(), r.status, r.name, r.email, r.phone,
     [r.address.line1, r.address.line2, r.address.city, r.address.state, r.address.zip].filter(Boolean).join(", "),
-    r.shipping_method, (r.subtotal_cents / 100).toFixed(2), (r.shipping_cents / 100).toFixed(2), (r.total_cents / 100).toFixed(2), r.carrier, r.tracking, r.items].map(cell).join(","));
+    r.fulfillment === "delivery" ? "Delivery" : "Ship", r.shipping_method, (r.subtotal_cents / 100).toFixed(2), (r.discount_cents / 100).toFixed(2), r.discount_code, (r.shipping_cents / 100).toFixed(2), (r.total_cents / 100).toFixed(2),
+    r.pay_method === "card" ? "Card (Stripe)" : "Order request", r.paid_at ? r.paid_at.toISOString() : "", r.carrier, r.tracking, r.items].map(cell).join(","));
   res.set("Content-Type", "text/csv");
   res.set("Content-Disposition", "attachment; filename=orders.csv");
   res.send([head.join(","), ...lines].join("\n"));
@@ -449,7 +654,23 @@ admin.get("/orders/:id", wrap(async (req, res) => {
   const { rows: events } = await q("select at, who, text from order_events where order_id = $1 order by at desc", [id]);
   o.rep_name = o.rep_id ? (await q("select name from users where id = $1", [o.rep_id])).rows[0]?.name || "" : "";
   const { rows: reps } = await q("select id, name, commission_rate from users where role = 'rep' and active order by name");
-  res.json({ order: o, items, events, reps });
+  const s = await getSettings();
+  res.json({ order: o, items, events, reps, fedexAccount: s.fedexAccount || "", stripe: { ...stripeInfo(), on: !!(s.cardPayments && stripe) }, fulfillment: fulfillmentOptions(s) });
+}));
+// A card payment link for an unpaid order (phone orders, rep orders, order requests the customer wants to pay by card).
+admin.post("/orders/:id/paylink", wrap(async (req, res) => {
+  try { res.json({ ok: true, url: await payLinkFor(intOrNull(req.params.id), originOf(req), req.user.name || req.user.email) }); }
+  catch (e) { bad(res, e.message); }
+}));
+// Resend the order email to the store address and the customer.
+admin.post("/orders/:id/email", wrap(async (req, res) => {
+  const { rows: [o] } = await q("select paid_at from orders where id = $1", [intOrNull(req.params.id)]);
+  if (!o) return bad(res, "Not found", 404);
+  const results = await notifyOrder(intOrNull(req.params.id), o.paid_at ? "paid" : "new");
+  const failed = (results || []).filter((r) => !r.ok);
+  if (!results || !results.length) return bad(res, "Order emails are turned off, or no address is set, under Site settings → Order emails.");
+  if (failed.length) return bad(res, failed[0].error);
+  res.json({ ok: true, sent: results.length });
 }));
 admin.patch("/orders/:id", wrap(async (req, res) => {
   const id = intOrNull(req.params.id), b = req.body || {};
@@ -469,10 +690,23 @@ admin.patch("/orders/:id", wrap(async (req, res) => {
       const { rows: its } = await q("select i.product_id, i.qty from order_items i join products p on p.id = i.product_id where i.order_id = $1 and p.stock is not null", [id]);
       for (const it of its) await moveStock(pool, it.product_id, sign === "+" ? it.qty : -it.qty, { reason: sign === "+" ? "Order cancelled" : "Order reinstated", ref: o.number, who: req.user.name || req.user.email });
       log.push(b.status === "cancelled" ? "Stock returned" : "Stock taken again");
+      // a limited discount code gets its use back when the order is cancelled
+      if (o.discount_code) await q(`update discount_codes set used = greatest(0, used ${sign === "+" ? "-" : "+"} 1) where code = $1`, [o.discount_code]);
     }
   }
   for (const [k, col] of [["carrier", "carrier"], ["tracking", "tracking"], ["internalNote", "internal_note"]]) {
     if (b[k] !== undefined && str(b[k], 2000) !== o[col]) { set(col, str(b[k], 2000)); if (k !== "internalNote") log.push(`${k === "carrier" ? "Carrier" : "Tracking"} set to ${str(b[k], 200) || "(blank)"}`); else log.push("Internal note updated"); }
+  }
+  // switching between shipping and local delivery; the charge follows Site settings unless the order is already paid
+  if (b.fulfillment !== undefined && ["ship", "delivery"].includes(b.fulfillment) && b.fulfillment !== o.fulfillment) {
+    const s = await getSettings();
+    const opt = fulfillmentOptions(s).find((x) => x.key === b.fulfillment) || { label: b.fulfillment === "delivery" ? "Local delivery" : "Shipping", cents: 0, freeOverCents: 0 };
+    set("fulfillment", b.fulfillment); set("shipping_method", opt.label);
+    log.push(`Changed to ${opt.label}`);
+    if (!o.paid_at && b.shippingCents === undefined) {
+      const sc = opt.freeOverCents > 0 && o.subtotal_cents >= opt.freeOverCents ? 0 : opt.cents;
+      if (sc !== o.shipping_cents) { set("shipping_cents", sc); set("total_cents", o.subtotal_cents - o.discount_cents + sc); log.push(`Shipping charge set to $${(sc / 100).toFixed(2)}`); }
+    }
   }
   if (b.repId !== undefined && req.user.role === "owner" && (intOrNull(b.repId) || null) !== o.rep_id) {
     const rid = intOrNull(b.repId) || null;
@@ -585,7 +819,8 @@ function productFields(b) {
   return {
     name: str(b.name, 120), strength: str(b.strength, 40), manufacturer: str(b.manufacturer, 80), category: str(b.category, 60) || "Research peptide",
     description: str(b.description, 2000), price_cents: centsOrNull(b.price), stock: intOrNull(b.stock), max_per_order: intOrNull(b.maxPerOrder),
-    active: b.active !== false, sort: intOrNull(b.sort) ?? 0
+    active: b.active !== false, sort: intOrNull(b.sort) ?? 0,
+    ...(b.cost !== undefined ? { cost_cents: centsOrNull(String(b.cost).replace(/[$,\s]/g, "")) } : {}) // our cost per vial, for markups
   };
 }
 admin.post("/products", owner, wrap(async (req, res) => {
@@ -623,6 +858,7 @@ admin.post("/products/import", owner, wrap(async (req, res) => {
     if (has(r.manufacturer)) f.manufacturer = str(r.manufacturer, 80);
     if (has(r.description)) f.description = str(r.description, 2000);
     if (price !== undefined) f.price_cents = price;
+    if (has(r.cost)) { const c = centsOrNull(String(r.cost).replace(/[$,\s]/g, "")); if (c === null) { problems.push(`Row ${i + 2}: cost "${r.cost}" isn't a number`); continue; } f.cost_cents = c; }
     if (has(r.stock)) f.stock = /^(∞|unlimited|untracked|-)$/i.test(String(r.stock).trim()) ? null : intOrNull(r.stock);
     if (has(r.maxPerOrder)) f.max_per_order = intOrNull(r.maxPerOrder);
     if (has(r.sort)) f.sort = intOrNull(r.sort) ?? 0;
@@ -963,37 +1199,64 @@ admin.get("/inventory.csv", wrap(async (req, res) => {
   res.send([head.join(","), ...out].join("\n"));
 }));
 
-/* ---------- admin: shipping ---------- */
-admin.get("/shipping", wrap(async (req, res) => {
-  const { rows } = await q("select * from shipping_methods order by sort, price_cents");
-  res.json({ shipping: rows });
+/* ---------- admin: discount codes (owner) ---------- */
+admin.get("/discounts", owner, wrap(async (req, res) => {
+  const { rows } = await q(`select ${DISCOUNT_COLS}, (select count(*)::int from orders o where o.discount_code = d.code and o.status <> 'cancelled') orders,
+    (select coalesce(sum(o.discount_cents),0)::int from orders o where o.discount_code = d.code and o.status <> 'cancelled') given_cents from discount_codes d order by created_at desc`);
+  res.json({ codes: rows.map(codeOut) });
 }));
-const shipFields = (b) => ({ name: str(b.name, 80), detail: str(b.detail, 160), price_cents: centsOrNull(b.price) ?? 0, free_over_cents: centsOrNull(b.freeOver), active: b.active !== false, sort: intOrNull(b.sort) ?? 0 });
-admin.post("/shipping", owner, wrap(async (req, res) => {
-  const f = shipFields(req.body || {}); if (!f.name) return bad(res, "Name is required");
+const codeFields = (b) => {
+  const kind = b.kind === "amount" ? "amount" : "percent";
+  const value = kind === "percent" ? Math.min(100, Math.max(0, intOrNull(b.value) || 0)) : Math.max(0, centsOrNull(b.value) || 0);
+  return { code: normCode(b.code), kind, value, min_subtotal_cents: Math.max(0, centsOrNull(b.minSubtotal) || 0), max_uses: intOrNull(b.maxUses) > 0 ? intOrNull(b.maxUses) : null,
+    expires: /^\d{4}-\d{2}-\d{2}$/.test(String(b.expires || "")) ? b.expires : null, active: b.active !== false, note: str(b.note, 200) };
+};
+// a random, easy-to-read code: letters and digits that can't be mixed up
+const randomCode = (prefix = "") => { const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; let s = ""; for (let i = 0; i < 6; i++) s += A[crypto.randomInt(A.length)]; return (prefix ? prefix.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 10) + "-" : "") + s; };
+admin.get("/discounts/new-code", owner, (req, res) => res.json({ code: randomCode(str(req.query.prefix, 10)) }));
+admin.post("/discounts", owner, wrap(async (req, res) => {
+  const f = codeFields(req.body || {});
+  if (!f.code || f.code.length < 3) return bad(res, "Give the code at least 3 letters or digits.");
+  if (!f.value) return bad(res, "Enter what the code takes off.");
   const cols = Object.keys(f);
-  await q(`insert into shipping_methods(${cols}) values (${cols.map((_, i) => "$" + (i + 1))})`, Object.values(f));
+  try { await q(`insert into discount_codes(${cols}) values (${cols.map((_, i) => "$" + (i + 1))})`, Object.values(f)); }
+  catch (e) { return bad(res, "That code already exists. Pick another."); }
+  res.json({ ok: true, code: f.code });
+}));
+admin.patch("/discounts/:id", owner, wrap(async (req, res) => {
+  const b = req.body || {}, id = intOrNull(req.params.id);
+  if (b.active !== undefined) await q("update discount_codes set active = $1 where id = $2", [!!b.active, id]);
+  if (b.note !== undefined) await q("update discount_codes set note = $1 where id = $2", [str(b.note, 200), id]);
+  if (b.maxUses !== undefined) await q("update discount_codes set max_uses = $1 where id = $2", [intOrNull(b.maxUses) > 0 ? intOrNull(b.maxUses) : null, id]);
+  if (b.expires !== undefined) await q("update discount_codes set expires = $1 where id = $2", [/^\d{4}-\d{2}-\d{2}$/.test(String(b.expires || "")) ? b.expires : null, id]);
   res.json({ ok: true });
 }));
-admin.patch("/shipping/:id", owner, wrap(async (req, res) => {
-  const f = shipFields(req.body || {}); if (!f.name) return bad(res, "Name is required");
-  const cols = Object.keys(f);
-  await q(`update shipping_methods set ${cols.map((c, i) => `${c} = $${i + 1}`)} where id = $${cols.length + 1}`, [...Object.values(f), intOrNull(req.params.id)]);
-  res.json({ ok: true });
-}));
-admin.delete("/shipping/:id", owner, wrap(async (req, res) => {
-  await q("delete from shipping_methods where id = $1", [intOrNull(req.params.id)]);
+admin.delete("/discounts/:id", owner, wrap(async (req, res) => {
+  await q("delete from discount_codes where id = $1", [intOrNull(req.params.id)]);
   res.json({ ok: true });
 }));
 
 /* ---------- admin: settings ---------- */
-admin.get("/settings", wrap(async (req, res) => { const st = await getSettings(); delete st.pinHash; delete st.pinSecret; res.json({ settings: st }); }));
+admin.get("/settings", wrap(async (req, res) => {
+  const st = await getSettings(); delete st.pinHash; delete st.pinSecret;
+  res.json({ settings: st, stripe: stripeInfo(), mail: mail.info(), baseUrl: BASE_URL });
+}));
+// sends a test message to the order email address, so the host's email settings can be checked
+admin.post("/mail/test", owner, wrap(async (req, res) => {
+  const s = await getSettings();
+  const to = isEmail(str(req.body?.to, 160)) ? str(req.body.to, 160) : s.orderEmail;
+  if (!isEmail(to || "")) return bad(res, "Set the order email address first.");
+  const r = await mail.send({ to, subject: `Test email from ${s.brand}`, text: `This is a test from the store admin. Order emails are working.\n\nSent ${new Date().toLocaleString("en-US", { timeZone: "America/Chicago" })} (Central).` });
+  if (!r.ok) return bad(res, r.error);
+  res.json({ ok: true, to });
+}));
 admin.put("/settings", owner, wrap(async (req, res) => {
   const b = req.body || {};
   for (const k of Object.keys(DEFAULT_SETTINGS)) {
     if (b[k] === undefined || k === "pinOn") continue; // the PIN has its own endpoint
     let v = b[k];
     if (k === "vialLogoV" || k === "siteLogoV" || k === "vialPhotoV") continue; // changed only by uploading or removing a logo
+    if (k === "orderEmail") { v = str(v, 160).toLowerCase(); if (v && !isEmail(v)) return bad(res, "The order email address doesn't look right."); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; }
     if (k === "perks") {
       const ICONS = ["flask", "doc", "key", "shield", "truck", "star", "lock", "chat", "box", "check"];
       v = (Array.isArray(v) ? v : []).slice(0, 6).map((c) => ({ icon: ICONS.includes(c && c.icon) ? c.icon : "check", title: str(c && c.title, 60), text: str(c && c.text, 160) })).filter((c) => c.title || c.text);
@@ -1105,11 +1368,11 @@ rep.patch("/customers/:id", wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 rep.get("/catalog", wrap(async (req, res) => {
-  const [{ rows: products }, { rows: shipping }] = await Promise.all([
+  const [{ rows: products }, s] = await Promise.all([
     q("select id, name, strength, manufacturer, category, price_cents, stock, max_per_order from products where active order by sort, name, strength, manufacturer, id"),
-    q("select id, name, detail, price_cents, free_over_cents from shipping_methods where active order by sort, price_cents")
+    getSettings()
   ]);
-  res.json({ products, shipping });
+  res.json({ products, fulfillment: fulfillmentOptions(s), cardPayments: !!(s.cardPayments && stripe) });
 }));
 rep.post("/orders", wrap(async (req, res) => {
   const b = req.body || {};
@@ -1120,13 +1383,17 @@ rep.post("/orders", wrap(async (req, res) => {
   const a = c.address || {};
   if (!a.line1 || !a.city || !a.state || !a.zip) return bad(res, "This customer has no full shipping address yet. Edit the customer first.");
   try {
-    const r = await createOrder({ name: c.name, email: c.email, phone: c.phone, address: a, items, shippingMethodId: b.shippingMethodId, note: b.note, customerId: c.id, repId: req.user.id,
+    const r = await createOrder({ name: c.name, email: c.email, phone: c.phone, address: a, items, fulfillment: b.fulfillment, discountCode: b.discountCode, note: b.note, customerId: c.id, repId: req.user.id,
       placedBy: `Rep: ${req.user.name || req.user.email}`, event: `Order placed by sales rep ${req.user.name || req.user.email}`, settings: await getSettings() });
-    res.json({ ok: true, ...r });
+    notifyOrder(r.id, "new").catch((e) => console.error("Order email failed:", e.message));
+    // with card payments on, the rep gets a payment link to text or email to the customer
+    let payUrl = "";
+    if (b.payLink && stripe && (await getSettings()).cardPayments) { try { payUrl = await payLinkFor(r.id, originOf(req), `Rep: ${req.user.name || req.user.email}`); } catch (e) { /* the order still stands */ } }
+    res.json({ ok: true, ...r, payUrl });
   } catch (e) { bad(res, e.message || "Could not place the order."); }
 }));
 rep.get("/orders", wrap(async (req, res) => {
-  const { rows } = await q(`select o.number, o.status, o.name, o.total_cents, o.subtotal_cents, o.discount_cents, o.carrier, o.tracking, o.created_at, o.placed_by,
+  const { rows } = await q(`select o.number, o.status, o.name, o.total_cents, o.subtotal_cents, o.discount_cents, o.discount_code, o.shipping_cents, o.shipping_method, o.fulfillment, o.pay_method, o.paid_at, o.carrier, o.tracking, o.created_at, o.placed_by,
       (select json_agg(json_build_object('name', i.name, 'strength', i.strength, 'qty', i.qty, 'unit', i.unit_cents) order by i.id) from order_items i where i.order_id = o.id) items
     from orders o where o.rep_id = $1 order by o.created_at desc limit 300`, [req.user.id]);
   res.json({ orders: rows });
@@ -1218,10 +1485,12 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
       for (const r of list) {
         const m = have.find((p) => p.name.toLowerCase() === r.name.toLowerCase() && sz(p.strength) === sz(r.strength) && !p.manufacturer);
         const price = typeof r.price === "number" ? Math.round(r.price * 100) : null; // a price in the list sets the store price
+        const cost = typeof r.cost === "number" ? Math.round(r.cost * 100) : null;    // a cost in the list sets our cost per vial
         if (m) { await q(`update products set category = $1,
             price_cents = case when $4::int is not null then $4::int when description like 'Sample listing%' then null else price_cents end,
-            description = case when $2 <> '' then $2 when description like 'Sample listing%' then '' else description end where id = $3`, [r.category, r.description || "", m.id, price]); updated++; }
-        else { await q("insert into products(name, strength, category, description, sort, price_cents) values ($1,$2,$3,$4,$5,$6)", [r.name, r.strength, r.category, r.description || "", ++sort, price]); added++; }
+            cost_cents = coalesce($5::int, cost_cents),
+            description = case when $2 <> '' then $2 when description like 'Sample listing%' then '' else description end where id = $3`, [r.category, r.description || "", m.id, price, cost]); updated++; }
+        else { await q("insert into products(name, strength, category, description, sort, price_cents, cost_cents) values ($1,$2,$3,$4,$5,$6,$7)", [r.name, r.strength, r.category, r.description || "", ++sort, price, cost]); added++; }
       }
       await q("insert into settings(key,value) values ('catalogImportMark',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(importTag)]);
       console.log(`Catalog import (${importTag}): added ${added}, updated ${updated}`);
@@ -1243,4 +1512,8 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
   }
   const port = process.env.PORT || 3000;
   app.listen(port, () => console.log("Store running on port " + port));
+  console.log(`Card payments: ${stripe ? `Stripe ${stripeInfo().mode} key set${stripeInfo().webhook ? ", webhook secret set" : ", no webhook secret"}` : "off (no STRIPE_SECRET_KEY)"} · Email: ${mail.info().ready ? mail.info().detail : "off (no SMTP or Resend settings)"}`);
+  // card orders started but never paid are reported to the store once; checked every 10 minutes
+  const sweep = () => sweepUnpaidCardOrders().catch((e) => console.error("Unpaid sweep failed:", e.message));
+  setTimeout(sweep, 60 * 1000); setInterval(sweep, 10 * 60 * 1000);
 })().catch((e) => { console.error(e); process.exit(1); });

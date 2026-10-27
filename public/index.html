@@ -8,7 +8,7 @@
 <title>360 Medical Peptides</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Poppins:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="/store.css?v=1793128572">
+<link rel="stylesheet" href="/store.css?v=1793132881">
 <link rel="manifest" href="/manifest.webmanifest?v=3">
 <meta name="theme-color" content="#0b4d96">
 <link rel="icon" href="/icon-192.png">
@@ -145,7 +145,8 @@
       <div class="field"><label class="eyebrow" for="aState">State</label><input id="aState" autocomplete="address-level1" required></div>
       <div class="field"><label class="eyebrow" for="aZip">ZIP</label><input id="aZip" autocomplete="postal-code" inputmode="numeric" required></div>
     </div>
-    <div class="field" id="shipField"><label class="eyebrow" for="ship">Shipping</label><select id="ship"></select></div>
+    <fieldset class="field choicebox" id="fulfilField"><legend class="eyebrow">How would you like to get your order?</legend><div class="choices" id="fulfil"></div></fieldset>
+    <div class="field"><label class="eyebrow" for="cCode">Discount code (optional)</label><div class="coderow"><input id="cCode" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter a code"><button class="btn" type="button" id="cCodeApply">Apply</button></div><span class="dist" id="cCodeMsg"></span></div>
     <div class="field"><label class="eyebrow" for="cNote">Note (optional)</label><textarea id="cNote" maxlength="1000"></textarea></div>
     <label class="hp">Leave this empty <input id="website" tabindex="-1" autocomplete="off"></label>
     <div class="totals" id="coTotals"></div>
@@ -180,7 +181,7 @@
 
 <script src="/refresh.js?v=1"></script>
 <script src="/vial.js?v=1793128623"></script>
-<script src="/store.js?v=1793130869"></script>
+<script src="/store.js?v=1793132881"></script>
 <script src="/install.js?v=1792620296"></script>
 </body>
 </html>

@@ -186,6 +186,26 @@ alter table orders add column if not exists rep_id int references users(id) on d
 alter table orders add column if not exists commission_rate numeric(5,2);
 alter table orders add column if not exists payout_id int references commission_payouts(id) on delete set null;
 alter table orders add column if not exists placed_by text not null default '';
+alter table orders add column if not exists fulfillment text not null default 'ship';
+alter table orders add column if not exists pay_method text not null default 'request';
+alter table orders add column if not exists stripe_session text;
+alter table orders add column if not exists stripe_pi text;
+alter table orders add column if not exists paid_cents int;
+alter table orders add column if not exists discount_code text not null default '';
+-- discount codes customers type at checkout; made in admin
+create table if not exists discount_codes (
+  id serial primary key,
+  code text unique not null,
+  kind text not null default 'percent',
+  value int not null default 0,
+  min_subtotal_cents int not null default 0,
+  max_uses int,
+  used int not null default 0,
+  expires date,
+  active boolean not null default true,
+  note text not null default '',
+  created_at timestamptz not null default now()
+);
 create index if not exists orders_rep_idx on orders(rep_id);
 create index if not exists orders_customer_idx on orders(customer_id);
 create index if not exists orders_status_idx on orders(status);
@@ -207,6 +227,7 @@ drop trigger if exists t_bump on stock_moves; create trigger t_bump after insert
 drop trigger if exists t_bump on commission_payouts; create trigger t_bump after insert or update or delete on commission_payouts for each statement execute function bump_app_version();
 drop trigger if exists t_bump on users; create trigger t_bump after insert or update or delete on users for each statement execute function bump_app_version();
 drop trigger if exists t_bump on settings; create trigger t_bump after insert or update or delete on settings for each statement execute function bump_app_version();
+drop trigger if exists t_bump on discount_codes; create trigger t_bump after insert or update or delete on discount_codes for each statement execute function bump_app_version();
 `;
 
 const DEFAULT_SETTINGS = {
@@ -238,6 +259,22 @@ const DEFAULT_SETTINGS = {
   minAge: 21,
   ageGate: true,
   minOrderCents: 0,
+  // Shipping & delivery: customers choose one at checkout. Shipping is charged, local delivery is free.
+  shippingOn: true,
+  shippingLabel: "FedEx shipping",
+  shippingNote: "Ships in 1 to 3 business days",
+  shippingCents: 1500,
+  shippingFreeOverCents: 0,   // 0 = never free
+  deliveryOn: true,
+  deliveryLabel: "Local delivery",
+  deliveryNote: "Free. We'll contact you to set a time.",
+  fedexAccount: "",           // your FedEx account number (staff see it on orders; never shown to customers)
+  // Payments: card payments run through Stripe once STRIPE_SECRET_KEY is set on the host
+  cardPayments: false,
+  // Order emails
+  orderEmail: "orders@360medical.net",
+  orderEmailOn: true,
+  customerEmailOn: true,
   priceNote: "Prices in US dollars, per vial.",
   paymentInstructions: "We'll review your order and reach out with the total and payment options. Your order ships once payment is received.",
   intro: "Many of our products come with an independent lab report. Open one to see the results, then check it on the lab's own site with the key printed on it.",
@@ -395,6 +432,16 @@ async function init() {
     await q("delete from settings where key = 'productLabel'");
     await q(`update settings set value = jsonb_set(value, '{labelShows}', '"name"') where key = 'vial'`);
     await q("insert into settings(key, value) values ('codesRemoved', 'true') on conflict (key) do nothing");
+  }
+  // Shipping moved from the old shipping-options table to Site settings (Oct 2026): carry over a charge set there once.
+  const { rows: [shipMoved] } = await q("select 1 from settings where key = 'shippingMoved'");
+  if (!shipMoved) {
+    const { rows: [m] } = await q("select price_cents, free_over_cents from shipping_methods where active and price_cents > 0 order by price_cents limit 1");
+    if (m) {
+      await q("update settings set value = $1 where key = 'shippingCents'", [JSON.stringify(m.price_cents)]);
+      if (m.free_over_cents) await q("update settings set value = $1 where key = 'shippingFreeOverCents'", [JSON.stringify(m.free_over_cents)]);
+    }
+    await q("insert into settings(key, value) values ('shippingMoved', 'true') on conflict (key) do nothing");
   }
   await q("delete from sessions where expires < now()");
   await q("delete from customer_sessions where expires < now()");

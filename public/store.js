@@ -28,7 +28,8 @@ function banner(el, S) {
   el.innerHTML = `<div class="mq">${item.repeat(6)}</div><div class="mq" aria-hidden="true">${item.repeat(6)}</div>`;
   el.setAttribute("aria-label", S.announcement);
 }
-let S = {}, PRODUCTS = [], REPORTS = [], SHIP = [], DOCS = [];
+let S = {}, PRODUCTS = [], REPORTS = [], FUL = [], DOCS = [];
+let CODE = null; // discount code applied at checkout: { code, kind, value, label, minSubtotalCents }
 let cart = store.get("cart") || [];   // [{id, qty}]
 const saveCart = () => { store.set("cart", cart); drawCartCount(); };
 
@@ -113,7 +114,15 @@ function cartLines() {
   return cart.map((c) => ({ ...c, p: PRODUCTS.find((p) => p.id === c.id) })).filter((l) => l.p && l.p.price_cents !== null);
 }
 function drawCartCount() { $("cartN").textContent = cart.reduce((n, c) => n + c.qty, 0); }
-function shipCost(m, sub) { return !m ? 0 : m.free_over_cents !== null && sub >= m.free_over_cents ? 0 : m.price_cents; }
+// what the chosen way of getting the order costs on this subtotal (shipping can be free over an amount; delivery is free)
+function shipCost(f, sub) { return !f ? 0 : f.freeOverCents > 0 && sub >= f.freeOverCents ? 0 : f.cents; }
+const chosenFul = () => FUL.find((f) => f.key === ($("fulfil").querySelector("input:checked") || {}).value) || FUL[0] || null;
+// what the applied discount code takes off a subtotal (the server checks it again when the order is placed)
+function codeOff(sub) {
+  if (!CODE || !sub) return 0;
+  if (CODE.minSubtotalCents && sub < CODE.minSubtotalCents) return 0;
+  return Math.max(0, Math.min(sub, CODE.kind === "percent" ? Math.round(sub * CODE.value / 100) : CODE.value));
+}
 function drawCart() {
   const lines = cartLines();
   if (lines.length !== cart.length) { cart = lines.map(({ id, qty }) => ({ id, qty })); saveCart(); }
@@ -131,7 +140,7 @@ function drawCart() {
   </div>`).join("");
   const min = S.minOrderCents || 0;
   $("cartFoot").innerHTML = `<div class="totals"><div class="big"><span>Subtotal</span><span>${money(sub)}</span></div>
-    <div class="dist"><span>Shipping is added at checkout.</span></div></div>
+    <div class="dist"><span>${FUL.some((f) => f.key === "delivery") ? "Shipping or free local delivery is chosen at checkout." : "Shipping is added at checkout."}</span></div></div>
     <p class="research">All items are sold for laboratory research only.</p>
     ${min && sub < min ? `<div class="err">The minimum order is ${money(min)}.</div>` : ""}
     ${S.storeOpen ? `<button class="btn solid wide" type="button" id="toCheckout" ${min && sub < min ? "disabled" : ""}>Checkout</button>` : `<div class="err">Ordering is paused right now. Please check back soon.</div>`}`;
@@ -148,23 +157,47 @@ function addToCart(id, n = 1) {
 }
 
 /* ---------- checkout ---------- */
+const submitLabel = () => (S.cardPayments ? "Pay with card" : "Submit order request");
 function drawTotals() {
   const lines = cartLines(), sub = lines.reduce((s, l) => s + l.p.price_cents * l.qty, 0);
-  const m = SHIP.find((x) => String(x.id) === $("ship").value);
-  const sc = shipCost(m, sub);
+  const f = chosenFul(), sc = shipCost(f, sub), off = codeOff(sub);
   $("coTotals").innerHTML = `<div><span>${plural(lines.reduce((n, l) => n + l.qty, 0), "item")}</span><span>${money(sub)}</span></div>
-    ${SHIP.length ? `<div><span>Shipping</span><span>${sc ? money(sc) : "Free"}</span></div>` : `<div><span>Shipping</span><span>Confirmed with your order</span></div>`}
-    <div class="big"><span>Estimated total</span><span>${money(sub + sc)}</span></div>`;
+    ${off ? `<div class="off"><span>Discount (${esc(CODE.code)})</span><span>−${money(off)}</span></div>` : ""}
+    ${f ? `<div><span>${esc(f.label)}</span><span>${sc ? money(sc) : "Free"}</span></div>` : `<div><span>Shipping</span><span>Confirmed with your order</span></div>`}
+    <div class="big"><span>${S.cardPayments ? "Total" : "Estimated total"}</span><span>${money(sub - off + sc)}</span></div>`;
+  if (CODE && CODE.minSubtotalCents && sub < CODE.minSubtotalCents) $("cCodeMsg").textContent = `${CODE.code} needs an order of at least ${money(CODE.minSubtotalCents)}.`;
+}
+function drawFulfillment() {
+  const lines = cartLines(), sub = lines.reduce((s, l) => s + l.p.price_cents * l.qty, 0);
+  const keep = ($("fulfil").querySelector("input:checked") || {}).value || store.get("fulfil") || (FUL[0] || {}).key;
+  $("fulfilField").hidden = !FUL.length;
+  $("fulfil").innerHTML = FUL.map((f, i) => `<label class="choice-opt"><input type="radio" name="fulfil" value="${esc(f.key)}"${f.key === keep || (!FUL.some((x) => x.key === keep) && i === 0) ? " checked" : ""}>
+    <span><strong>${esc(f.label)}</strong>${f.note || (f.key === "ship" && f.freeOverCents > 0) ? `<small>${esc(f.note)}${f.key === "ship" && f.freeOverCents > 0 ? `${f.note ? " · " : ""}Free over ${money(f.freeOverCents)}` : ""}</small>` : ""}</span>
+    <span class="amt">${shipCost(f, sub) ? money(shipCost(f, sub)) : "Free"}</span></label>`).join("");
+}
+async function applyCode() {
+  const code = $("cCode").value.trim().toUpperCase();
+  $("cCodeMsg").textContent = "";
+  if (!code) { CODE = null; drawTotals(); return; }
+  const lines = cartLines(), sub = lines.reduce((s, l) => s + l.p.price_cents * l.qty, 0);
+  try {
+    const j = await post("/api/discount", { code, subtotalCents: sub });
+    CODE = { code: j.code, kind: j.kind, value: j.value, label: j.label, minSubtotalCents: j.minSubtotalCents || 0 };
+    $("cCode").value = j.code;
+    $("cCodeMsg").textContent = `${j.label} applied.`;
+  } catch (x) { CODE = null; $("cCodeMsg").textContent = x.message; }
+  drawTotals();
 }
 function openCheckout() {
   closeD($("cart"));
   $("coForm").hidden = false; $("coDone").hidden = true; $("coErr").hidden = true;
   $("cfAgeText").textContent = `I am ${S.minAge} or older.`;
-  $("shipField").hidden = !SHIP.length;
-  $("ship").innerHTML = SHIP.map((m) => `<option value="${m.id}">${esc(m.name)}${m.detail ? " · " + esc(m.detail) : ""} · ${m.price_cents ? money(m.price_cents) : "Free"}${m.free_over_cents !== null ? ` (free over ${money(m.free_over_cents)})` : ""}</option>`).join("");
+  $("coIntro").textContent = S.cardPayments ? "You'll pay securely by card on the next screen. We never see your card number." : "No payment is taken here. We review your order, then contact you with the total and how to pay.";
+  $("coSubmit").textContent = submitLabel();
+  drawFulfillment();
   const saved = ME ? { name: ME.name, email: ME.email, phone: ME.phone, ...(ME.address || {}) } : (store.get("buyer") || {});
   [["cName", "name"], ["cEmail", "email"], ["cPhone", "phone"], ["a1", "line1"], ["a2", "line2"], ["aCity", "city"], ["aState", "state"], ["aZip", "zip"]].forEach(([id, k]) => { if (saved[k] && !$(id).value) $(id).value = saved[k]; });
-  drawTotals();
+  if (CODE) applyCode(); else drawTotals();
   openD($("checkout"));
 }
 async function submitOrder(e) {
@@ -172,31 +205,56 @@ async function submitOrder(e) {
   const err = (m) => { $("coErr").textContent = m; $("coErr").hidden = false; $("coErr").scrollIntoView({ block: "nearest" }); };
   const v = (id) => $(id).value.trim();
   if (!v("cName") || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v("cEmail"))) return err("Enter your name and a valid email.");
-  if (!v("a1") || !v("aCity") || !v("aState") || !v("aZip")) return err("Enter your full shipping address.");
+  if (!v("a1") || !v("aCity") || !v("aState") || !v("aZip")) return err("Enter your full address.");
   if (!$("cfAge").checked || !$("cfRes").checked) return err("Please confirm both statements to place the order.");
+  const f = chosenFul();
   const body = {
     name: v("cName"), email: v("cEmail"), phone: v("cPhone"),
     address: { line1: v("a1"), line2: v("a2"), city: v("aCity"), state: v("aState"), zip: v("aZip"), country: "US" },
-    shippingMethodId: SHIP.length ? +$("ship").value : null, note: v("cNote"), website: $("website").value,
-    confirmAge: true, confirmResearch: true, items: cart
+    fulfillment: f ? f.key : "ship", discountCode: CODE ? CODE.code : "", pay: S.cardPayments ? "card" : "request",
+    note: v("cNote"), website: $("website").value, confirmAge: true, confirmResearch: true, items: cart
   };
-  $("coSubmit").disabled = true; $("coSubmit").textContent = "Sending…";
+  $("coSubmit").disabled = true; $("coSubmit").textContent = S.cardPayments ? "Opening the payment page…" : "Sending…";
   try {
     const res = await fetch("/api/orders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await res.json();
     if (!res.ok) return err(j.error || "Could not place the order.");
     store.set("buyer", { name: body.name, email: body.email, phone: body.phone, ...body.address });
-    cart = []; saveCart(); drawProducts();
+    if (f) store.set("fulfil", f.key);
+    cart = []; saveCart(); drawProducts(); CODE = null; $("cCode").value = ""; $("cCodeMsg").textContent = "";
+    if (j.payUrl) { store.set("pendingPay", { number: j.number, email: body.email }); location.href = j.payUrl; return; }
     $("coForm").hidden = true;
     $("coDone").hidden = false;
     $("coDone").innerHTML = `<div class="sectionhead" style="padding:0"><h2>Order received</h2><button class="btn" type="button" data-close>Close</button></div>
       <div class="okbox"><span class="eyebrow">Your order number</span><span class="num">${esc(j.number)}</span>
-      <span>Estimated total ${money(j.totalCents)}</span></div>
+      <span>${esc(j.shippingName || "")}${j.shippingName ? " · " : ""}Estimated total ${money(j.totalCents)}</span></div>
       <p>${esc(j.paymentInstructions)}</p>
       <p class="dist">${ME ? "This order is saved under My account." : "Save your order number. You can check its status any time under \"Check an order\" with the email you used, or create an account to keep all your orders in one place."}</p>`;
     load(); loadAccount(); // refresh stock and order history
   } catch (x) { err("Couldn't reach the store. Check your connection and try again."); }
-  finally { $("coSubmit").disabled = false; $("coSubmit").textContent = "Submit order request"; }
+  finally { $("coSubmit").disabled = false; $("coSubmit").textContent = submitLabel(); }
+}
+// Back from Stripe: ?paid=NUMBER (paid), ?pay=cancelled&o=NUMBER (left without paying), ?pay=pending (not confirmed yet)
+function afterPayment() {
+  const u = new URL(location.href), paid = u.searchParams.get("paid"), pay = u.searchParams.get("pay"), num = u.searchParams.get("o") || paid;
+  if (!paid && !pay) return;
+  history.replaceState(null, "", u.pathname + u.hash);
+  const pending = store.get("pendingPay") || {};
+  const payBtn = num && pending.number === num && pending.email ? `<button class="btn solid" type="button" id="payAgain">Pay now by card</button>` : "";
+  $("coForm").hidden = true; $("coDone").hidden = false;
+  $("coDone").innerHTML = `<div class="sectionhead" style="padding:0"><h2>${paid ? "Payment received" : pay === "cancelled" ? "Order saved, not paid" : "Checking your payment"}</h2><button class="btn" type="button" data-close>Close</button></div>
+    ${paid ? `<div class="okbox"><span class="eyebrow">Your order number</span><span class="num">${esc(num)}</span><span>Thank you! Your payment went through and your order is being prepared. A confirmation is on its way to your email.</span></div>`
+      : pay === "cancelled" ? `<div class="okbox"><span class="eyebrow">Order ${esc(num)}</span><span>We saved your order, but no payment was made. You can pay now, or later under "Check an order" with your order number and email.</span>${payBtn ? `<div>${payBtn}</div>` : ""}</div>`
+      : pay === "pending" ? `<div class="okbox"><span class="eyebrow">Order ${esc(num)}</span><span>Your payment hasn't been confirmed yet. If you paid, it will show within a few minutes under "Check an order". If not, you can pay there by card.</span></div>`
+      : `<div class="err">We couldn't match that payment to an order. Check your order under "Check an order", or contact us.</div>`}`;
+  if (paid) store.set("pendingPay", null);
+  const b = $("payAgain"); if (b) b.onclick = () => payOrder(num, pending.email, b);
+  openD($("checkout"));
+}
+async function payOrder(number, email, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "Opening the payment page…"; }
+  try { const j = await post("/api/orders/pay", { number, email }); store.set("pendingPay", { number, email }); location.href = j.payUrl; }
+  catch (x) { toast(x.message); if (btn) { btn.disabled = false; btn.textContent = "Pay now by card"; } }
 }
 
 /* ---------- lab report library ---------- */
@@ -281,10 +339,12 @@ async function lookup(e) {
     if (!res.ok) { out.innerHTML = `<div class="err">${esc(j.error)}</div>`; return; }
     const o = j.order;
     out.innerHTML = `<div class="okbox"><span class="eyebrow">Order ${esc(o.number)} · placed ${fmtDate(o.created_at)}</span>
-      <strong>${esc(STATUS_TEXT[o.status] || o.status)}</strong>
+      <strong>${esc(o.paid_at && o.status === "paid" ? "Paid, getting ready" + (o.fulfillment === "delivery" ? " for delivery" : " to ship") : STATUS_TEXT[o.status] || o.status)}</strong>
       ${o.tracking ? `<span>${esc(o.carrier || "Tracking")}: <span class="mono">${esc(o.tracking)}</span></span>` : ""}
       <span>${j.items.map((i) => `${i.qty} × ${esc(i.name)} ${esc(i.strength)}`).join(", ")}</span>
-      <span>Total ${money(o.total_cents)}</span></div>`;
+      <span>${o.shipping_method ? esc(o.shipping_method) + (o.shipping_cents ? ` ${money(o.shipping_cents)}` : " (free)") + " · " : ""}${o.discount_cents ? `Discount −${money(o.discount_cents)} · ` : ""}Total ${money(o.total_cents)}${o.paid_at ? " · paid by card" : ""}</span>
+      ${o.canPay ? `<div><button class="btn solid" type="button" id="payLookup">Pay now by card</button></div>` : ""}</div>`;
+    const b = $("payLookup"); if (b) b.onclick = () => payOrder(o.number, $("tEmail").value.trim(), b);
   } catch (x) { out.innerHTML = `<div class="err">Couldn't reach the store. Try again.</div>`; }
 }
 
@@ -336,9 +396,10 @@ function acctView(mode) {
     <p class="dist">Signed in as ${esc(ME.email)} · <button class="linkbtn" type="button" id="acOut">Sign out</button></p>
     <div class="tabs"><button type="button" class="${tab === "orders" ? "on" : ""}" data-acct="orders">My orders</button><button type="button" class="${tab === "details" ? "on" : ""}" data-acct="details">Details &amp; address</button></div>
     ${tab === "orders" ? `<div class="olist">${MY_ORDERS.length ? MY_ORDERS.map((o) => `<div class="orow"><div class="top2"><span>Order ${esc(o.number)}</span><span>${money(o.total_cents)}</span></div>
-        <span>${fmtDate(o.created_at)} · ${esc(STATUS_TEXT[o.status] || o.status)}</span>
+        <span>${fmtDate(o.created_at)} · ${esc(STATUS_TEXT[o.status] || o.status)}${o.shipping_method ? ` · ${esc(o.shipping_method)}` : ""}${o.paid_at ? " · paid by card" : ""}</span>
         <span class="dist">${(o.items || []).map((i) => `${i.qty} × ${esc(i.name)} ${esc(i.strength)}`).join(", ")}</span>
-        ${o.tracking ? `<span>${esc(o.carrier || "Tracking")}: <span class="mono">${esc(o.tracking)}</span></span>` : ""}</div>`).join("") : `<p class="dist">No orders yet.</p>`}</div>`
+        ${o.tracking ? `<span>${esc(o.carrier || "Tracking")}: <span class="mono">${esc(o.tracking)}</span></span>` : ""}
+        ${o.canPay ? `<span><button class="btn solid" type="button" data-payorder="${esc(o.number)}">Pay now by card</button></span>` : ""}</div>`).join("") : `<p class="dist">No orders yet.</p>`}</div>`
     : `<form id="acForm" class="stack"><div class="grid2">${fld("mN", "Full name", "text", "name", ME.name)}${fld("mPh", "Phone", "tel", "tel", ME.phone)}</div>
       <div class="grid2">${fld("m1", "Street address", "text", "address-line1", a.line1)}${fld("m2", "Apt, suite", "text", "address-line2", a.line2)}${fld("mC", "City", "text", "address-level2", a.city)}${fld("mS", "State", "text", "address-level1", a.state)}${fld("mZ", "ZIP", "text", "postal-code", a.zip)}</div>
       <details><summary class="eyebrow" style="cursor:pointer">Change password</summary><div class="grid2" style="margin-top:.7rem">${fld("mPc", "Current password", "password", "current-password")}${fld("mPn", "New password", "password", "new-password")}</div></details>
@@ -360,6 +421,8 @@ document.addEventListener("click", (e) => {
   if (close) { const d = close.closest("dialog"); if (d) closeD(d); if (close.dataset.goto) $(close.dataset.goto).scrollIntoView({ behavior: "smooth" }); if (close.tagName !== "A") return; }
   const ac = t.closest("[data-acct]");
   if (ac) { acctView(ac.dataset.acct); return; }
+  const po = t.closest("[data-payorder]");
+  if (po && ME) { payOrder(po.dataset.payorder, ME.email, po); return; }
   const c = t.closest("[data-cat]");
   if (c && LAB) { location.href = "/#products"; return; }
   if (c) { e.preventDefault(); cat = c.dataset.cat; drawProducts(); $("products").scrollIntoView({ behavior: "smooth" }); return; }
@@ -395,7 +458,10 @@ $("hq").addEventListener("keydown", (e) => { if (e.key === "Enter") $(LAB ? "rep
 $("q").addEventListener("input", (e) => { state.q = e.target.value; drawReports(); });
 $("product").addEventListener("change", (e) => { state.pick = e.target.value; state.size = ""; fillSizes(); drawReports(); });
 $("size").addEventListener("change", (e) => { state.size = e.target.value; drawReports(); });
-$("ship").addEventListener("change", drawTotals);
+$("fulfil").addEventListener("change", drawTotals);
+$("cCodeApply").onclick = applyCode;
+$("cCode").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); applyCode(); } });
+$("cCode").addEventListener("input", () => { if (CODE && $("cCode").value.trim().toUpperCase() !== CODE.code) { CODE = null; $("cCodeMsg").textContent = ""; drawTotals(); } });
 document.addEventListener("change", (e) => { if (e.target.matches("[data-coaonly]")) { coaOnly = e.target.checked; store.set("coaOnly", coaOnly); if (LAB) location.href = "/#products"; else drawProducts(); } });
 $("coForm").addEventListener("submit", submitOrder);
 $("trackForm").addEventListener("submit", lookup);
@@ -417,9 +483,10 @@ function drawHelix() {
 let first = true;
 async function load() {
   const res = await fetch("/api/store"); const j = await res.json();
-  S = j.settings; PRODUCTS = j.products; REPORTS = j.reports; SHIP = j.shipping; DOCS = j.documents || [];
+  S = j.settings; PRODUCTS = j.products; REPORTS = j.reports; FUL = j.fulfillment || []; DOCS = j.documents || [];
   if (first) {
     first = false;
+    afterPayment();
     const name = S.brand || "360 Medical Peptides";
     document.title = LAB ? `Lab reports · ${name}` : name;
     if (LAB) $("hq").placeholder = "Search lab reports";
