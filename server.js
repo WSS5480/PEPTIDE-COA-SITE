@@ -690,7 +690,8 @@ const admin = express.Router();
 admin.use(wrap(auth));
 // Sales reps get the top of the admin only (dashboard, orders, customers, commissions, their account), scoped to their own customers.
 const REP_OK = [[/^\/stats$/, "GET"], [/^\/orders(\.csv)?$/, "GET"], [/^\/orders\/\d+$/, "GET"], [/^\/orders\/\d+\/(note|paylink)$/, "POST"],
-  [/^\/customers$/, "GET"], [/^\/customers$/, "POST"], [/^\/customers\/\d+$/, "PATCH"], [/^\/commissions(\.csv)?$/, "GET"]];
+  [/^\/customers$/, "GET"], [/^\/customers$/, "POST"], [/^\/customers\/\d+$/, "PATCH"], [/^\/commissions(\.csv)?$/, "GET"],
+  [/^\/catalog$/, "GET"], [/^\/orders$/, "POST"]];
 admin.use((req, res, next) => (req.user.role !== "rep" || REP_OK.some(([re, m]) => re.test(req.path) && m === req.method) ? next() : bad(res, "Sales reps can only see their own customers, orders and commissions.", 403)));
 const isRep = (req) => req.user.role === "rep";
 
@@ -830,6 +831,39 @@ admin.post("/orders/:id/note", wrap(async (req, res) => {
   if (isRep(req) && !(await q("select 1 from orders where id = $1 and rep_id = $2", [intOrNull(req.params.id), req.user.id])).rows.length) return bad(res, "Not found", 404);
   await q("insert into order_events(order_id, who, text) values ($1,$2,$3)", [intOrNull(req.params.id), req.user.name || req.user.email, t]);
   res.json({ ok: true });
+}));
+
+/* ---------- admin: placing an order for a customer (phone orders, reps' customers) ---------- */
+// the product list priced for one customer (their markup, if any); our cost never leaves the server
+admin.get("/catalog", wrap(async (req, res) => {
+  const [{ rows: products }, s] = await Promise.all([
+    q("select id, name, strength, manufacturer, category, price_cents, cost_cents, stock, max_per_order from products where active order by sort, name, strength, manufacturer, id"),
+    getSettings()
+  ]);
+  let markup = null, customer = null;
+  if (intOrNull(req.query.customerId)) {
+    const { rows: [c] } = await q(`select id, name, email, phone, address, markup, rep_id, (select name from users where id = customers.rep_id) rep_name from customers where id = $1 and active ${isRep(req) ? "and rep_id = $2" : ""}`, isRep(req) ? [intOrNull(req.query.customerId), req.user.id] : [intOrNull(req.query.customerId)]);
+    if (c) { customer = c; if (c.markup !== null) markup = Number(c.markup); }
+  }
+  res.json({ products: products.map(({ cost_cents, ...p }) => ({ ...p, price_cents: priceFor({ ...p, cost_cents }, markup) })), fulfillment: fulfillmentOptions(s), cardPayments: !!(s.cardPayments && stripe), markup, customer });
+}));
+admin.post("/orders", wrap(async (req, res) => {
+  const b = req.body || {};
+  const { rows: [c] } = await q(`select id, name, email, phone, address, markup, rep_id from customers where id = $1 and active ${isRep(req) ? "and rep_id = $2" : ""}`, isRep(req) ? [intOrNull(b.customerId), req.user.id] : [intOrNull(b.customerId)]);
+  if (!c) return bad(res, isRep(req) ? "Pick one of your customers." : "Pick a customer.");
+  const items = (Array.isArray(b.items) ? b.items : []).filter((i) => intOrNull(i.qty) > 0).slice(0, 100);
+  if (!items.length) return bad(res, "Add at least one product.");
+  const a = c.address || {};
+  if (!a.line1 || !a.city || !a.state || !a.zip) return bad(res, "This customer has no full address yet. Edit the customer first.");
+  const who = isRep(req) ? `Rep: ${req.user.name || req.user.email}` : `${req.user.role === "owner" ? "Owner" : "Staff"}: ${req.user.name || req.user.email}`;
+  try {
+    const r = await createOrder({ name: c.name, email: c.email || "", phone: c.phone, address: a, items, fulfillment: b.fulfillment, discountCode: b.discountCode, markup: c.markup !== null ? Number(c.markup) : null, note: b.note, customerId: c.id, repId: c.rep_id,
+      placedBy: who, event: `Order placed in admin by ${who}`, settings: await getSettings() });
+    notifyOrder(r.id, "new").catch((e) => console.error("Order email failed:", e.message));
+    let payUrl = "";
+    if (b.payLink && stripe && (await getSettings()).cardPayments) { try { payUrl = await payLinkFor(r.id, originOf(req), who); } catch (e) { /* the order still stands */ } }
+    res.json({ ok: true, ...r, payUrl });
+  } catch (e) { bad(res, e.message || "Could not place the order."); }
 }));
 
 /* ---------- admin: customers ---------- */

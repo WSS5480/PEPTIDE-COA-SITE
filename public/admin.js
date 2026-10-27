@@ -54,7 +54,7 @@ function drawLogin(msg) {
 /* ---------- shell ---------- */
 // [key, label, who]: "all" = owner, staff and sales reps · "team" = owner and staff · "owner" · "ownerrep" = owner and reps. "line" draws the divider:
 // sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
-const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["line"],
+const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["line"],
   ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["staff", "Staff logins", "owner"], ["account", "My account", "all"]];
 const canSee = (who) => who === "all" || (who === "owner" && isOwner()) || (who === "team" && !isRep()) || (who === "ownerrep" && (isOwner() || isRep()));
 function shell() {
@@ -85,7 +85,7 @@ function go(v, id, opts = {}) {
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  ({ dashboard, orders, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account }[v] || dashboard)();
+  ({ dashboard, orders, neworder, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account }[v] || dashboard)();
   if (!opts.keepScroll) window.scrollTo(0, 0);
 }
 const pane = () => document.getElementById("pane");
@@ -237,6 +237,103 @@ async function orderDetail(id) {
 }
 
 
+/* ---------- new order for a customer (phone orders; reps for their customers) ---------- */
+let pickCustomer = null; // set by the Customers screen's "New order" button
+async function neworder() {
+  const $ = (x) => document.getElementById(x);
+  const [{ customers: list }, cat0] = await Promise.all([api("/customers"), api("/catalog")]);
+  const label = (p) => `${p.name} ${p.strength}`.trim() + (p.manufacturer ? ` · ${p.manufacturer}` : "");
+  pane().innerHTML = `<header><h1>New order</h1><span class="muted">${isRep() ? "For one of your customers" : "Phone or walk-in orders for any customer"}</span></header>
+    ${!list.length ? `<div class="panel"><p>Add a customer first.</p><div><button class="btn solid" data-nav="customers">Customers</button></div></div>` : `
+    <div class="two">
+      <div class="stack">
+        <div class="panel"><h2>1. Customer</h2>
+          <div class="field"><label class="eyebrow" for="noCust">Who is this order for?</label><select id="noCust"><option value="">Choose a customer…</option>${list.filter((c) => c.active).map((c) => `<option value="${c.id}"${pickCustomer === c.id ? " selected" : ""}>${esc(c.name)}${c.email ? " — " + esc(c.email) : c.phone ? " — " + esc(c.phone) : ""}</option>`).join("")}</select></div>
+          <p class="muted" id="noInfo"></p></div>
+        <div class="panel"><h2>2. Products</h2>
+          <div class="filters"><input id="noq" type="search" placeholder="Filter products" style="flex:1"></div>
+          <div class="tblwrap" style="max-height:30rem"><table class="tbl compact" id="noT"><thead><tr><th>Product</th><th class="num">Each</th><th>Qty</th><th class="num">Line</th></tr></thead><tbody id="noLines"></tbody></table></div>
+          <p class="muted" id="noNone" hidden>No products have a price yet.</p></div>
+      </div>
+      <div class="stack">
+        <div class="panel"><h2>3. Ship or deliver</h2>
+          ${cat0.fulfillment.length ? `<div class="choices" id="noFul">${cat0.fulfillment.map((f, i) => `<label class="choice-opt"><input type="radio" name="noFul" value="${esc(f.key)}"${i === 0 ? " checked" : ""}><span><strong>${esc(f.label)}</strong>${f.note || f.freeOverCents ? `<small>${esc(f.note)}${f.freeOverCents ? `${f.note ? " · " : ""}Free over ${money(f.freeOverCents)}` : ""}</small>` : ""}</span><span class="amt" data-fulamt="${esc(f.key)}">${f.cents ? money(f.cents) : "Free"}</span></label>`).join("")}</div>` : '<p class="muted">Shipping is settled with the order.</p>'}
+          <div class="field"><label class="eyebrow" for="noCode">Discount code (optional)</label><div class="row2" style="flex-wrap:nowrap"><input id="noCode" autocomplete="off" autocapitalize="characters" placeholder="Enter a code" style="flex:1"><button class="btn" type="button" id="noCodeApply">Apply</button></div><span class="muted" id="noCodeMsg"></span></div>
+          ${cat0.cardPayments ? `<label class="chk"><input type="checkbox" id="noPayLink" checked> Make a card payment link to send the customer</label>` : ""}
+          <div class="field"><label class="eyebrow" for="noNote">Note (optional)</label><textarea id="noNote" maxlength="1000"></textarea></div></div>
+        <div class="panel"><h2>4. Total</h2>
+          <div class="totals" id="noTotals"></div>
+          <div class="err" id="noErr" hidden></div>
+          <button class="btn solid" id="noGo" style="height:2.8rem">Place order</button>
+          <div id="noDone"></div></div>
+      </div>
+    </div>`}`;
+  if (!list.length) return;
+  pickCustomer = null;
+  let sellable = [], code = null, ful = cat0.fulfillment;
+  const chosen = () => ful.find((f) => f.key === (document.querySelector("#noFul input:checked") || {}).value) || ful[0] || null;
+  const shipCost = (f, sub) => (!f ? 0 : f.freeOverCents > 0 && sub >= f.freeOverCents ? 0 : f.cents);
+  const qtys = () => { const m = {}; document.querySelectorAll("#noLines tr[data-pid]").forEach((r) => { m[r.dataset.pid] = parseInt(r.querySelector("[data-qty]").value) || 0; }); return m; };
+  const drawLines = (keep = {}) => {
+    $("noLines").innerHTML = sellable.map((p) => `<tr data-pid="${p.id}" data-txt="${esc(label(p).toLowerCase())}"><td class="namecol"><strong>${esc(label(p))}</strong><span class="muted">${p.stock !== null ? `${p.stock} in stock` : ""}${p.max_per_order ? ` · max ${p.max_per_order}` : ""}</span></td><td class="num">${money(p.price_cents)}</td><td><input data-qty inputmode="numeric" placeholder="0" value="${keep[p.id] || ""}" style="width:4.5rem;min-width:0;text-align:center"></td><td class="num" data-amt></td></tr>`).join("");
+    $("noNone").hidden = sellable.length > 0;
+    total();
+  };
+  const total = () => {
+    let sub = 0, n = 0;
+    document.querySelectorAll("#noLines tr[data-pid]").forEach((row) => { const p = sellable.find((x) => String(x.id) === row.dataset.pid); const q = parseInt(row.querySelector("[data-qty]").value) || 0; row.querySelector("[data-amt]").textContent = q ? money(p.price_cents * q) : ""; sub += q * p.price_cents; n += q; });
+    ful.forEach((f) => { const el = document.querySelector(`[data-fulamt="${f.key}"]`); if (el) el.textContent = shipCost(f, sub) ? money(shipCost(f, sub)) : "Free"; });
+    const off = !code || !sub || (code.minSubtotalCents && sub < code.minSubtotalCents) ? 0 : Math.max(0, Math.min(sub, code.kind === "percent" ? Math.round(sub * code.value / 100) : code.value));
+    const f = chosen(), sc = shipCost(f, sub);
+    $("noTotals").innerHTML = `<div><span>${n} item${n === 1 ? "" : "s"}</span><span>${money(sub)}</span></div>${off ? `<div><span>Discount (${esc(code.code)})</span><span>−${money(off)}</span></div>` : ""}${f ? `<div><span>${esc(f.label)}</span><span>${sc ? money(sc) : "Free"}</span></div>` : ""}<div class="big"><span>Total</span><span>${money(sub - off + sc)}</span></div>`;
+  };
+  const loadCustomer = async () => {
+    const id = $("noCust").value;
+    const keep = qtys();
+    const cat = await api("/catalog" + (id ? "?customerId=" + id : ""));
+    sellable = cat.products.filter((p) => p.price_cents !== null && (p.stock === null || p.stock > 0));
+    const c = cat.customer, a = (c && c.address) || {};
+    $("noInfo").innerHTML = c ? `${a.line1 ? `Ships or delivers to ${esc([a.line1, a.line2, a.city, a.state, a.zip].filter(Boolean).join(", "))}` : '<span class="err" style="display:inline-block;padding:.2rem .5rem">No address yet — edit the customer first.</span>'} · ${cat.markup !== null ? `Pricing: cost +${esc(cat.markup)}% (this customer's own)` : "Store prices"}${c.rep_name ? ` · Sales rep: ${esc(c.rep_name)}` : ""}` : "";
+    drawLines(keep);
+  };
+  $("noCodeApply").onclick = async () => {
+    const c = $("noCode").value.trim().toUpperCase(); $("noCodeMsg").textContent = "";
+    if (!c) { code = null; total(); return; }
+    let sub = 0; document.querySelectorAll("#noLines tr[data-pid]").forEach((row) => { const p = sellable.find((x) => String(x.id) === row.dataset.pid); sub += (parseInt(row.querySelector("[data-qty]").value) || 0) * p.price_cents; });
+    try {
+      const r = await fetch("/api/discount", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: c, subtotalCents: sub }) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || "That code didn't work.");
+      code = { code: j.code, kind: j.kind, value: j.value, minSubtotalCents: j.minSubtotalCents || 0 }; $("noCode").value = j.code; $("noCodeMsg").textContent = `${j.label} applied.`;
+    } catch (e) { code = null; $("noCodeMsg").textContent = e.message; }
+    total();
+  };
+  $("noq").oninput = () => { const t = $("noq").value.toLowerCase(); document.querySelectorAll("#noLines tr[data-pid]").forEach((r) => { r.hidden = t && !r.dataset.txt.includes(t) && !r.querySelector("[data-qty]").value; }); };
+  pane().oninput = (e) => { if (e.target.matches("[data-qty]")) total(); };
+  pane().onchange = (e) => { if (e.target.matches("#noFul input")) total(); if (e.target.id === "noCust") loadCustomer(); };
+  $("noGo").onclick = async () => {
+    const items = Object.entries(qtys()).filter(([, q]) => q > 0).map(([id, qty]) => ({ id: +id, qty }));
+    $("noErr").hidden = true;
+    if (!$("noCust").value) { $("noErr").textContent = "Choose a customer."; $("noErr").hidden = false; return; }
+    if (!items.length) { $("noErr").textContent = "Enter a quantity for at least one product."; $("noErr").hidden = false; return; }
+    $("noGo").disabled = true;
+    try {
+      const f = chosen();
+      const r = await api("/orders", { method: "POST", body: { customerId: +$("noCust").value, items, fulfillment: f ? f.key : "ship", discountCode: code ? code.code : "", payLink: !!($("noPayLink") && $("noPayLink").checked), note: $("noNote").value } });
+      paneDirty = false; drawNav();
+      const msg = r.payUrl ? `Here's the secure card payment link for your order ${r.number}: ${r.payUrl}` : "";
+      $("noDone").innerHTML = `<div class="panel" style="border-color:var(--pass);background:var(--pass-wash)"><h2>Order ${esc(r.number)} placed</h2><p>Total ${money(r.totalCents)} (products ${money(r.subtotalCents)}${r.discountCents ? `, discount −${money(r.discountCents)}` : ""}${r.shippingCents ? `, ${esc(r.shippingName || "shipping")} ${money(r.shippingCents)}` : r.shippingName ? `, ${esc(r.shippingName)} free` : ""}).</p>
+        ${r.payUrl ? `<p><strong>Card payment link</strong> — send it to the customer; the order marks itself paid when they pay:<br><a href="${esc(r.payUrl)}" target="_blank" rel="noopener" style="word-break:break-all">${esc(r.payUrl)}</a></p><div class="row2"><button class="btn" type="button" data-copy="${esc(r.payUrl)}">Copy link</button><a class="btn" style="display:inline-grid;place-items:center;text-decoration:none" href="mailto:?subject=${encodeURIComponent("Payment link for order " + r.number)}&body=${encodeURIComponent(msg)}">Email it</a><a class="btn" style="display:inline-grid;place-items:center;text-decoration:none" href="sms:?&body=${encodeURIComponent(msg)}">Text it</a></div>` : `<p class="muted">The order email went to the store${isRep() ? "; the office will confirm it with the customer and collect payment" : ""}.</p>`}
+        <div class="row2"><button class="btn solid" type="button" data-openorder="${r.id}">Open the order</button><button class="btn" type="button" data-nav="neworder">Another order</button></div></div>`;
+      $("noDone").scrollIntoView({ behavior: "smooth" });
+      const cp = $("noDone").querySelector("[data-copy]"); if (cp) cp.onclick = () => navigator.clipboard?.writeText(cp.dataset.copy).then(() => toast("Link copied"), () => toast("Copy failed"));
+      $("noDone").querySelector("[data-openorder]").onclick = () => go("orders", r.id);
+      document.querySelectorAll("#noLines [data-qty]").forEach((i) => { i.value = ""; }); code = null; $("noCode").value = ""; $("noCodeMsg").textContent = ""; total();
+    } catch (e) { $("noErr").textContent = e.message; $("noErr").hidden = false; }
+    finally { $("noGo").disabled = false; }
+  };
+  await loadCustomer();
+}
+
 /* ---------- customers ---------- */
 async function customers() {
   pane().innerHTML = `<header><h1>${isRep() ? "My customers" : "Customers"}</h1>${isOwner() || isRep() ? `<button class="btn solid" id="addC">Add customer</button>` : ""}</header>
@@ -267,12 +364,12 @@ async function customers() {
   };
   const load = async () => {
     const { customers: list } = await api("/customers?q=" + encodeURIComponent(term));
-    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Pricing</th><th>Sales rep</th><th>Site PIN</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th>${isOwner() || isRep() ? "<th></th>" : ""}</tr>
+    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Pricing</th><th>Sales rep</th><th>Site PIN</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th><th></th></tr>
       ${list.map((c) => `<tr data-cid="${c.id}" data-cname="${esc(c.name || c.email)}"><td>${esc(c.name)}</td><td>${c.email ? `<a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a>` : `<a href="#" data-cust-orders="${esc(c.name)}" class="muted">no email</a>`}</td><td>${esc(c.phone)}</td>
         <td>${markupCell(c)}</td><td>${repCell(c)}</td><td>${pinCell(c)}</td><td>${when(c.created_at)}</td>
         <td class="num">${c.orders}</td><td class="num">${money(c.spent_cents)}</td><td>${c.last_order ? when(c.last_order) : ""}</td>
         <td><input type="checkbox" data-cact${c.active ? " checked" : ""}${ro()}></td>
-        ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-cedit>Edit</button><button class="btn" data-cdel>Delete</button></td>` : isRep() ? `<td><button class="btn" data-cedit>Edit</button></td>` : ""}</tr>`).join("")}</table>` : `<p class="muted">No customers yet.${isOwner() || isRep() ? " Use Add customer to set one up." : ""}</p>`;
+        ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-corder>New order</button><button class="btn" data-cedit>Edit</button><button class="btn" data-cdel>Delete</button></td>` : isRep() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-corder>New order</button><button class="btn" data-cedit>Edit</button></td>` : `<td><button class="btn" data-corder>New order</button></td>`}</tr>`).join("")}</table>` : `<p class="muted">No customers yet.${isOwner() || isRep() ? " Use Add customer to set one up." : ""}</p>`;
     lastList = list;
   };
   let lastList = [];
@@ -340,6 +437,7 @@ async function customers() {
     const link = e.target.closest("[data-cust-orders]");
     if (link) { e.preventDefault(); oFilter = { status: "", q: link.dataset.custOrders }; go("orders"); return; }
     const tr = e.target.closest("tr[data-cid]");
+    if (tr && e.target.closest("[data-corder]")) { pickCustomer = +tr.dataset.cid; go("neworder"); return; }
     if (tr && e.target.closest("[data-cedit]")) { const c = lastList.find((x) => String(x.id) === tr.dataset.cid); if (c) editForm(c); return; }
     if (tr && e.target.closest("[data-cdel]")) {
       const c = lastList.find((x) => String(x.id) === tr.dataset.cid);
@@ -1274,7 +1372,7 @@ document.addEventListener("click", (e) => {
 
 if (window.AppRefresh) window.AppRefresh.init({
   version: "/api/version",
-  canAuto: () => !!me && !unsaved && !paneDirty && !document.querySelector("dialog[open]") && !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "") && !document.getElementById("impPrev"),
+  canAuto: () => !!me && !unsaved && !paneDirty && view !== "neworder" && !document.querySelector("dialog[open]") && !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "") && !document.getElementById("impPrev"),
   refresh: async () => { if (me) go(view, orderId, { keepScroll: true, silent: true }); }
 });
 
