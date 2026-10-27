@@ -452,33 +452,33 @@ function emailHtml(s, p) {
   const $ = (c) => "$" + ((c || 0) / 100).toFixed(2);
   const tone = { ok: ["#e3f4eb", "#15734a"], warn: ["#fff4d6", "#7a5300"], bad: ["#f3e1e1", "#8a1c1c"], info: ["#e9f1fb", BLUE] }[p.badge && p.badge.tone] || ["#e9f1fb", BLUE];
   const logo = BASE_URL && s.siteLogoV ? `<img src="${escHtml(BASE_URL)}/site-logo?v=${encodeURIComponent(s.siteLogoV)}" alt="${escHtml(s.brand)}" height="34" style="display:block;height:34px;width:auto;max-width:220px;border:0;background:#fff;padding:6px 10px;border-radius:8px">` : `<span style="font:700 20px/1 ${FONT};color:#fff;letter-spacing:.02em">${escHtml(s.brand)}</span>`;
-  const row = (l, v) => `<tr><td style="padding:4px 12px 4px 0;font:600 12px/1.4 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.06em;vertical-align:top;white-space:nowrap">${escHtml(l)}</td><td style="padding:4px 0;font:15px/1.4 ${FONT};color:${INK};vertical-align:top">${v}</td></tr>`;
+  const row = (l, v) => `<tr><td style="padding:6px 16px 6px 0;font:600 12px/1.4 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.08em;vertical-align:top;white-space:nowrap">${escHtml(l)}</td><td style="padding:6px 0;font:600 16px/1.4 ${FONT};color:${INK};vertical-align:top">${v}</td></tr>`;
   const items = (p.items || []).map((i) => `<tr>
       <td style="padding:9px 10px;border-top:1px solid ${LINE};font:15px/1.35 ${FONT};color:${INK}">${escHtml(`${i.name} ${i.strength}`.trim())}</td>
       <td align="center" style="padding:9px 10px;border-top:1px solid ${LINE};font:15px/1.35 ${FONT};color:${INK};white-space:nowrap">${i.qty}</td>
       <td align="right" style="padding:9px 10px;border-top:1px solid ${LINE};font:15px/1.35 ${FONT};color:${INK2};white-space:nowrap">${$(i.unit_cents)}</td>
       <td align="right" style="padding:9px 10px;border-top:1px solid ${LINE};font:600 15px/1.35 ${FONT};color:${INK};white-space:nowrap">${$(i.unit_cents * i.qty)}</td></tr>`).join("");
   const totals = (p.totals || []).map(([l, v, strong]) => `<tr><td colspan="3" align="right" style="padding:${strong ? "10px" : "4px"} 10px 4px;font:${strong ? "700 17px" : "14px"}/1.3 ${FONT};color:${strong ? INK : INK2}${strong ? `;border-top:2px solid ${NAVY}` : ""}">${escHtml(l)}</td><td align="right" style="padding:${strong ? "10px" : "4px"} 10px 4px;font:${strong ? "700 17px" : "14px"}/1.3 ${FONT};color:${INK};white-space:nowrap${strong ? `;border-top:2px solid ${NAVY}` : ""}">${escHtml(v)}</td></tr>`).join("");
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escHtml(p.title)}</title></head>
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"><title>${escHtml(p.title)}</title></head>
 <body style="margin:0;padding:0;background:${GROUND}">
 <span style="display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden">${escHtml(p.preheader || p.title)}</span>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${GROUND};padding:24px 12px"><tr><td align="center">
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#fff;border-radius:14px;overflow:hidden;border:1px solid ${LINE}">
-  <tr><td style="background:${NAVY};padding:18px 28px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="left">${logo}</td><td align="right" style="font:600 12px/1.3 ${FONT};color:#c9d1dc;text-transform:uppercase;letter-spacing:.08em">${escHtml(p.eyebrow || "")}</td></tr></table></td></tr>
-  <tr><td style="padding:26px 28px 6px">
-    ${p.badge ? `<span style="display:inline-block;padding:4px 11px;border-radius:999px;background:${tone[0]};color:${tone[1]};font:700 12px/1.3 ${FONT};text-transform:uppercase;letter-spacing:.06em">${escHtml(p.badge.text)}</span>` : ""}
-    <h1 style="margin:${p.badge ? "12px" : "0"} 0 8px;font:700 24px/1.2 ${FONT};color:${INK}">${escHtml(p.title)}</h1>
-    ${p.intro ? `<p style="margin:0 0 6px;font:15px/1.55 ${FONT};color:${INK}">${escHtml(p.intro)}</p>` : ""}
+<table role="presentation" width="760" cellpadding="0" cellspacing="0" style="max-width:760px;width:100%;background:#fff;border-radius:14px;overflow:hidden;border:1px solid ${LINE}">
+  <tr><td style="background:${NAVY};padding:22px 32px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="left">${logo}</td><td align="right" style="font:600 13px/1.3 ${FONT};color:#c9d1dc;text-transform:uppercase;letter-spacing:.1em">${escHtml(p.eyebrow || "")}</td></tr></table></td></tr>
+  <tr><td style="padding:30px 32px 8px">
+    ${p.kicker ? `<div style="font:600 12px/1.4 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">${escHtml(p.kicker)}</div>` : ""}
+    <h1 style="margin:0 0 10px;font:800 30px/1.15 ${FONT};color:${INK}">${escHtml(p.title)}${p.badge ? ` &nbsp;<span style="display:inline-block;vertical-align:middle;padding:5px 12px;border-radius:999px;background:${tone[0]};color:${tone[1]};font:700 12px/1.3 ${FONT};text-transform:uppercase;letter-spacing:.06em">${escHtml(p.badge.text)}</span>` : ""}</h1>
+    ${p.intro ? `<p style="margin:0 0 6px;font:16px/1.55 ${FONT};color:${INK}">${escHtml(p.intro)}</p>` : ""}
   </td></tr>
-  ${p.facts && p.facts.length ? `<tr><td style="padding:10px 28px 4px"><table role="presentation" cellpadding="0" cellspacing="0">${p.facts.map(([l, v]) => row(l, v)).join("")}</table></td></tr>` : ""}
-  ${p.address ? `<tr><td style="padding:12px 28px 4px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${GROUND};border-radius:10px"><tr><td style="padding:12px 16px"><div style="font:600 12px/1.4 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">${escHtml(p.address.label)}</div><div style="font:15px/1.5 ${FONT};color:${INK}">${p.address.lines.filter(Boolean).map(escHtml).join("<br>")}</div></td></tr></table></td></tr>` : ""}
-  ${items ? `<tr><td style="padding:18px 28px 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${LINE};border-radius:10px;overflow:hidden">
+  ${p.facts && p.facts.length ? `<tr><td style="padding:10px 32px 4px"><table role="presentation" cellpadding="0" cellspacing="0">${p.facts.map(([l, v]) => row(l, v)).join("")}</table></td></tr>` : ""}
+  ${p.address ? `<tr><td style="padding:14px 32px 4px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${GROUND};border-radius:10px"><tr><td style="padding:12px 16px"><div style="font:600 12px/1.4 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">${escHtml(p.address.label)}</div><div style="font:15px/1.5 ${FONT};color:${INK}">${p.address.lines.filter(Boolean).map(escHtml).join("<br>")}</div></td></tr></table></td></tr>` : ""}
+  ${items ? `<tr><td style="padding:20px 32px 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${LINE};border-radius:10px;overflow:hidden">
     <tr style="background:${GROUND}"><th align="left" style="padding:8px 10px;font:600 11px/1.3 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.07em">Item</th><th align="center" style="padding:8px 10px;font:600 11px/1.3 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.07em">Qty</th><th align="right" style="padding:8px 10px;font:600 11px/1.3 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.07em">Each</th><th align="right" style="padding:8px 10px;font:600 11px/1.3 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.07em">Line</th></tr>
     ${items}${totals}</table></td></tr>` : ""}
-  ${p.note ? `<tr><td style="padding:12px 28px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fff8e1;border-radius:10px"><tr><td style="padding:12px 16px;font:14px/1.5 ${FONT};color:${INK}"><strong>${escHtml(p.note.label)}:</strong> ${escHtml(p.note.text)}</td></tr></table></td></tr>` : ""}
-  ${p.after ? `<tr><td style="padding:16px 28px 0;font:15px/1.55 ${FONT};color:${INK}">${p.after}</td></tr>` : ""}
-  ${p.button ? `<tr><td style="padding:20px 28px 8px"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:${BLUE};border-radius:8px"><a href="${escHtml(p.button.url)}" style="display:inline-block;padding:12px 22px;font:600 15px/1 ${FONT};color:#fff;text-decoration:none">${escHtml(p.button.text)}</a></td></tr></table></td></tr>` : ""}
-  <tr><td style="padding:22px 28px 26px;font:13px/1.5 ${FONT};color:${INK2};border-top:1px solid ${LINE}">${p.footer || ""}</td></tr>
+  ${p.note ? `<tr><td style="padding:14px 32px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fff8e1;border-radius:10px"><tr><td style="padding:12px 16px;font:14px/1.5 ${FONT};color:${INK}"><strong>${escHtml(p.note.label)}:</strong> ${escHtml(p.note.text)}</td></tr></table></td></tr>` : ""}
+  ${p.after ? `<tr><td style="padding:18px 32px 0;font:16px/1.55 ${FONT};color:${INK}">${p.after}</td></tr>` : ""}
+  ${p.button ? `<tr><td style="padding:22px 32px 8px"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:${BLUE};border-radius:8px"><a href="${escHtml(p.button.url)}" style="display:inline-block;padding:12px 22px;font:600 15px/1 ${FONT};color:#fff;text-decoration:none">${escHtml(p.button.text)}</a></td></tr></table></td></tr>` : ""}
+  <tr><td style="padding:22px 32px 26px;font:13px/1.5 ${FONT};color:${INK2};border-top:1px solid ${LINE}">${p.footer || ""}</td></tr>
 </table>
 </td></tr></table></body></html>`;
 }
@@ -509,6 +509,7 @@ async function notifyOrder(orderId, kind) {
     const head = kind === "paid" ? "PAID" : kind === "unpaid" ? "UNPAID card" : "New";
     const subject = `${head} order ${o.number} · ${$(o.total_cents)} · ${o.name} · ${delivery ? "Delivery" : "Ship"}`;
     const title = kind === "paid" ? `Payment received · order ${o.number}` : kind === "unpaid" ? `Card payment not finished · order ${o.number}` : `New order ${o.number}`;
+    const placedAt = new Date(o.created_at).toLocaleString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) + " CT";
     const text = [
       `${title} — ${s.brand}`, "",
       `Customer: ${o.name}`, `Email: ${o.email}`, o.phone ? `Phone: ${o.phone}` : "", `Placed by: ${o.placed_by || "Customer"}${rep ? ` · Sales rep: ${rep.name}` : ""}`, "",
@@ -517,10 +518,10 @@ async function notifyOrder(orderId, kind) {
       link ? `\nOpen in admin: ${link}` : ""
     ].filter((x) => x !== null && x !== undefined).join("\n");
     const html = emailHtml(s, {
-      eyebrow: "Store admin", title, preheader: `${o.name} · ${$(o.total_cents)} · ${how}`,
+      eyebrow: "Store admin", kicker: kind === "paid" ? "Payment received" : kind === "unpaid" ? "Card payment not finished" : "New order", title: `Order ${o.number}`, preheader: `${o.name} · ${$(o.total_cents)} · ${how}`,
       badge: kind === "paid" ? { text: "Paid by card", tone: "ok" } : kind === "unpaid" ? { text: "Card payment pending", tone: "warn" } : { text: "Order request", tone: "info" },
       intro: kind === "paid" ? `${o.name} paid ${$(o.paid_cents ?? o.total_cents)} by card. The order is ready to ${delivery ? "deliver" : "ship"}.` : kind === "unpaid" ? `${o.name} started a card payment 30 minutes ago and hasn't finished. You can send a payment link from the order.` : `${o.name} placed an order request${rep ? ` through sales rep ${rep.name}` : ""}. Confirm the total with them and collect payment.`,
-      facts: [["Customer", `${escHtml(o.name)} · <a href="mailto:${escHtml(o.email)}" style="color:${BLUE}">${escHtml(o.email)}</a>${o.phone ? ` · <a href="tel:${escHtml(o.phone)}" style="color:${BLUE}">${escHtml(o.phone)}</a>` : ""}`], ["Placed by", escHtml(o.placed_by || "Customer") + (rep ? ` · Sales rep ${escHtml(rep.name)}` : "")], ["Payment", escHtml(payLine)], ["Get it", escHtml(how)]],
+      facts: [["Customer", `${escHtml(o.name)} · <a href="mailto:${escHtml(o.email)}" style="color:${BLUE}">${escHtml(o.email)}</a>${o.phone ? ` · <a href="tel:${escHtml(o.phone)}" style="color:${BLUE}">${escHtml(o.phone)}</a>` : ""}`], ["Placed", `${escHtml(placedAt)} · ${escHtml(o.placed_by || "Customer")}${rep ? ` · Sales rep ${escHtml(rep.name)}` : ""}`], ["Total", `${$(o.total_cents)} · ${escHtml(items.reduce((n, i) => n + i.qty, 0))} item${items.reduce((n, i) => n + i.qty, 0) === 1 ? "" : "s"}`], ["Get it", escHtml(how) + (o.shipping_cents ? ` · ${$(o.shipping_cents)}` : " · free")], ["Payment", escHtml(payLine)]],
       address: { label: delivery ? "Deliver to" : "Ship to", lines: addrLines }, items, totals: totalRows,
       note: o.customer_note ? { label: "Customer note", text: o.customer_note } : null,
       button: link ? { text: "Open the order in admin", url: link } : null,
@@ -543,8 +544,8 @@ async function notifyOrder(orderId, kind) {
       s.contact ? `\nQuestions? ${s.contact}` : "", "", `— ${s.brand}`
     ].join("\n");
     const html = emailHtml(s, {
-      eyebrow: kind === "paid" ? "Receipt" : "Order confirmation", title: kind === "paid" ? "Payment received" : "Thanks for your order", preheader: `Order ${o.number} · ${$(o.total_cents)}`,
-      badge: { text: `Order ${o.number}`, tone: kind === "paid" ? "ok" : "info" },
+      eyebrow: kind === "paid" ? "Receipt" : "Order confirmation", kicker: kind === "paid" ? "Payment received" : "Thanks for your order", title: `Order ${o.number}`, preheader: `Order ${o.number} · ${$(o.total_cents)}`,
+      badge: { text: kind === "paid" ? "Paid" : "Received", tone: kind === "paid" ? "ok" : "info" },
       intro: `Hi ${o.name}, ${intro.charAt(0).toLowerCase() + intro.slice(1)}`,
       facts: [[delivery ? "Delivery" : "Shipping", escHtml(how) + (o.shipping_cents ? ` · ${$(o.shipping_cents)}` : " · free")], ...(o.tracking ? [["Tracking", escHtml(`${o.carrier || ""} ${o.tracking}`.trim())]] : [])],
       address: { label: delivery ? "Delivering to" : "Shipping to", lines: addrLines }, items, totals: totalRows,
