@@ -77,7 +77,7 @@ function limit(name, max, windowMs) {
 async function auth(req, res, next) {
   const token = parseCookies(req.headers.cookie).sid;
   if (!token) return bad(res, "Sign in first", 401);
-  const { rows } = await q("select u.id, u.email, u.name, u.role from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]);
+  const { rows } = await q("select u.id, u.email, u.name, u.role, u.commission_rate from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]);
   if (!rows[0]) return bad(res, "Sign in first", 401);
   req.user = rows[0];
   // admin API only accepts JSON, which a plain cross-site form cannot send
@@ -666,7 +666,7 @@ app.post("/api/admin/login", limit("login", 10, 15 * 60 * 1000), wrap(async (req
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '14 days')", [token, u.id]);
   res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${14 * 86400}${SECURE ? "; Secure" : ""}`);
-  res.json({ ok: true, user: { name: u.name, email: u.email, role: u.role } });
+  res.json({ ok: true, user: { id: u.id, name: u.name, email: u.email, role: u.role, commission_rate: u.commission_rate } });
 }));
 app.post("/api/admin/logout", wrap(async (req, res) => {
   const token = parseCookies(req.headers.cookie).sid;
@@ -687,10 +687,22 @@ app.post("/api/admin/password", wrap(auth), wrap(async (req, res) => {
 
 const admin = express.Router();
 admin.use(wrap(auth));
-admin.use((req, res, next) => (req.user.role === "rep" ? bad(res, "Sales reps use the rep app at /rep", 403) : next()));
+// Sales reps get the top of the admin only (dashboard, orders, customers, commissions, their account), scoped to their own customers.
+const REP_OK = [[/^\/stats$/, "GET"], [/^\/orders(\.csv)?$/, "GET"], [/^\/orders\/\d+$/, "GET"], [/^\/orders\/\d+\/(note|paylink)$/, "POST"],
+  [/^\/customers$/, "GET"], [/^\/customers$/, "POST"], [/^\/customers\/\d+$/, "PATCH"], [/^\/commissions(\.csv)?$/, "GET"]];
+admin.use((req, res, next) => (req.user.role !== "rep" || REP_OK.some(([re, m]) => re.test(req.path) && m === req.method) ? next() : bad(res, "Sales reps can only see their own customers, orders and commissions.", 403)));
+const isRep = (req) => req.user.role === "rep";
 
 /* ---------- admin: dashboard ---------- */
 admin.get("/stats", wrap(async (req, res) => {
+  if (isRep(req)) {
+    // a rep's dashboard: their customers' orders and their commission, nothing about stock or prices
+    const { rows: byStatus } = await q("select status, count(*)::int n from orders where rep_id = $1 group by status", [req.user.id]);
+    const { rows: [m] } = await q("select coalesce(sum(total_cents),0)::int paid_cents, count(*)::int paid_n from orders where rep_id = $1 and paid_at >= date_trunc('month', now())", [req.user.id]);
+    const { rows: [c] } = await q("select count(*)::int n from customers where rep_id = $1 and active", [req.user.id]);
+    const comm = commTotals(await commissionRows({ repId: req.user.id }));
+    return res.json({ byStatus: Object.fromEntries(byStatus.map((r) => [r.status, r.n])), month: m, lowStock: [], unpriced: 0, rep: { customers: c.n, commission: comm } });
+  }
   const { rows: byStatus } = await q("select status, count(*)::int n from orders group by status");
   const { rows: [m] } = await q("select coalesce(sum(total_cents),0)::int paid_cents, count(*)::int paid_n from orders where paid_at >= date_trunc('month', now())");
   const { rows: low } = await q("select id,name,strength,manufacturer,stock,coalesce(reorder_point,5) reorder_at from products where active and stock is not null and stock <= coalesce(reorder_point,5) order by stock");
@@ -704,6 +716,7 @@ admin.get("/orders", wrap(async (req, res) => {
   const where = [], args = [];
   if (STATUSES.includes(status)) { args.push(status); where.push(`status = $${args.length}`); }
   if (term) { args.push("%" + term.toLowerCase() + "%"); where.push(`(lower(name) like $${args.length} or lower(email) like $${args.length} or number like $${args.length} or lower(tracking) like $${args.length})`); }
+  if (isRep(req)) { args.push(req.user.id); where.push(`rep_id = $${args.length}`); }
   const { rows } = await q(`select id,number,status,name,email,total_cents,shipping_method,tracking,created_at,placed_by,fulfillment,pay_method,paid_at,discount_code,(select name from users where id = o.rep_id) rep_name,
       (select coalesce(sum(qty),0)::int from order_items i where i.order_id = o.id) items
     from orders o ${where.length ? "where " + where.join(" and ") : ""} order by created_at desc limit 300`, args);
@@ -711,7 +724,7 @@ admin.get("/orders", wrap(async (req, res) => {
 }));
 admin.get("/orders.csv", wrap(async (req, res) => {
   const { rows } = await q(`select o.number, o.created_at, o.status, o.name, o.email, o.phone, o.address, o.fulfillment, o.shipping_method, o.subtotal_cents, o.discount_cents, o.discount_code, o.shipping_cents, o.total_cents, o.pay_method, o.paid_at, o.carrier, o.tracking,
-     (select string_agg(i.qty || ' x ' || i.name || ' ' || i.strength, '; ') from order_items i where i.order_id = o.id) items from orders o order by o.created_at desc`);
+     (select string_agg(i.qty || ' x ' || i.name || ' ' || i.strength, '; ') from order_items i where i.order_id = o.id) items from orders o ${isRep(req) ? "where o.rep_id = $1" : ""} order by o.created_at desc`, isRep(req) ? [req.user.id] : []);
   const cell = (v) => { const s = String(v ?? ""); return /[",\n]/.test(s) || /^[=+\-@]/.test(s) ? `"${s.replace(/^([=+\-@])/, "'$1").replace(/"/g, '""')}"` : s; };
   const head = ["Order", "Date", "Status", "Name", "Email", "Phone", "Address", "Ship or delivery", "Method", "Subtotal", "Discount", "Discount code", "Shipping cost", "Total", "Payment", "Paid", "Carrier", "Tracking", "Items"];
   const lines = rows.map((r) => [r.number, r.created_at.toISOString(), r.status, r.name, r.email, r.phone,
@@ -725,7 +738,7 @@ admin.get("/orders.csv", wrap(async (req, res) => {
 admin.get("/orders/:id", wrap(async (req, res) => {
   const id = intOrNull(req.params.id);
   const { rows: [o] } = await q("select * from orders where id = $1", [id]);
-  if (!o) return bad(res, "Not found", 404);
+  if (!o || (isRep(req) && o.rep_id !== req.user.id)) return bad(res, "Not found", 404);
   const { rows: items } = await q("select * from order_items where order_id = $1 order by id", [id]);
   const { rows: events } = await q("select at, who, text from order_events where order_id = $1 order by at desc", [id]);
   o.rep_name = o.rep_id ? (await q("select name from users where id = $1", [o.rep_id])).rows[0]?.name || "" : "";
@@ -735,6 +748,7 @@ admin.get("/orders/:id", wrap(async (req, res) => {
 }));
 // A card payment link for an unpaid order (phone orders, rep orders, order requests the customer wants to pay by card).
 admin.post("/orders/:id/paylink", wrap(async (req, res) => {
+  if (isRep(req) && !(await q("select 1 from orders where id = $1 and rep_id = $2", [intOrNull(req.params.id), req.user.id])).rows.length) return bad(res, "Not found", 404);
   try { res.json({ ok: true, url: await payLinkFor(intOrNull(req.params.id), originOf(req), req.user.name || req.user.email) }); }
   catch (e) { bad(res, e.message); }
 }));
@@ -812,6 +826,7 @@ admin.patch("/orders/:id", wrap(async (req, res) => {
 }));
 admin.post("/orders/:id/note", wrap(async (req, res) => {
   const t = str(req.body?.text, 1000); if (!t) return bad(res, "Write a note first");
+  if (isRep(req) && !(await q("select 1 from orders where id = $1 and rep_id = $2", [intOrNull(req.params.id), req.user.id])).rows.length) return bad(res, "Not found", 404);
   await q("insert into order_events(order_id, who, text) values ($1,$2,$3)", [intOrNull(req.params.id), req.user.name || req.user.email, t]);
   res.json({ ok: true });
 }));
@@ -822,16 +837,17 @@ admin.get("/customers", wrap(async (req, res) => {
   const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.active, c.created_at, c.markup, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.rep_id, (select name from users where id = c.rep_id) rep_name,
       count(o.id)::int orders, coalesce(sum(o.total_cents) filter (where o.status in ('paid','shipped','delivered')), 0)::int spent_cents, max(o.created_at) last_order
     from customers c left join orders o on o.customer_id = c.id
-    where ($1 = '' or lower(c.name) like '%' || $1 || '%' or lower(c.email) like '%' || $1 || '%')
-    group by c.id order by c.created_at desc limit 500`, [term]);
+    where ($1 = '' or lower(c.name) like '%' || $1 || '%' or lower(c.email) like '%' || $1 || '%') ${isRep(req) ? "and c.rep_id = $2" : ""}
+    group by c.id order by c.created_at desc limit 500`, isRep(req) ? [term, req.user.id] : [term]);
   res.json({ customers: rows });
 }));
-admin.post("/customers", owner, wrap(async (req, res) => {
+admin.post("/customers", (req, res, next) => (isRep(req) ? next() : owner(req, res, next)), wrap(async (req, res) => {
   const b = req.body || {}, email = str(b.email, 160).toLowerCase();
   if (!str(b.name, 120) || !isEmail(email)) return bad(res, "Enter a name and a valid email.");
   const { rows: [ex] } = await q("select id from customers where lower(email) = $1", [email]);
   if (ex) return bad(res, "A customer with that email already exists.");
   // they sign in with the PIN you give them; this random password is never shown to anyone
+  if (isRep(req)) { b.repId = req.user.id; b.markup = ""; } // a rep's new customer is theirs; pricing is set by the owner
   const repId = intOrNull(b.repId) && (await q("select 1 from users where id = $1 and role = 'rep'", [intOrNull(b.repId)])).rows.length ? intOrNull(b.repId) : null;
   const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash, rep_id, markup) values ($1,$2,$3,$4,$5,$6,$7) returning id",
     [email, str(b.name, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId, b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup)]);
@@ -861,8 +877,13 @@ admin.delete("/customers/:id/pin", owner, wrap(async (req, res) => {
   pinCache.at = 0;
   res.json({ ok: true });
 }));
-admin.patch("/customers/:id", owner, wrap(async (req, res) => {
+admin.patch("/customers/:id", (req, res, next) => (isRep(req) ? next() : owner(req, res, next)), wrap(async (req, res) => {
   const id = intOrNull(req.params.id);
+  if (isRep(req)) {
+    // reps may only correct the name, phone and address of their own customers
+    if (!req.body?.edit) return bad(res, "Only the owner can change that.", 403);
+    if (!(await q("select 1 from customers where id = $1 and rep_id = $2", [id, req.user.id])).rows.length) return bad(res, "Not found", 404);
+  }
   if (req.body?.edit) {
     const b = req.body, email = str(b.email, 160).toLowerCase();
     if (!str(b.name, 120) || !isEmail(email)) return bad(res, "Enter a name and a valid email.");
@@ -1129,8 +1150,9 @@ admin.patch("/reps/:id", owner, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 admin.get("/commissions", wrap(async (req, res) => {
-  const rows = await commissionRows({ repId: intOrNull(req.query.rep), from: req.query.from, to: req.query.to, status: req.query.status });
-  const { rows: payouts } = await q("select p.*, u.name rep_name from commission_payouts p left join users u on u.id = p.rep_id order by p.paid_at desc limit 200");
+  const repId = isRep(req) ? req.user.id : intOrNull(req.query.rep);
+  const rows = await commissionRows({ repId, from: req.query.from, to: req.query.to, status: req.query.status });
+  const { rows: payouts } = await q(`select p.*, u.name rep_name from commission_payouts p left join users u on u.id = p.rep_id ${isRep(req) ? "where p.rep_id = $1" : ""} order by p.paid_at desc limit 200`, isRep(req) ? [req.user.id] : []);
   res.json({ rows, totals: commTotals(rows), payouts });
 }));
 admin.post("/commissions/payout", owner, wrap(async (req, res) => {
@@ -1156,8 +1178,8 @@ admin.delete("/commissions/payout/:id", owner, wrap(async (req, res) => {
   await q("delete from commission_payouts where id = $1", [intOrNull(req.params.id)]);
   res.json({ ok: true });
 }));
-admin.get("/commissions.csv", owner, wrap(async (req, res) => {
-  const rows = await commissionRows({ repId: intOrNull(req.query.rep), from: req.query.from, to: req.query.to, status: req.query.status });
+admin.get("/commissions.csv", (req, res, next) => (isRep(req) ? next() : owner(req, res, next)), wrap(async (req, res) => {
+  const rows = await commissionRows({ repId: isRep(req) ? req.user.id : intOrNull(req.query.rep), from: req.query.from, to: req.query.to, status: req.query.status });
   const cell = (v) => { const x = String(v ?? ""); return /[",\n]/.test(x) || /^[=+\-@]/.test(x) ? `"${x.replace(/^([=+\-@])/, "'$1").replace(/"/g, '""')}"` : x; };
   const head = ["Order", "Date", "Rep", "Customer", "Order status", "Sales (after discount)", "Rate %", "Commission", "Commission status", "Paid out on"];
   const out = rows.map((r) => [r.number, r.created_at.toISOString().slice(0, 10), r.rep_name, r.customer, r.status, ((r.subtotal_cents - r.discount_cents) / 100).toFixed(2), r.commission_rate ?? "", (r.commission_cents / 100).toFixed(2), r.comm_status, r.payout_date ? r.payout_date.toISOString().slice(0, 10) : ""].map(cell).join(","));

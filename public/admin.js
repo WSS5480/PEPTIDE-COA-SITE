@@ -30,6 +30,7 @@ const reportMatches = (p, r) => mfrOk(p, r) && nrm(p.name) === nrm(r.product) &&
 addEventListener("beforeunload", (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ""; } });
 let me = null, view = "dashboard", orderId = null, stats = null, BUILD = null;
 const isOwner = () => me && me.role === "owner";
+const isRep = () => me && me.role === "rep";
 
 /* ---------- login ---------- */
 function drawLogin(msg) {
@@ -40,19 +41,22 @@ function drawLogin(msg) {
     <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>
     ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
     <button class="btn solid wide">Sign in</button><button class="btn wide" type="button" data-install>Download admin app</button>
-    <p class="muted" style="text-align:center;margin:0">Sales rep? <a href="/rep">Sign in to the rep app</a> to fill orders.</p></form></div>`;
+    <p class="muted" style="text-align:center;margin:0">Sales reps sign in here too (you see your own customers, orders and commissions), or use the <a href="/rep">phone rep app</a>.</p></form></div>`;
   document.getElementById("lf").onsubmit = async (e) => {
     e.preventDefault();
     const res = await fetch("/api/admin/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: le.value, password: lp.value }) });
     const j = await res.json();
     if (!res.ok) return drawLogin(j.error);
-    if (j.user.role === "rep") { location.href = "/rep"; return; }
     me = j.user; shell();
   };
 }
 
 /* ---------- shell ---------- */
-const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Customers"], ["reps", "Sales reps", true], ["commissions", "Commissions", true], ["products", "Products & prices"], ["inventory", "Inventory"], ["reports", "Lab reports"], ["discounts", "Discount codes", true], ["page", "Page setup"], ["settings", "Site settings"], ["staff", "Staff logins", true], ["account", "My account"]];
+// [key, label, who]: "all" = owner, staff and sales reps · "team" = owner and staff · "owner" · "ownerrep" = owner and reps. "line" draws the divider:
+// sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
+const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["line"],
+  ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["staff", "Staff logins", "owner"], ["account", "My account", "all"]];
+const canSee = (who) => who === "all" || (who === "owner" && isOwner()) || (who === "team" && !isRep()) || (who === "ownerrep" && (isOwner() || isRep()));
 function shell() {
   app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><span><button type="button" data-refresh title="Refresh"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button> <button type="button" id="mm">Menu</button></span></div>
   <div class="adm" id="adm"><aside class="side">
@@ -69,7 +73,7 @@ function shell() {
 async function drawNav() {
   try { stats = await api("/stats"); } catch (e) { return; }
   const n = stats.byStatus.new || 0;
-  document.getElementById("nav").innerHTML = NAV.filter(([, , o]) => !o || isOwner()).map(([k, label]) => `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}</button>`).join("");
+  document.getElementById("nav").innerHTML = NAV.map(([k, label, who]) => k === "line" ? (isRep() ? "" : '<hr class="navline">') : !canSee(who) ? "" : `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}</button>`).join("");
 }
 let paneDirty = false; // something typed on this screen and not saved yet
 document.addEventListener("input", (e) => { if (e.target.closest("#pane")) paneDirty = true; });
@@ -77,6 +81,7 @@ function go(v, id, opts = {}) {
   if (!opts.silent && unsaved && !confirm("You have unsaved product changes. Leave without saving?")) return;
   unsaved = false; paneDirty = false;
   const pn = document.getElementById("pane"); if (pn) { pn.onclick = null; pn.oninput = null; pn.onchange = null; } // drop the last screen's handlers
+  const item = NAV.find(([k]) => k === v); if (item && !canSee(item[2])) v = "dashboard";
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
@@ -89,6 +94,26 @@ const ro = () => (isOwner() ? "" : " disabled");
 /* ---------- dashboard ---------- */
 async function dashboard() {
   const s = stats || (await api("/stats"));
+  if (isRep()) {
+    const b = s.byStatus, c = s.rep ? s.rep.commission : { pending: 0, earned: 0, paid: 0 };
+    pane().innerHTML = `<header><h1>Dashboard</h1><span class="muted" id="dashBuild">${BUILD ? `v${BUILD.version} · updated ${when(BUILD.updated)}` : ""}</span></header>
+      <p class="muted">Your customers, their orders and your commissions. The office handles pricing, stock and shipping.</p>
+      <dl class="kpis">
+        <div class="kpi" data-go="orders:new"><dt>New orders</dt><dd>${b.new || 0}</dd></div>
+        <div class="kpi" data-go="orders:confirmed"><dt>Waiting for payment</dt><dd>${b.confirmed || 0}</dd></div>
+        <div class="kpi" data-go="orders:paid"><dt>Paid, to ship</dt><dd>${b.paid || 0}</dd></div>
+        <div class="kpi" data-go="orders:shipped"><dt>Shipped</dt><dd>${b.shipped || 0}</dd></div>
+        <div class="kpi" data-go="customers"><dt>My customers</dt><dd>${s.rep ? s.rep.customers : 0}</dd></div>
+        <div class="kpi"><dt>Paid this month</dt><dd>${money(s.month.paid_cents)}</dd></div>
+      </dl>
+      <dl class="kpis">
+        <div class="kpi" data-go="commissions"><dt>Commission pending</dt><dd>${money(c.pending)}</dd></div>
+        <div class="kpi" data-go="commissions"><dt>Commission earned, owed</dt><dd>${money(c.earned)}</dd></div>
+        <div class="kpi" data-go="commissions"><dt>Commission paid out</dt><dd>${money(c.paid)}</dd></div>
+      </dl>
+      <div class="panel"><h2>How it works</h2><p class="muted">Every order from one of your customers earns you ${me.commission_rate !== null && me.commission_rate !== undefined ? esc(Number(me.commission_rate)) + "%" : "a commission"} of the product total (after any discount, before shipping), whether you enter it or they order on the store themselves. Commission is <strong>pending</strong> until the office marks the order paid, then <strong>earned</strong> until it's paid out to you.</p></div>`;
+    return;
+  }
   Promise.all([api("/reports"), api("/products")]).then(([{ reports: R }, { products: P }]) => {
     const box = document.getElementById("linkCheck"); if (!box) return;
     const lone = R.filter((r) => r.active && !P.some((p) => p.active && reportMatches(p, r)));
@@ -152,7 +177,7 @@ async function orderDetail(id) {
           : `<p>Order request: no payment taken yet. Confirm the total with the customer and collect payment${st && st.on ? ", or send a card payment link" : ""}.</p>`}
         ${unpaid && st && st.ready ? `<div class="row2"><button class="btn" id="payLink">Create card payment link</button><span class="muted" style="align-self:center">${st.on ? "" : "Card payments are off for customers; links you create still work."}</span></div><div id="payLinkOut"></div>` : ""}
         ${!st || !st.ready ? `<p class="muted">Card payments aren't set up: add the Stripe key on the host (see Site settings → Payments).</p>` : ""}
-        <div class="row2"><button class="btn" id="resendMail">Send order email again</button></div></div>
+        ${isRep() ? "" : `<div class="row2"><button class="btn" id="resendMail">Send order email again</button></div>`}</div>
       <div class="panel"><h2>Customer</h2>
         <p><strong>${esc(o.name)}</strong><br><a href="mailto:${esc(o.email)}?subject=${encodeURIComponent("Your order " + o.number)}">${esc(o.email)}</a>${o.phone ? `<br><a href="tel:${esc(o.phone)}">${esc(o.phone)}</a>` : ""}</p>
         <p class="eyebrow">${delivery ? "Deliver to" : "Ship to"}</p><p>${addr}</p>
@@ -160,7 +185,8 @@ async function orderDetail(id) {
         <div class="row2"><button class="btn" id="copyAddr">Copy ${delivery ? "delivery" : "shipping label"} address</button></div></div>
     </div>
     <div class="stack">
-      <div class="panel"><h2>Status &amp; delivery</h2>
+      ${isRep() ? `<div class="panel"><h2>Status &amp; delivery</h2><p>${pill(o.status)} · ${delivery ? "Local delivery" : "Ship"}${o.carrier || o.tracking ? ` · ${esc(o.carrier)} <span class="mono">${esc(o.tracking)}</span>` : ""}</p>
+        <p class="muted">${o.paid_at ? "Paid " + when(o.paid_at) + ". " : ""}${o.shipped_at ? "Shipped " + when(o.shipped_at) + ". " : ""}The office updates status, tracking and charges.</p></div>` : `<div class="panel"><h2>Status &amp; delivery</h2>
         <div class="grid2"><div class="field"><label class="eyebrow" for="ost">Status</label><select id="ost">${STATUSES.map((s) => `<option${s === o.status ? " selected" : ""}>${s}</option>`).join("")}</select></div>
         <div class="field"><label class="eyebrow" for="oful">Ship or deliver</label><select id="oful"><option value="ship"${!delivery ? " selected" : ""}>Ship</option><option value="delivery"${delivery ? " selected" : ""}>Local delivery (free)</option></select></div></div>
         ${!delivery && fedexAccount ? `<p class="muted">FedEx account <span class="mono">${esc(fedexAccount)}</span> <button class="linkbtn" type="button" id="copyFedex">copy</button> — use it when you make the label.</p>` : ""}
@@ -168,7 +194,7 @@ async function orderDetail(id) {
         <div class="field"><label class="eyebrow" for="otr">Tracking number</label><input id="otr" value="${esc(o.tracking)}"></div>
         <div class="field"><label class="eyebrow" for="oin">Internal note (staff only)</label><textarea id="oin">${esc(o.internal_note)}</textarea></div>
         <button class="btn solid" id="saveO">Save</button>
-        <p class="muted">${o.paid_at ? "Paid " + when(o.paid_at) + ". " : ""}${o.shipped_at ? "Shipped " + when(o.shipped_at) + "." : ""}</p></div>
+        <p class="muted">${o.paid_at ? "Paid " + when(o.paid_at) + ". " : ""}${o.shipped_at ? "Shipped " + when(o.shipped_at) + "." : ""}</p></div>`}
       <div class="panel"><h2>Sales rep &amp; commission</h2>
         ${isOwner() ? `<div class="grid2"><div class="field"><label class="eyebrow" for="orep">Rep</label><select id="orep"${o.payout_id ? " disabled" : ""}><option value="">— none —</option>${(repOpts || []).concat(o.rep_id && !(repOpts || []).some((r) => r.id === o.rep_id) ? [{ id: o.rep_id, name: o.rep_name, commission_rate: o.commission_rate }] : []).map((r) => `<option value="${r.id}"${r.id === o.rep_id ? " selected" : ""}>${esc(r.name)} (${r.commission_rate}%)</option>`).join("")}</select></div>
           <div class="field"><label class="eyebrow" for="orate">Rate on this order %</label><input id="orate" value="${o.commission_rate ?? ""}" inputmode="decimal"${o.rep_id && !o.payout_id ? "" : " disabled"}></div></div>
@@ -180,7 +206,7 @@ async function orderDetail(id) {
     </div>
   </div>`;
   const $ = (x) => document.getElementById(x);
-  $("saveO").onclick = async () => {
+  if ($("saveO")) $("saveO").onclick = async () => {
     if ($("ost").value === "shipped" && $("oful").value === "ship" && !$("otr").value.trim() && !confirm("Mark shipped without a tracking number?")) return;
     await api("/orders/" + id, { method: "PATCH", body: { status: $("ost").value, fulfillment: $("oful").value, carrier: $("ocar").value, tracking: $("otr").value, internalNote: $("oin").value } });
     toast("Saved"); orderDetail(id); drawNav();
@@ -197,7 +223,7 @@ async function orderDetail(id) {
       $("copyPay").onclick = () => navigator.clipboard?.writeText(r.url).then(() => toast("Link copied"), () => toast("Copy failed"));
     } finally { $("payLink").disabled = false; }
   };
-  $("resendMail").onclick = async () => { $("resendMail").disabled = true; try { const r = await api(`/orders/${id}/email`, { method: "POST" }); toast(`Sent ${r.sent} email${r.sent === 1 ? "" : "s"}`); } finally { $("resendMail").disabled = false; } };
+  if ($("resendMail")) $("resendMail").onclick = async () => { $("resendMail").disabled = true; try { const r = await api(`/orders/${id}/email`, { method: "POST" }); toast(`Sent ${r.sent} email${r.sent === 1 ? "" : "s"}`); } finally { $("resendMail").disabled = false; } };
   if ($("saveMoney")) $("saveMoney").onclick = async () => {
     await api("/orders/" + id, { method: "PATCH", body: { shippingCents: Math.round(parseFloat($("oship").value || 0) * 100), discountCents: Math.round(parseFloat($("odisc").value || 0) * 100) } });
     toast("Charges updated"); orderDetail(id);
@@ -213,14 +239,14 @@ async function orderDetail(id) {
 
 /* ---------- customers ---------- */
 async function customers() {
-  pane().innerHTML = `<header><h1>Customers</h1>${isOwner() ? `<button class="btn solid" id="addC">Add customer</button>` : ""}</header>
-    <p class="muted">Give a customer their own PIN to let them into the site. Their PIN works only for them: it unlocks the store and signs them into their account. Changing or revoking it, or turning the account off, ends their access right away. Turn the lock on under Site settings → Site PIN.</p>
-    <p class="muted"><strong>Pricing:</strong> a customer with a markup pays our cost plus that percent on every product that has a cost (products without a cost stay at the store price). They see their prices as soon as they sign in; sales reps see them when they place that customer's order. "Store prices" = the normal Products &amp; prices list.</p>
+  pane().innerHTML = `<header><h1>${isRep() ? "My customers" : "Customers"}</h1>${isOwner() || isRep() ? `<button class="btn solid" id="addC">Add customer</button>` : ""}</header>
+    ${isRep() ? `<p class="muted">Customers assigned to you. Orders they place (or you place for them) earn your commission. Ask the office to give them a PIN or special pricing.</p>` : `<p class="muted">Give a customer their own PIN to let them into the site. Their PIN works only for them: it unlocks the store and signs them into their account. Changing or revoking it, or turning the account off, ends their access right away. Turn the lock on under Site settings → Site PIN.</p>
+    <p class="muted"><strong>Pricing:</strong> a customer with a markup pays our cost plus that percent on every product that has a cost (products without a cost stay at the store price). They see their prices as soon as they sign in; sales reps see them when they place that customer's order. "Store prices" = the normal Products &amp; prices list.</p>`}
     <div id="cNew"></div><div id="pinShow"></div>
     <div class="filters"><input id="cq" type="search" placeholder="Name or email"></div>
     <div class="tblwrap" id="ct"><p class="muted">Loading…</p></div>`;
   let term = "";
-  const { reps: repList } = await api("/reps").catch(() => ({ reps: [] }));
+  const { reps: repList } = isRep() ? { reps: [] } : await api("/reps").catch(() => ({ reps: [] }));
   const activeReps = repList.filter((r) => r.active);
   const repCell = (c) => isOwner()
     ? `<select data-rep style="min-width:8rem"><option value="">— none —</option>${repList.filter((r) => r.active || r.id === c.rep_id).map((r) => `<option value="${r.id}"${r.id === c.rep_id ? " selected" : ""}>${esc(r.name)}${r.active ? "" : " (off)"}</option>`).join("")}</select>`
@@ -241,12 +267,12 @@ async function customers() {
   };
   const load = async () => {
     const { customers: list } = await api("/customers?q=" + encodeURIComponent(term));
-    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Pricing</th><th>Sales rep</th><th>Site PIN</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th>${isOwner() ? "<th></th>" : ""}</tr>
+    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Pricing</th><th>Sales rep</th><th>Site PIN</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th>${isOwner() || isRep() ? "<th></th>" : ""}</tr>
       ${list.map((c) => `<tr data-cid="${c.id}" data-cname="${esc(c.name || c.email)}"><td>${esc(c.name)}</td><td><a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a></td><td>${esc(c.phone)}</td>
         <td>${markupCell(c)}</td><td>${repCell(c)}</td><td>${pinCell(c)}</td><td>${when(c.created_at)}</td>
         <td class="num">${c.orders}</td><td class="num">${money(c.spent_cents)}</td><td>${c.last_order ? when(c.last_order) : ""}</td>
         <td><input type="checkbox" data-cact${c.active ? " checked" : ""}${ro()}></td>
-        ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-cedit>Edit</button><button class="btn" data-cdel>Delete</button></td>` : ""}</tr>`).join("")}</table>` : `<p class="muted">No customers yet.${isOwner() ? " Use Add customer to set one up and give them a PIN." : ""}</p>`;
+        ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-cedit>Edit</button><button class="btn" data-cdel>Delete</button></td>` : isRep() ? `<td><button class="btn" data-cedit>Edit</button></td>` : ""}</tr>`).join("")}</table>` : `<p class="muted">No customers yet.${isOwner() || isRep() ? " Use Add customer to set one up." : ""}</p>`;
     lastList = list;
   };
   let lastList = [];
@@ -293,9 +319,9 @@ async function customers() {
     const f = (id, label, type = "text") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}"></div>`;
     box.innerHTML = `<div class="panel"><h2>Add customer</h2><div class="grid2">${f("nc-n", "Name")}${f("nc-e", "Email", "email")}${f("nc-p", "Phone", "tel")}</div>
       <div class="grid2">${f("nc-1", "Street address")}${f("nc-2", "Apt, suite")}${f("nc-c", "City")}${f("nc-s", "State")}${f("nc-z", "ZIP")}</div>
-      <div class="grid2"><div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-rep">Sales rep (for commission)</label><select id="nc-rep"><option value="">— none —</option>${activeReps.map((r) => `<option value="${r.id}">${esc(r.name)} · ${r.commission_rate}%</option>`).join("")}</select></div>
+      <div class="grid2"${isRep() ? " hidden" : ""}><div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-rep">Sales rep (for commission)</label><select id="nc-rep"><option value="">— none —</option>${activeReps.map((r) => `<option value="${r.id}">${esc(r.name)} · ${r.commission_rate}%</option>`).join("")}</select></div>
       <div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-mk">Pricing (markup over our cost)</label><div class="row2" style="flex-wrap:nowrap"><select id="nc-mk" style="flex:1"><option value="">Store prices</option>${MK.map((m) => `<option value="${m}">+${m}%</option>`).join("")}<option value="custom">Custom…</option></select><input id="nc-mkc" inputmode="decimal" placeholder="%" style="width:5rem" hidden></div></div></div>
-      <label class="chk"><input type="checkbox" id="nc-pin" checked> Give them a PIN now</label>
+      <label class="chk"${isRep() ? " hidden" : ""}><input type="checkbox" id="nc-pin"${isRep() ? "" : " checked"}> Give them a PIN now</label>
       <div class="row2"><button class="btn solid" type="button" id="ncSave">Add customer</button><button class="btn" type="button" id="ncCancel">Cancel</button></div></div>`;
     document.getElementById("ncCancel").onclick = () => { box.innerHTML = ""; };
     document.getElementById("nc-mk").onchange = (e) => { const c = document.getElementById("nc-mkc"); c.hidden = e.target.value !== "custom"; if (!c.hidden) c.focus(); };
@@ -391,11 +417,11 @@ async function reps() {
 /* ---------- commissions ---------- */
 let commFilter = { rep: "", from: "", to: "", status: "" };
 async function commissions() {
-  if (!isOwner()) return dashboard();
+  if (!isOwner() && !isRep()) return dashboard();
   const $ = (x) => document.getElementById(x);
-  const { reps: repList } = await api("/reps");
-  pane().innerHTML = `<header><h1>Commissions</h1><a class="btn" id="cmCsv" href="#" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></header>
-    <div class="filters"><select id="cm-rep"><option value="">All reps</option>${repList.map((r) => `<option value="${r.id}"${String(r.id) === String(commFilter.rep) ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
+  const { reps: repList } = isRep() ? { reps: [] } : await api("/reps");
+  pane().innerHTML = `<header><h1>${isRep() ? "My commissions" : "Commissions"}</h1><a class="btn" id="cmCsv" href="#" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></header>
+    <div class="filters"><select id="cm-rep"${isRep() ? " hidden" : ""}><option value="">All reps</option>${repList.map((r) => `<option value="${r.id}"${String(r.id) === String(commFilter.rep) ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
       <input id="cm-from" type="date" value="${esc(commFilter.from)}"><input id="cm-to" type="date" value="${esc(commFilter.to)}">
       <select id="cm-st"><option value="">All statuses</option>${["pending", "earned", "paid", "void"].map((x) => `<option value="${x}"${commFilter.status === x ? " selected" : ""}>${x}</option>`).join("")}</select>
       <button class="btn" id="cm-month" type="button">This month</button><button class="btn" id="cm-clear" type="button">Clear</button></div>
@@ -410,11 +436,11 @@ async function commissions() {
     $("cmCsv").href = "/api/admin/commissions.csv?" + qs();
     $("cmK").innerHTML = [["Sales (product total)", d.totals.sales], ["Pending", d.totals.pending], ["Earned, owed now", d.totals.earned], ["Paid out", d.totals.paid]].map(([k, v]) => `<div class="kpi"><dt>${k}</dt><dd>${money(v)}</dd></div>`).join("");
     const earned = d.rows.filter((r) => r.comm_status === "earned");
-    $("cmT").innerHTML = d.rows.length ? `<table class="tbl"><tr><th>${earned.length ? '<input type="checkbox" id="cmAll" title="Select all earned">' : ""}</th><th>Date</th><th>Order</th><th>Rep</th><th>Customer</th><th>Order status</th><th class="num">Sales</th><th class="num">Rate</th><th class="num">Commission</th><th>Status</th></tr>
-      ${d.rows.map((r) => `<tr><td>${r.comm_status === "earned" ? `<input type="checkbox" data-pick="${r.id}" data-rep="${r.rep_id}">` : ""}</td><td>${when(r.created_at)}</td><td class="mono"><a href="#" data-order="${r.id}">${esc(r.number)}</a></td><td>${esc(r.rep_name)}</td><td>${esc(r.customer)}</td><td>${pill(r.status)}</td>
+    $("cmT").innerHTML = d.rows.length ? `<table class="tbl"><tr><th>${earned.length && isOwner() ? '<input type="checkbox" id="cmAll" title="Select all earned">' : ""}</th><th>Date</th><th>Order</th><th>Rep</th><th>Customer</th><th>Order status</th><th class="num">Sales</th><th class="num">Rate</th><th class="num">Commission</th><th>Status</th></tr>
+      ${d.rows.map((r) => `<tr><td>${r.comm_status === "earned" && isOwner() ? `<input type="checkbox" data-pick="${r.id}" data-rep="${r.rep_id}">` : ""}</td><td>${when(r.created_at)}</td><td class="mono"><a href="#" data-order="${r.id}">${esc(r.number)}</a></td><td>${esc(r.rep_name)}</td><td>${esc(r.customer)}</td><td>${pill(r.status)}</td>
         <td class="num">${money(r.subtotal_cents - r.discount_cents)}</td><td class="num">${r.commission_rate}%</td><td class="num"><strong>${money(r.commission_cents)}</strong></td><td><span class="pill st-${r.comm_status === "earned" ? "shipped" : r.comm_status === "paid" ? "delivered" : r.comm_status === "void" ? "cancelled" : "new"}">${r.comm_status}</span>${r.payout_date ? `<div class="muted" style="font-size:.72rem">${when(r.payout_date)}</div>` : ""}</td></tr>`).join("")}</table>` : `<p class="muted">No commissions match.</p>`;
     $("cmHist").innerHTML = d.payouts.length ? `<div class="panel"><h2>Payouts</h2><div class="tblwrap"><table class="tbl"><tr><th>Date</th><th>Rep</th><th class="num">Amount</th><th class="num">Orders</th><th>Note</th><th>By</th><th></th></tr>
-      ${d.payouts.map((p) => `<tr><td>${when(p.paid_at)}</td><td>${esc(p.rep_name || "")}</td><td class="num"><strong>${money(p.amount_cents)}</strong></td><td class="num">${p.orders}</td><td>${esc(p.note)}</td><td>${esc(p.who)}</td><td><button class="btn" data-undo="${p.id}">Undo</button></td></tr>`).join("")}</table></div></div>` : "";
+      ${d.payouts.map((p) => `<tr><td>${when(p.paid_at)}</td><td>${esc(p.rep_name || "")}</td><td class="num"><strong>${money(p.amount_cents)}</strong></td><td class="num">${p.orders}</td><td>${esc(p.note)}</td><td>${esc(p.who)}</td><td>${isOwner() ? `<button class="btn" data-undo="${p.id}">Undo</button>` : ""}</td></tr>`).join("")}</table></div></div>` : "";
     const payBox = $("cmPay");
     const sync = () => {
       const picked = [...document.querySelectorAll("[data-pick]:checked")];
