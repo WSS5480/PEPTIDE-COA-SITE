@@ -85,6 +85,10 @@
 .tbl.compact th, .tbl.compact td { padding: .45rem .5rem; }
 .tbl.compact .btn { height: 2rem; padding: 0 .55rem; font-size: .78rem; }
 .tbl .acts { display: flex; flex-wrap: wrap; gap: .3rem; max-width: 11rem; }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; }
+.seg button { height: 2.4rem; padding: 0 .9rem; background: var(--card); border: 0; border-right: 1px solid var(--line-strong); font: inherit; font-weight: 600; cursor: pointer; }
+.seg button:last-child { border-right: 0; } .seg button.on { background: var(--navy); color: #fff; }
+.markup h2 { font-size: 1.05rem; }
 .tbl th.sortable { cursor: pointer; user-select: none; } .tbl th.sortable:hover { color: var(--blue); }
 .tbl tr.dirty td { background: #fff8e1; } .tbl tr.bad td { background: #fdecec; }
 @media (max-width: 820px) {
@@ -100,7 +104,7 @@
 <div id="app"></div>
 <script src="/refresh.js?v=1"></script>
 <script src="/vial.js?v=1793128623"></script>
-<script src="/admin.js?v=1793133387"></script>
+<script src="/admin.js?v=1793133945"></script>
 <script src="/install.js?v=1792620296"></script>
 </body>
 </html>

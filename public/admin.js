@@ -439,13 +439,14 @@ async function products() {
   const cats = [...new Set(list.map((p) => p.category).filter(Boolean))];
   const saveBar = isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" data-saveall disabled>Save all changes</button><span class="muted" data-dirtycount></span></div>` : "";
   const savedMk = localStorage.getItem("markup") || "100";
-  const markupBar = isOwner() ? `<div class="panel" style="gap:.6rem"><div class="row2" style="align-items:center">
-      <strong>Markup from cost:</strong>
-      <select id="mkSel" style="height:2.4rem;padding:0 .6rem;border:1px solid var(--line-strong);border-radius:8px;font:inherit;background:var(--card)">${["50", "75", "100", "150"].map((m) => `<option value="${m}"${savedMk === m ? " selected" : ""}>+${m}%</option>`).join("")}<option value="custom"${!["50", "75", "100", "150"].includes(savedMk) ? " selected" : ""}>Enter new…</option></select>
-      <span id="mkCustomWrap"${["50", "75", "100", "150"].includes(savedMk) ? " hidden" : ""}><input id="mkCustom" inputmode="decimal" value="${["50", "75", "100", "150"].includes(savedMk) ? "" : esc(savedMk)}" placeholder="e.g. 125" style="width:5.5rem;height:2.4rem;padding:0 .6rem;border:1px solid var(--line-strong);border-radius:8px;font:inherit"> %</span>
-      <label class="chk"><input type="checkbox" id="mkRound"${localStorage.getItem("markupRound") === "1" ? " checked" : ""}> Round to whole dollars</label>
-      <button class="btn" id="mkApply">Set all prices from cost</button><span class="muted" id="mkNote"></span></div>
-      <span class="muted">Price = cost + markup (a $20 cost at +100% is $40). Only products with a cost change; the new prices show in the table until you click Save all changes. Costs come from the cost sheet, the Cost column or Inventory → Receive.</span></div>` : "";
+  const PCTS = ["50", "75", "100", "150"];
+  const markupBar = isOwner() ? `<div class="panel markup" style="gap:.6rem"><h2>Pricing: markup from cost</h2>
+      <div class="row2" style="align-items:center">
+        <span class="seg" id="mkSeg">${PCTS.map((m) => `<button type="button" data-mk="${m}"${savedMk === m ? ' class="on"' : ""}>+${m}%</button>`).join("")}<button type="button" data-mk="custom"${!PCTS.includes(savedMk) ? ' class="on"' : ""}>Enter new</button></span>
+        <span id="mkCustomWrap"${PCTS.includes(savedMk) ? " hidden" : ""}><input id="mkCustom" inputmode="decimal" value="${PCTS.includes(savedMk) ? "" : esc(savedMk)}" placeholder="e.g. 125" style="width:5.5rem;height:2.4rem;padding:0 .6rem;border:1px solid var(--line-strong);border-radius:8px;font:inherit"> %</span>
+        <label class="chk"><input type="checkbox" id="mkRound"${localStorage.getItem("markupRound") === "1" ? " checked" : ""}> Round to whole dollars</label>
+        <button class="btn solid" id="mkApply">Set all prices from cost</button><span class="muted" id="mkNote"></span></div>
+      <span class="muted">Pick a markup, then Set all prices: price = cost + markup (a $20 cost at +100% is $40). Only products with a cost change; the new prices show in the table until you click Save all changes. Costs come from the cost sheet, the Cost column or Inventory → Receive.</span></div>` : "";
   pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>${list.length ? `<button class="btn danger" id="clrP">Remove all products</button>` : ""}` : ""}</div></header>
     <div id="impBox"></div><div id="manageBox"></div>
     <p class="muted">Click a column name to sort. Cost = what you pay per vial (never shown on the store). Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). Untick Active to hide a product. A lab report attaches to a product when the peptide name, size and manufacturer match.</p>
@@ -498,9 +499,11 @@ async function products() {
   };
   document.querySelectorAll("[data-saveall]").forEach((b) => (b.onclick = saveAll));
   if (document.getElementById("mkApply")) {
-    const sel = document.getElementById("mkSel"), custom = document.getElementById("mkCustom");
-    sel.onchange = () => { document.getElementById("mkCustomWrap").hidden = sel.value !== "custom"; if (sel.value === "custom") custom.focus(); };
+    const seg = document.getElementById("mkSeg"), custom = document.getElementById("mkCustom");
+    const picked = () => (seg.querySelector(".on") || {}).dataset?.mk || "100";
+    seg.onclick = (e) => { const b = e.target.closest("[data-mk]"); if (!b) return; seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); document.getElementById("mkCustomWrap").hidden = b.dataset.mk !== "custom"; if (b.dataset.mk === "custom") custom.focus(); };
     document.getElementById("mkApply").onclick = () => {
+      const sel = { value: picked() };
       const pct = sel.value === "custom" ? parseFloat(custom.value) : parseFloat(sel.value);
       if (!Number.isFinite(pct) || pct < 0) return toast("Enter the markup as a number, like 125");
       const round = document.getElementById("mkRound").checked;
