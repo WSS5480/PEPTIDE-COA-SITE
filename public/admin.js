@@ -1036,21 +1036,30 @@ async function settings() {
         <li>Back in Stripe: <strong>Developers → Webhooks → Add endpoint</strong>, URL <span class="mono">${esc(site)}/api/stripe/webhook</span>, event <span class="mono">checkout.session.completed</span>. Copy its <strong>Signing secret</strong> (<span class="mono">whsec_…</span>) into Render as <span class="mono">STRIPE_WEBHOOK_SECRET</span>.</li>
         <li>Reload this page: it should say <em>Stripe connected</em>. Tick the box above and Save.</li></ol></details></div>
     <div class="panel"><h2>Order emails</h2>
-      <p>${ml && ml.ready ? `<span class="pill st-shipped">Email connected</span> Sending through ${esc(ml.detail)} from ${esc(ml.from)}.` : `<span class="pill st-cancelled">Email not connected</span> Orders are saved here, but no emails go out until the email settings are on the host (steps below).`}</p>
+      <p>${ml && ml.ready ? `<span class="pill st-shipped">Email connected</span> Sending through ${esc(ml.detail)} as ${esc(ml.from)}${ml.source === "host" ? " (from the settings on the host)" : ""}.` : `<span class="pill st-cancelled">Email not connected</span> Orders are saved here, but no emails go out until a sending account is saved below.`}</p>
       <div class="grid2">${t("orderEmail", "Send every order to", "You get a message for each new order and each card payment")}</div>
       <label class="chk"><input type="checkbox" id="s-orderEmailOn"${s.orderEmailOn ? " checked" : ""}${ro()}> Email me every order</label>
       <label class="chk"><input type="checkbox" id="s-customerEmailOn"${s.customerEmailOn ? " checked" : ""}${ro()}> Email the customer a confirmation (and a receipt when they pay by card)</label>
-      ${isOwner() ? `<div class="row2" style="align-items:center"><button class="btn" id="mailTest"${ml && ml.ready ? "" : " disabled"}>Send a test email</button><span class="muted" id="mailTestOut"></span></div>` : ""}
-      <details><summary style="cursor:pointer;font-weight:600">How to connect email (one time)</summary>
-        <p class="muted" style="margin-top:.6rem"><strong>Option A — the Microsoft 365 mailbox (orders@360medical.net):</strong></p><ol class="muted" style="margin:.3rem 0 0 1.2rem;display:grid;gap:.35rem">
-        <li>Microsoft 365 admin center → Users → Active users → orders@360medical.net → <strong>Mail</strong> tab → <strong>Manage email apps</strong> → tick <strong>Authenticated SMTP</strong> → Save.</li>
-        <li>In Render → peptide-store → Environment add: <span class="mono">SMTP_HOST</span> = smtp.office365.com · <span class="mono">SMTP_PORT</span> = 587 · <span class="mono">SMTP_USER</span> = orders@360medical.net · <span class="mono">SMTP_PASS</span> = that mailbox's password · <span class="mono">MAIL_FROM</span> = 360 Medical Peptides &lt;orders@360medical.net&gt;</li>
-        <li>If the test says "authentication unsuccessful", the tenant's security settings block sign-ins from apps (Security defaults / MFA). Either have your Microsoft admin allow this mailbox, or use Option B.</li></ol>
-        <p class="muted" style="margin-top:.6rem"><strong>Google Workspace instead:</strong> turn on 2-Step Verification, create an app password at myaccount.google.com/apppasswords, then use <span class="mono">SMTP_HOST</span> = smtp.gmail.com, <span class="mono">SMTP_PORT</span> = 465 and the app password as <span class="mono">SMTP_PASS</span>.</p>
-        <p class="muted" style="margin-top:.6rem"><strong>Option B — Resend (free for 3,000 emails a month):</strong></p><ol class="muted" style="margin:.3rem 0 0 1.2rem;display:grid;gap:.35rem">
-        <li>Sign up at <a href="https://resend.com" target="_blank" rel="noopener">resend.com</a>, add and verify the domain 360medical.net (they give you DNS records), then create an API key.</li>
-        <li>In Render add <span class="mono">RESEND_API_KEY</span> = that key and <span class="mono">MAIL_FROM</span> = 360 Medical Peptides &lt;orders@360medical.net&gt;.</li></ol>
-        <p class="muted" style="margin-top:.6rem">Either way, reload this page afterwards and click <em>Send a test email</em>.</p></details></div>
+      <h2 style="font-size:1.05rem;margin-top:.4rem">Sending account</h2>
+      <p class="muted">The mailbox the store sends from. On Microsoft 365 use a real mailbox's email and password (its <em>Authenticated SMTP</em> must be on in the Microsoft 365 admin center: Users → the user → Mail → Manage email apps). Emails come from that address unless you set a different From address it is allowed to send as.</p>
+      <div class="grid2">
+        <div class="field"><label class="eyebrow" for="s-mailProvider">Mail provider</label><select id="s-mailProvider"${ro()}>
+          <option value="microsoft"${s.mailMode === "smtp" && /office365|outlook/i.test(s.mailHost || "") ? " selected" : ""}>Microsoft 365 / Outlook</option>
+          <option value="google"${s.mailMode === "smtp" && /gmail|google/i.test(s.mailHost || "") ? " selected" : ""}>Google Workspace / Gmail</option>
+          <option value="smtp"${s.mailMode === "smtp" && !/office365|outlook|gmail|google/i.test(s.mailHost || "") ? " selected" : ""}>Other mail server (SMTP)</option>
+          <option value="resend"${s.mailMode === "resend" ? " selected" : ""}>Resend (API key)</option>
+          <option value=""${!s.mailMode ? " selected" : ""}>Not set here (use the host's settings)</option></select></div>
+        <div class="field mail-smtp"><label class="eyebrow" for="s-mailUser">Login email</label><input id="s-mailUser" value="${esc(s.mailUser)}" autocomplete="off" placeholder="name@360medical.net"${ro()}></div>
+        <div class="field mail-smtp"><label class="eyebrow" for="s-mailPass">Password</label><input id="s-mailPass" type="password" autocomplete="new-password" placeholder="${s.mailPassSet ? "•••••••• saved — type to change" : "Mailbox password"}"${ro()}></div>
+        <div class="field mail-resend"><label class="eyebrow" for="s-resendKey">Resend API key</label><input id="s-resendKey" type="password" autocomplete="new-password" placeholder="${s.resendKeySet ? "•••••••• saved — type to change" : "re_…"}"${ro()}></div>
+        <div class="field mail-smtp mail-resend"><label class="eyebrow" for="s-mailFrom">From (optional)</label><input id="s-mailFrom" value="${esc(s.mailFrom)}" placeholder="360 Medical Peptides <noreply@360medical.net>"${ro()}><span class="muted">Blank = the login address</span></div>
+        <div class="field mail-smtp"><label class="eyebrow" for="s-mailHost">Mail server</label><input id="s-mailHost" value="${esc(s.mailHost)}"${ro()}></div>
+        <div class="field mail-smtp"><label class="eyebrow" for="s-mailPort">Port</label><input id="s-mailPort" value="${esc(s.mailPort)}" inputmode="numeric"${ro()}></div></div>
+      ${isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" id="mailSave">Save sending account</button><button class="btn" id="mailTest">Send a test email</button>${s.mailPassSet || s.resendKeySet ? `<button class="btn" id="mailClear">Forget saved password</button>` : ""}<span class="muted" id="mailTestOut"></span></div>` : ""}
+      <details><summary style="cursor:pointer;font-weight:600">Help: Microsoft 365, Google, Resend</summary>
+        <p class="muted" style="margin-top:.6rem"><strong>Microsoft 365:</strong> pick Microsoft 365, enter a real mailbox's email and password. Shared mailboxes have no password: either use a real user that has <em>Send as</em> on the shared address (put the shared address in From), or send as the user's own address. If the test says the login was rejected, the tenant blocks app sign-ins (Security defaults / MFA) — ask your Microsoft admin to allow this mailbox, or use Resend.</p>
+        <p class="muted" style="margin-top:.6rem"><strong>Google Workspace / Gmail:</strong> turn on 2-Step Verification, create an app password at myaccount.google.com/apppasswords and use it as the password.</p>
+        <p class="muted" style="margin-top:.6rem"><strong>Resend</strong> (no mailbox password needed): sign up at resend.com, add and verify the domain 360medical.net with the DNS records they show, create an API key and paste it here with a From address on that domain.</p></details></div>
     ${isOwner() ? `<div class="panel" id="pinPanel"><h2>Site PIN</h2>
       <p class="muted">When on, nobody can see the store, products, prices or lab reports until they enter a PIN. Two kinds work: the <strong>shared PIN</strong> below, which anyone can use, and each customer's <strong>own PIN</strong>, which you give out under Customers. Admin stays open to you. Changing the shared PIN makes everyone using it enter the new one.</p>
       <label class="chk"><input type="checkbox" id="pinOn"> Require the PIN to view the store</label>
@@ -1099,11 +1108,43 @@ async function settings() {
     if (!v("shippingOn").checked && !v("deliveryOn").checked && !confirm("Neither shipping nor delivery is offered: checkout will say shipping is confirmed with the order. Save anyway?")) return;
     await api("/settings", { method: "PUT", body }); toast("Settings saved"); paneDirty = false;
   };
+  const prov = document.getElementById("s-mailProvider");
+  const mailFields = () => {
+    const p = prov.value;
+    const isSmtp = p === "microsoft" || p === "google" || p === "smtp";
+    pane().querySelectorAll(".mail-smtp, .mail-resend").forEach((el) => { el.hidden = !((el.classList.contains("mail-smtp") && isSmtp) || (el.classList.contains("mail-resend") && p === "resend")); });
+    const host = document.getElementById("s-mailHost"), port = document.getElementById("s-mailPort");
+    if (p === "microsoft") { host.value = "smtp.office365.com"; port.value = "587"; }
+    if (p === "google") { host.value = "smtp.gmail.com"; port.value = "465"; }
+    host.readOnly = port.readOnly = p === "microsoft" || p === "google";
+  };
+  mailFields(); prov.onchange = mailFields;
+  const mailBody = () => {
+    const v = (k) => document.getElementById("s-" + k);
+    const p = prov.value;
+    return { mailMode: p === "resend" ? "resend" : p ? "smtp" : "", mailHost: v("mailHost").value, mailPort: v("mailPort").value, mailUser: v("mailUser").value, mailPass: v("mailPass").value, mailFrom: v("mailFrom").value, resendKey: v("resendKey").value,
+      orderEmail: v("orderEmail").value, orderEmailOn: v("orderEmailOn").checked, customerEmailOn: v("customerEmailOn").checked };
+  };
+  if (document.getElementById("mailSave")) document.getElementById("mailSave").onclick = async () => {
+    const b = mailBody();
+    if (b.mailMode === "smtp" && (!b.mailUser || (!b.mailPass && !s.mailPassSet))) return toast("Enter the login email and password");
+    if (b.mailMode === "resend" && !b.resendKey && !s.resendKeySet) return toast("Paste the Resend API key");
+    await api("/settings", { method: "PUT", body: b }); toast("Sending account saved"); paneDirty = false; settings();
+  };
+  if (document.getElementById("mailClear")) document.getElementById("mailClear").onclick = async () => {
+    if (!confirm("Forget the saved mail password / API key? The store stops sending until a new one is saved (unless the host has its own settings).")) return;
+    await api("/mail/clear", { method: "POST" }); toast("Forgotten"); settings();
+  };
   if (document.getElementById("mailTest")) document.getElementById("mailTest").onclick = async () => {
     const b = document.getElementById("mailTest"), out = document.getElementById("mailTestOut");
-    b.disabled = true; out.textContent = "Sending…";
-    try { const r = await api("/mail/test", { method: "POST", body: { to: document.getElementById("s-orderEmail").value } }); out.textContent = `Sent to ${r.to}. Check the inbox (and spam).`; }
-    catch (e) { out.textContent = "Not sent: " + e.message; }
+    b.disabled = true; out.textContent = "Saving and sending…";
+    try {
+      const body = mailBody();
+      if (body.mailMode) await api("/settings", { method: "PUT", body }); // test what's on screen
+      const r = await api("/mail/test", { method: "POST", body: { to: document.getElementById("s-orderEmail").value } });
+      out.textContent = `Sent to ${r.to}. Check the inbox (and spam).`;
+      const ms = pane().querySelector("#s-mailPass"); if (ms) { ms.value = ""; ms.placeholder = "•••••••• saved — type to change"; }
+    } catch (e) { out.textContent = "Not sent: " + e.message; }
     finally { b.disabled = false; }
   };
 }

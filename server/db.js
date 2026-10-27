@@ -275,6 +275,14 @@ const DEFAULT_SETTINGS = {
   orderEmail: "orders@360medical.net",
   orderEmailOn: true,
   customerEmailOn: true,
+  // The account the store sends from (set under Site settings → Order emails). mailMode "" = use the host's settings, if any.
+  mailMode: "",            // "" | "smtp" | "resend"
+  mailHost: "smtp.office365.com",
+  mailPort: 587,
+  mailUser: "",            // login email
+  mailPass: "",            // never sent to the browser
+  mailFrom: "",            // e.g. 360 Medical Peptides <noreply@360medical.net>; blank = the login address
+  resendKey: "",           // never sent to the browser
   priceNote: "Prices in US dollars, per vial.",
   paymentInstructions: "We'll review your order and reach out with the total and payment options. Your order ships once payment is received.",
   intro: "Many of our products come with an independent lab report. Open one to see the results, then check it on the lab's own site with the key printed on it.",

@@ -471,7 +471,7 @@ async function notifyOrder(orderId, kind) {
       "ITEMS:", ...lines, "", ...totals, "", `Payment: ${payLine}`, o.customer_note ? `\nCustomer note: ${o.customer_note}` : "",
       link ? `\nOpen in admin: ${link}` : ""
     ].filter((x) => x !== null && x !== undefined).join("\n");
-    const r = await mail.send({ to: s.orderEmail, subject, text, html: mailHtml(text), replyTo: o.email });
+    const r = await mail.send({ to: s.orderEmail, subject, text, html: mailHtml(text), replyTo: o.email }, s);
     if (!r.ok) console.error(`Order email to ${s.orderEmail} failed: ${r.error}`);
     results.push(r);
   }
@@ -487,7 +487,7 @@ async function notifyOrder(orderId, kind) {
       `You can check this order any time under "Check an order"${BASE_URL ? ` at ${BASE_URL}` : ""} with this email and your order number.`,
       s.contact ? `\nQuestions? ${s.contact}` : "", "", `— ${s.brand}`
     ].join("\n");
-    const r = await mail.send({ to: o.email, subject, text, html: mailHtml(text), replyTo: isEmail(s.orderEmail || "") ? s.orderEmail : undefined });
+    const r = await mail.send({ to: o.email, subject, text, html: mailHtml(text), replyTo: isEmail(s.orderEmail || "") ? s.orderEmail : undefined }, s);
     if (!r.ok) console.error(`Customer email to ${o.email} failed: ${r.error}`);
     results.push(r);
   }
@@ -1238,15 +1238,23 @@ admin.delete("/discounts/:id", owner, wrap(async (req, res) => {
 
 /* ---------- admin: settings ---------- */
 admin.get("/settings", wrap(async (req, res) => {
-  const st = await getSettings(); delete st.pinHash; delete st.pinSecret;
-  res.json({ settings: st, stripe: stripeInfo(), mail: mail.info(), baseUrl: BASE_URL });
+  const st = await getSettings();
+  const out = { ...st, mailPassSet: !!st.mailPass, resendKeySet: !!st.resendKey };
+  for (const k of ["pinHash", "pinSecret", "mailPass", "resendKey"]) delete out[k];
+  res.json({ settings: out, stripe: stripeInfo(), mail: mail.info(st), baseUrl: BASE_URL });
 }));
-// sends a test message to the order email address, so the host's email settings can be checked
+// forget the saved mail password / API key (then the host's settings, if any, are used again)
+admin.post("/mail/clear", owner, wrap(async (req, res) => {
+  await q("update settings set value = '\"\"' where key in ('mailPass','resendKey')");
+  await q(`update settings set value = '""' where key = 'mailMode'`);
+  res.json({ ok: true });
+}));
+// sends a test message to the order email address, so the email settings can be checked
 admin.post("/mail/test", owner, wrap(async (req, res) => {
   const s = await getSettings();
   const to = isEmail(str(req.body?.to, 160)) ? str(req.body.to, 160) : s.orderEmail;
   if (!isEmail(to || "")) return bad(res, "Set the order email address first.");
-  const r = await mail.send({ to, subject: `Test email from ${s.brand}`, text: `This is a test from the store admin. Order emails are working.\n\nSent ${new Date().toLocaleString("en-US", { timeZone: "America/Chicago" })} (Central).` });
+  const r = await mail.send({ to, subject: `Test email from ${s.brand}`, text: `This is a test from the store admin. Order emails are working.\n\nSent ${new Date().toLocaleString("en-US", { timeZone: "America/Chicago" })} (Central).` }, s);
   if (!r.ok) return bad(res, r.error);
   res.json({ ok: true, to });
 }));
@@ -1257,6 +1265,9 @@ admin.put("/settings", owner, wrap(async (req, res) => {
     let v = b[k];
     if (k === "vialLogoV" || k === "siteLogoV" || k === "vialPhotoV") continue; // changed only by uploading or removing a logo
     if (k === "orderEmail") { v = str(v, 160).toLowerCase(); if (v && !isEmail(v)) return bad(res, "The order email address doesn't look right."); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; }
+    if (k === "mailPass" || k === "resendKey") { v = String(v || ""); if (!v.trim()) continue; v = v.trim().slice(0, 300); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; } // blank = keep the saved one
+    if (k === "mailMode") v = ["smtp", "resend"].includes(v) ? v : "";
+    if (k === "mailFrom" && v && !/^[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+$/.test(String(v).trim()) && !/^[^<>]+<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>$/.test(String(v).trim())) return bad(res, 'The From address should look like "Name <you@domain.com>" or just the address.');
     if (k === "perks") {
       const ICONS = ["flask", "doc", "key", "shield", "truck", "star", "lock", "chat", "box", "check"];
       v = (Array.isArray(v) ? v : []).slice(0, 6).map((c) => ({ icon: ICONS.includes(c && c.icon) ? c.icon : "check", title: str(c && c.title, 60), text: str(c && c.text, 160) })).filter((c) => c.title || c.text);
@@ -1532,7 +1543,8 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
   }
   const port = process.env.PORT || 3000;
   app.listen(port, () => console.log("Store running on port " + port));
-  console.log(`Card payments: ${stripe ? `Stripe ${stripeInfo().mode} key set${stripeInfo().webhook ? ", webhook secret set" : ", no webhook secret"}` : "off (no STRIPE_SECRET_KEY)"} · Email: ${mail.info().ready ? mail.info().detail : "off (no SMTP or Resend settings)"}`);
+  const mi = mail.info(await getSettings());
+  console.log(`Card payments: ${stripe ? `Stripe ${stripeInfo().mode} key set${stripeInfo().webhook ? ", webhook secret set" : ", no webhook secret"}` : "off (no STRIPE_SECRET_KEY)"} · Email: ${mi.ready ? `${mi.detail} (${mi.source} settings)` : "off (not set up yet)"}`);
   // card orders started but never paid are reported to the store once; checked every 10 minutes
   const sweep = () => sweepUnpaidCardOrders().catch((e) => console.error("Unpaid sweep failed:", e.message));
   setTimeout(sweep, 60 * 1000); setInterval(sweep, 10 * 60 * 1000);
