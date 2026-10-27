@@ -442,6 +442,47 @@ async function sweepUnpaidCardOrders() {
 const BASE_URL = String(process.env.BASE_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "");
 const escHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const mailHtml = (text) => `<div style="font:15px/1.5 -apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#111;white-space:pre-wrap;max-width:40rem">${escHtml(text).replace(/(https?:\/\/[^\s]+)/g, '<a href="$1">$1</a>')}</div>`;
+
+// A branded HTML email (tables + inline styles, so it looks right in Outlook, Gmail and phones).
+// parts: { preheader, eyebrow, title, intro, badge: {text, tone}, facts: [[label, value|html]], address: {label, lines[]},
+//         items: [{name, strength, qty, unit_cents}], totals: [[label, value, strong?]], note: {label, text}, button: {text, url}, after, footer }
+const NAVY = "#0f1b33", BLUE = "#0b4d96", INK = "#121c2f", INK2 = "#5d6879", LINE = "#e2e7ee", GROUND = "#f3f5f8";
+const FONT = "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+function emailHtml(s, p) {
+  const $ = (c) => "$" + ((c || 0) / 100).toFixed(2);
+  const tone = { ok: ["#e3f4eb", "#15734a"], warn: ["#fff4d6", "#7a5300"], bad: ["#f3e1e1", "#8a1c1c"], info: ["#e9f1fb", BLUE] }[p.badge && p.badge.tone] || ["#e9f1fb", BLUE];
+  const logo = BASE_URL && s.siteLogoV ? `<img src="${escHtml(BASE_URL)}/site-logo?v=${encodeURIComponent(s.siteLogoV)}" alt="${escHtml(s.brand)}" height="34" style="display:block;height:34px;width:auto;max-width:220px;border:0;background:#fff;padding:6px 10px;border-radius:8px">` : `<span style="font:700 20px/1 ${FONT};color:#fff;letter-spacing:.02em">${escHtml(s.brand)}</span>`;
+  const row = (l, v) => `<tr><td style="padding:4px 12px 4px 0;font:600 12px/1.4 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.06em;vertical-align:top;white-space:nowrap">${escHtml(l)}</td><td style="padding:4px 0;font:15px/1.4 ${FONT};color:${INK};vertical-align:top">${v}</td></tr>`;
+  const items = (p.items || []).map((i) => `<tr>
+      <td style="padding:9px 10px;border-top:1px solid ${LINE};font:15px/1.35 ${FONT};color:${INK}">${escHtml(`${i.name} ${i.strength}`.trim())}</td>
+      <td align="center" style="padding:9px 10px;border-top:1px solid ${LINE};font:15px/1.35 ${FONT};color:${INK};white-space:nowrap">${i.qty}</td>
+      <td align="right" style="padding:9px 10px;border-top:1px solid ${LINE};font:15px/1.35 ${FONT};color:${INK2};white-space:nowrap">${$(i.unit_cents)}</td>
+      <td align="right" style="padding:9px 10px;border-top:1px solid ${LINE};font:600 15px/1.35 ${FONT};color:${INK};white-space:nowrap">${$(i.unit_cents * i.qty)}</td></tr>`).join("");
+  const totals = (p.totals || []).map(([l, v, strong]) => `<tr><td colspan="3" align="right" style="padding:${strong ? "10px" : "4px"} 10px 4px;font:${strong ? "700 17px" : "14px"}/1.3 ${FONT};color:${strong ? INK : INK2}${strong ? `;border-top:2px solid ${NAVY}` : ""}">${escHtml(l)}</td><td align="right" style="padding:${strong ? "10px" : "4px"} 10px 4px;font:${strong ? "700 17px" : "14px"}/1.3 ${FONT};color:${INK};white-space:nowrap${strong ? `;border-top:2px solid ${NAVY}` : ""}">${escHtml(v)}</td></tr>`).join("");
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escHtml(p.title)}</title></head>
+<body style="margin:0;padding:0;background:${GROUND}">
+<span style="display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden">${escHtml(p.preheader || p.title)}</span>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${GROUND};padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#fff;border-radius:14px;overflow:hidden;border:1px solid ${LINE}">
+  <tr><td style="background:${NAVY};padding:18px 28px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="left">${logo}</td><td align="right" style="font:600 12px/1.3 ${FONT};color:#c9d1dc;text-transform:uppercase;letter-spacing:.08em">${escHtml(p.eyebrow || "")}</td></tr></table></td></tr>
+  <tr><td style="padding:26px 28px 6px">
+    ${p.badge ? `<span style="display:inline-block;padding:4px 11px;border-radius:999px;background:${tone[0]};color:${tone[1]};font:700 12px/1.3 ${FONT};text-transform:uppercase;letter-spacing:.06em">${escHtml(p.badge.text)}</span>` : ""}
+    <h1 style="margin:${p.badge ? "12px" : "0"} 0 8px;font:700 24px/1.2 ${FONT};color:${INK}">${escHtml(p.title)}</h1>
+    ${p.intro ? `<p style="margin:0 0 6px;font:15px/1.55 ${FONT};color:${INK}">${escHtml(p.intro)}</p>` : ""}
+  </td></tr>
+  ${p.facts && p.facts.length ? `<tr><td style="padding:10px 28px 4px"><table role="presentation" cellpadding="0" cellspacing="0">${p.facts.map(([l, v]) => row(l, v)).join("")}</table></td></tr>` : ""}
+  ${p.address ? `<tr><td style="padding:12px 28px 4px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${GROUND};border-radius:10px"><tr><td style="padding:12px 16px"><div style="font:600 12px/1.4 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">${escHtml(p.address.label)}</div><div style="font:15px/1.5 ${FONT};color:${INK}">${p.address.lines.filter(Boolean).map(escHtml).join("<br>")}</div></td></tr></table></td></tr>` : ""}
+  ${items ? `<tr><td style="padding:18px 28px 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${LINE};border-radius:10px;overflow:hidden">
+    <tr style="background:${GROUND}"><th align="left" style="padding:8px 10px;font:600 11px/1.3 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.07em">Item</th><th align="center" style="padding:8px 10px;font:600 11px/1.3 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.07em">Qty</th><th align="right" style="padding:8px 10px;font:600 11px/1.3 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.07em">Each</th><th align="right" style="padding:8px 10px;font:600 11px/1.3 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.07em">Line</th></tr>
+    ${items}${totals}</table></td></tr>` : ""}
+  ${p.note ? `<tr><td style="padding:12px 28px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fff8e1;border-radius:10px"><tr><td style="padding:12px 16px;font:14px/1.5 ${FONT};color:${INK}"><strong>${escHtml(p.note.label)}:</strong> ${escHtml(p.note.text)}</td></tr></table></td></tr>` : ""}
+  ${p.after ? `<tr><td style="padding:16px 28px 0;font:15px/1.55 ${FONT};color:${INK}">${p.after}</td></tr>` : ""}
+  ${p.button ? `<tr><td style="padding:20px 28px 8px"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:${BLUE};border-radius:8px"><a href="${escHtml(p.button.url)}" style="display:inline-block;padding:12px 22px;font:600 15px/1 ${FONT};color:#fff;text-decoration:none">${escHtml(p.button.text)}</a></td></tr></table></td></tr>` : ""}
+  <tr><td style="padding:22px 28px 26px;font:13px/1.5 ${FONT};color:${INK2};border-top:1px solid ${LINE}">${p.footer || ""}</td></tr>
+</table>
+</td></tr></table></body></html>`;
+}
+
 // kind: "new" (order request placed) · "paid" (card payment received) · "unpaid" (card order never finished)
 async function notifyOrder(orderId, kind) {
   const s = await getSettings();
@@ -451,27 +492,41 @@ async function notifyOrder(orderId, kind) {
   const rep = o.rep_id ? (await q("select name, email from users where id = $1", [o.rep_id])).rows[0] : null;
   const $ = (c) => "$" + ((c || 0) / 100).toFixed(2);
   const a = o.address || {};
-  const addr = [a.line1, a.line2, `${a.city || ""}, ${a.state || ""} ${a.zip || ""}`].filter((x) => x && x.trim() !== ",").join("\n");
+  const addrLines = [o.name, a.line1, a.line2, `${a.city || ""}, ${a.state || ""} ${a.zip || ""}`].filter((x) => x && x.trim() !== ",");
   const delivery = o.fulfillment === "delivery";
   const how = o.shipping_method || (delivery ? "Local delivery" : "Shipping");
   const lines = items.map((i) => `${i.qty} x ${`${i.name} ${i.strength}`.trim()} @ ${$(i.unit_cents)} = ${$(i.unit_cents * i.qty)}`);
-  const totals = [`Products: ${$(o.subtotal_cents)}`, o.discount_cents ? `Discount${o.discount_code ? ` (code ${o.discount_code})` : ""}: -${$(o.discount_cents)}` : "", `${how}: ${o.shipping_cents ? $(o.shipping_cents) : "Free"}`, `TOTAL: ${$(o.total_cents)}`].filter(Boolean);
-  const payLine = o.paid_at ? `PAID ${$(o.paid_cents ?? o.total_cents)} by card through Stripe${o.stripe_pi ? ` (${o.stripe_pi})` : ""}`
+  const totalRows = [["Products", $(o.subtotal_cents)], ...(o.discount_cents ? [[`Discount${o.discount_code ? ` (${o.discount_code})` : ""}`, "−" + $(o.discount_cents)]] : []), [how, o.shipping_cents ? $(o.shipping_cents) : "Free"], ["Total", $(o.total_cents), true]];
+  const totalsText = totalRows.map(([l, v]) => `${l}: ${v}`);
+  const paid = !!o.paid_at;
+  const payLine = paid ? `Paid ${$(o.paid_cents ?? o.total_cents)} by card through Stripe${o.stripe_pi ? ` (${o.stripe_pi})` : ""}`
     : o.pay_method === "card" ? "Card payment started but not finished. Send the customer a payment link from the order, or wait."
     : "Order request, not paid yet. Confirm the total with the customer and collect payment.";
   const link = BASE_URL ? `${BASE_URL}/admin#order-${o.id}` : "";
+  const legal = `${escHtml(s.brand)}${s.contact ? ` · ${escHtml(s.contact)}` : ""}<br>Products are sold for laboratory research use only.`;
   const results = [];
   if (s.orderEmailOn && isEmail(s.orderEmail || "")) {
     const head = kind === "paid" ? "PAID" : kind === "unpaid" ? "UNPAID card" : "New";
     const subject = `${head} order ${o.number} · ${$(o.total_cents)} · ${o.name} · ${delivery ? "Delivery" : "Ship"}`;
+    const title = kind === "paid" ? `Payment received · order ${o.number}` : kind === "unpaid" ? `Card payment not finished · order ${o.number}` : `New order ${o.number}`;
     const text = [
-      `${kind === "paid" ? "Payment received for order" : kind === "unpaid" ? "Card payment not finished for order" : "New order"} ${o.number} — ${s.brand}`, "",
+      `${title} — ${s.brand}`, "",
       `Customer: ${o.name}`, `Email: ${o.email}`, o.phone ? `Phone: ${o.phone}` : "", `Placed by: ${o.placed_by || "Customer"}${rep ? ` · Sales rep: ${rep.name}` : ""}`, "",
-      `${delivery ? "DELIVER TO" : "SHIP TO"} (${how}):`, o.name, addr, "",
-      "ITEMS:", ...lines, "", ...totals, "", `Payment: ${payLine}`, o.customer_note ? `\nCustomer note: ${o.customer_note}` : "",
+      `${delivery ? "DELIVER TO" : "SHIP TO"} (${how}):`, ...addrLines, "",
+      "ITEMS:", ...lines, "", ...totalsText, "", `Payment: ${payLine}`, o.customer_note ? `\nCustomer note: ${o.customer_note}` : "",
       link ? `\nOpen in admin: ${link}` : ""
     ].filter((x) => x !== null && x !== undefined).join("\n");
-    const r = await mail.send({ to: s.orderEmail, subject, text, html: mailHtml(text), replyTo: o.email }, s);
+    const html = emailHtml(s, {
+      eyebrow: "Store admin", title, preheader: `${o.name} · ${$(o.total_cents)} · ${how}`,
+      badge: kind === "paid" ? { text: "Paid by card", tone: "ok" } : kind === "unpaid" ? { text: "Card payment pending", tone: "warn" } : { text: "Order request", tone: "info" },
+      intro: kind === "paid" ? `${o.name} paid ${$(o.paid_cents ?? o.total_cents)} by card. The order is ready to ${delivery ? "deliver" : "ship"}.` : kind === "unpaid" ? `${o.name} started a card payment 30 minutes ago and hasn't finished. You can send a payment link from the order.` : `${o.name} placed an order request${rep ? ` through sales rep ${rep.name}` : ""}. Confirm the total with them and collect payment.`,
+      facts: [["Customer", `${escHtml(o.name)} · <a href="mailto:${escHtml(o.email)}" style="color:${BLUE}">${escHtml(o.email)}</a>${o.phone ? ` · <a href="tel:${escHtml(o.phone)}" style="color:${BLUE}">${escHtml(o.phone)}</a>` : ""}`], ["Placed by", escHtml(o.placed_by || "Customer") + (rep ? ` · Sales rep ${escHtml(rep.name)}` : "")], ["Payment", escHtml(payLine)], ["Get it", escHtml(how)]],
+      address: { label: delivery ? "Deliver to" : "Ship to", lines: addrLines }, items, totals: totalRows,
+      note: o.customer_note ? { label: "Customer note", text: o.customer_note } : null,
+      button: link ? { text: "Open the order in admin", url: link } : null,
+      footer: `Sent by the ${escHtml(s.brand)} store to ${escHtml(s.orderEmail)}. Turn these off under Site settings → Order emails.`
+    });
+    const r = await mail.send({ to: s.orderEmail, subject, text, html, replyTo: o.email }, s);
     if (!r.ok) console.error(`Order email to ${s.orderEmail} failed: ${r.error}`);
     results.push(r);
   }
@@ -483,11 +538,21 @@ async function notifyOrder(orderId, kind) {
     const next = kind === "paid" ? (delivery ? "We'll contact you to arrange the delivery." : "You'll get the tracking number when it ships.") : (s.paymentInstructions || "");
     const text = [
       `Hi ${o.name},`, "", intro, "", `Order number: ${o.number}`, `${delivery ? "Delivery" : "Shipping"}: ${how}${o.shipping_cents ? ` (${$(o.shipping_cents)})` : " (free)"}`, "",
-      "ITEMS:", ...lines, "", ...totals, "", next, "",
+      "ITEMS:", ...lines, "", ...totalsText, "", next, "",
       `You can check this order any time under "Check an order"${BASE_URL ? ` at ${BASE_URL}` : ""} with this email and your order number.`,
       s.contact ? `\nQuestions? ${s.contact}` : "", "", `— ${s.brand}`
     ].join("\n");
-    const r = await mail.send({ to: o.email, subject, text, html: mailHtml(text), replyTo: isEmail(s.orderEmail || "") ? s.orderEmail : undefined }, s);
+    const html = emailHtml(s, {
+      eyebrow: kind === "paid" ? "Receipt" : "Order confirmation", title: kind === "paid" ? "Payment received" : "Thanks for your order", preheader: `Order ${o.number} · ${$(o.total_cents)}`,
+      badge: { text: `Order ${o.number}`, tone: kind === "paid" ? "ok" : "info" },
+      intro: `Hi ${o.name}, ${intro.charAt(0).toLowerCase() + intro.slice(1)}`,
+      facts: [[delivery ? "Delivery" : "Shipping", escHtml(how) + (o.shipping_cents ? ` · ${$(o.shipping_cents)}` : " · free")], ...(o.tracking ? [["Tracking", escHtml(`${o.carrier || ""} ${o.tracking}`.trim())]] : [])],
+      address: { label: delivery ? "Delivering to" : "Shipping to", lines: addrLines }, items, totals: totalRows,
+      after: `${escHtml(next)}${BASE_URL ? `<br><br><span style="color:${INK2};font-size:13px">You can check this order any time under "Check an order" on our site with this email address and your order number.</span>` : ""}`,
+      button: BASE_URL ? { text: "Check my order", url: `${BASE_URL}/#track` } : null,
+      footer: legal
+    });
+    const r = await mail.send({ to: o.email, subject, text, html, replyTo: isEmail(s.orderEmail || "") ? s.orderEmail : undefined }, s);
     if (!r.ok) console.error(`Customer email to ${o.email} failed: ${r.error}`);
     results.push(r);
   }
@@ -1256,7 +1321,9 @@ admin.post("/mail/test", owner, wrap(async (req, res) => {
   if (!isEmail(to || "")) return bad(res, "Set the order email address first.");
   const mi = mail.info(s);
   console.log(`Test email by ${req.user.email} to ${to}: ${mi.ready ? `${mi.detail} as ${mi.from} (${mi.source} settings)` : "no sending account"}`);
-  const r = await mail.send({ to, subject: `Test email from ${s.brand}`, text: `This is a test from the store admin. Order emails are working.\n\nSent ${new Date().toLocaleString("en-US", { timeZone: "America/Chicago" })} (Central).` }, s);
+  const when = new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }) + " (Central)";
+  const r = await mail.send({ to, subject: `Test email from ${s.brand}`, text: `This is a test from the store admin. Order emails are working.\n\nSent ${when}.`,
+    html: emailHtml(s, { eyebrow: "Store admin", title: "Order emails are working", badge: { text: "Test", tone: "ok" }, intro: `This is a test from the ${s.brand} admin. Every order will arrive looking like this.`, facts: [["Sent", escHtml(when)], ["To", escHtml(to)]], footer: `Sent by the ${escHtml(s.brand)} store.` }) }, s);
   console.log(`Test email result: ${r.ok ? "sent" : "FAILED: " + r.error}`);
   if (!r.ok) return bad(res, r.error);
   res.json({ ok: true, to });
