@@ -837,6 +837,20 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
       [process.env.OWNER_EMAIL.trim().toLowerCase(), await bcrypt.hash(process.env.OWNER_PASSWORD, 11)]);
     console.log("Owner login created for", process.env.OWNER_EMAIL);
   } else if (n === 0) console.log("No owner yet: set OWNER_EMAIL and OWNER_PASSWORD and restart.");
+  // ADMIN_LOGIN_RESET on the host: each new value applies OWNER_EMAIL / OWNER_PASSWORD once, creating that
+  // owner login or resetting its password, and signs that login out everywhere. Other logins are left alone.
+  const loginTag = String(process.env.ADMIN_LOGIN_RESET || "").trim();
+  if (loginTag && process.env.OWNER_EMAIL && process.env.OWNER_PASSWORD) {
+    const { rows: [done] } = await q("select value from settings where key = 'adminLoginResetMark'");
+    if (!done || done.value !== loginTag) {
+      const email = process.env.OWNER_EMAIL.trim().toLowerCase();
+      const { rows: [u] } = await q(`insert into users(email,name,role,pass_hash) values ($1,'Owner','owner',$2)
+        on conflict (email) do update set role = 'owner', active = true, pass_hash = excluded.pass_hash returning id`, [email, await bcrypt.hash(process.env.OWNER_PASSWORD, 11)]);
+      await q("delete from sessions where user_id = $1", [u.id]);
+      await q("insert into settings(key,value) values ('adminLoginResetMark',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(loginTag)]);
+      console.log("Owner login set for", email);
+    }
+  }
   // CATALOG_RESET on the host: each new value wipes every lab report and product (with their documents
   // and stock history) once, then adds a few sample products to edit. Orders, customers and settings stay.
   const resetTag = String(process.env.CATALOG_RESET || "").trim();
