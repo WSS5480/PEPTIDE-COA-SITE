@@ -735,6 +735,20 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
       [process.env.OWNER_EMAIL.trim().toLowerCase(), await bcrypt.hash(process.env.OWNER_PASSWORD, 11)]);
     console.log("Owner login created for", process.env.OWNER_EMAIL);
   } else if (n === 0) console.log("No owner yet: set OWNER_EMAIL and OWNER_PASSWORD and restart.");
+  // SITE_PIN on the host sets the shared store PIN. It's applied once per new value, so a PIN
+  // changed later in admin isn't overwritten on restart. It doesn't turn the lock on or off.
+  const envPin = String(process.env.SITE_PIN || "").trim();
+  if (/^\d{4,8}$/.test(envPin)) {
+    const st = await pinState();
+    const mark = crypto.createHmac("sha256", st.secret).update("env:" + envPin).digest("hex");
+    const { rows: [m] } = await q("select value from settings where key = 'pinEnvMark'");
+    if (!m || m.value !== mark) {
+      await q("insert into settings(key,value) values ('pinHash',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(await bcrypt.hash(envPin, 10))]);
+      await q("insert into settings(key,value) values ('pinEnvMark',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(mark)]);
+      pinCache.at = 0;
+      console.log("Shared store PIN set from SITE_PIN");
+    }
+  }
   const port = process.env.PORT || 3000;
   app.listen(port, () => console.log("Store running on port " + port));
 })().catch((e) => { console.error(e); process.exit(1); });
