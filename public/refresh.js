@@ -3,7 +3,7 @@
    pull-down-to-refresh on touch screens.
    AppRefresh.init({ version, refresh, canAuto, interval }) */
 (() => {
-  let seen = null, timer = null, busy = false, cfg = null, lastShown = 0;
+  let seen = null, timer = null, busy = false, cfg = null, lastShown = 0, build0 = null;
   const coarse = matchMedia("(pointer: coarse)").matches;
   const style = document.createElement("style");
   style.textContent = `
@@ -16,17 +16,24 @@
     .upd { position: fixed; top: .8rem; left: 50%; z-index: 60; transform: translateX(-50%); padding: .55rem 1rem; background: #0b4d96; color: #fff; border: 0; border-radius: 999px; font: 600 .84rem/1 system-ui, sans-serif; box-shadow: 0 10px 30px -12px rgba(0,0,0,.5); cursor: pointer; }`;
   document.head.appendChild(style);
 
+  // The app's own code: when a newer version has been deployed, a refresh reloads the whole page so the new
+  // screens show up (the data refresh alone keeps the old code running).
+  async function buildStamp() {
+    try { const r = await fetch("/api/build", { cache: "no-store" }); if (!r.ok) return null; const b = await r.json(); return b.version + "|" + b.updated; } catch (e) { return null; }
+  }
+  async function newBuild() { const b = await buildStamp(); if (b === null) return false; if (build0 === null) { build0 = b; return false; } return b !== build0; }
   async function doRefresh(source) {
     if (busy || !cfg) return;
+    if (source !== "auto" && (await newBuild())) { location.reload(); return; }
     busy = true;
     document.querySelectorAll("[data-refresh]").forEach((b) => b.classList.add("spin"));
     try { await cfg.refresh(source); } catch (e) { /* the page shows its own errors */ }
     finally { setTimeout(() => document.querySelectorAll("[data-refresh]").forEach((b) => b.classList.remove("spin")), 400); busy = false; hideNudge(); }
   }
   function hideNudge() { const n = document.getElementById("updNudge"); if (n) n.remove(); }
-  function nudge() {
+  function nudge(text) {
     if (document.getElementById("updNudge")) return;
-    const b = document.createElement("button"); b.id = "updNudge"; b.className = "upd"; b.type = "button"; b.textContent = "New updates · tap to refresh";
+    const b = document.createElement("button"); b.id = "updNudge"; b.className = "upd"; b.type = "button"; b.textContent = text || "New updates · tap to refresh";
     b.onclick = () => doRefresh("nudge"); document.body.appendChild(b);
   }
   async function check() {
@@ -38,7 +45,10 @@
       if (seen === null) { seen = v; return; }
       if (v !== seen) { seen = v; if (cfg.canAuto()) doRefresh("auto"); else nudge(); }
     } catch (e) { /* offline: try again next time */ }
+    // a new version of the app itself: reload when nothing is being typed, otherwise offer it
+    if (++ticks % 4 === 0 && (await newBuild())) { if (cfg.canAuto()) location.reload(); else nudge("A new version is ready · tap to update"); }
   }
+  let ticks = 0;
   function start() { stop(); timer = setInterval(check, cfg.interval || 15000); }
   function stop() { if (timer) clearInterval(timer); timer = null; }
 
@@ -70,6 +80,7 @@
       document.addEventListener("click", (e) => { const b = e.target.closest("[data-refresh]"); if (b) { e.preventDefault(); doRefresh("button"); } });
       document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { check(); start(); } else stop(); });
       if (coarse) pullToRefresh();
+      buildStamp().then((b) => { build0 = b; });
       check(); start();
     },
     refresh: () => doRefresh("call"),
