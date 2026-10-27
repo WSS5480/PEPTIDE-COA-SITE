@@ -127,7 +127,7 @@ async function customers(editId) {
 async function neworder() {
   const [{ customers: list }, { products, shipping }] = await Promise.all([api("/customers"), api("/catalog")]);
   const sellable = products.filter((p) => p.price_cents !== null && (p.stock === null || p.stock > 0));
-  const label = (p) => `${p.name} ${p.strength}`.trim() + (p.manufacturer ? ` · ${p.manufacturer}` : "") + (p.sku ? ` · ${p.sku}` : "");
+  const label = (p) => `${p.name} ${p.strength}`.trim() + (p.manufacturer ? ` · ${p.manufacturer}` : "");
   pane().innerHTML = `<header><h1>New order</h1></header>
     ${!list.length ? `<div class="panel"><p>You need a customer first.</p><div><button class="btn solid rep" data-nav="customers">Add a customer</button></div></div>` : `
     <div class="panel"><h2>1. Customer</h2>

@@ -218,7 +218,6 @@ const DEFAULT_SETTINGS = {
   announcement: "",
   announcementOn: false,
   pinOn: false,
-  productLabel: "name",
   // Page setup: the feature cards under the home page header
   perksOn: true,
   perks: [
@@ -389,11 +388,14 @@ async function init() {
   if (sc === 0) {
     await q("insert into shipping_methods(name, detail, price_cents, active, sort) values ('Standard shipping', 'Ships in 1 to 3 business days', 0, false, 0)");
   }
-  // Give products a code from their lab report's Sample line when it is a code like RT30 (only fills blanks).
-  await q(`update products p set sku = upper(r.sample) from reports r
-    where p.sku = '' and lower(p.name) = lower(r.product)
-      and regexp_replace(lower(p.strength), '[^0-9.]', '', 'g') = regexp_replace(lower(r.strength), '[^0-9.]', '', 'g')
-      and r.sample ~* '^[a-z]{1,5}[0-9]{1,4}$'`);
+  // Product codes were removed from the store (Oct 2026): clear any saved ones once.
+  const { rows: [codesGone] } = await q("select 1 from settings where key = 'codesRemoved'");
+  if (!codesGone) {
+    await q("update products set sku = '', show_code = false where sku <> '' or show_code");
+    await q("delete from settings where key = 'productLabel'");
+    await q(`update settings set value = jsonb_set(value, '{labelShows}', '"name"') where key = 'vial'`);
+    await q("insert into settings(key, value) values ('codesRemoved', 'true') on conflict (key) do nothing");
+  }
   await q("delete from sessions where expires < now()");
   await q("delete from customer_sessions where expires < now()");
 }

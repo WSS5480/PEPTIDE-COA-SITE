@@ -30,7 +30,7 @@ const parseCookies = (h) => Object.fromEntries(String(h || "").split(/;\s*/).fil
 const SECURE = process.env.NODE_ENV === "production" || !!process.env.RENDER;
 
 function publicSettings(s) {
-  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "productLabel", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"];
+  const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"];
   return Object.fromEntries(keys.map((k) => [k, s[k]]));
 }
 const reportOut = (r) => ({
@@ -162,7 +162,7 @@ app.get("/api/version", wrap(async (req, res) => {
 app.get("/api/store", wrap(async (req, res) => {
   const s = await getSettings();
   const [{ rows: products }, { rows: reports }, { rows: shipping }] = await Promise.all([
-    q("select id,name,strength,sku,show_code,manufacturer,category,description,price_cents,stock,max_per_order,vial_label,media_v,(image is not null) has_image,(logo is not null) has_logo from products where active order by sort, name, strength, manufacturer, id"),
+    q("select id,name,strength,manufacturer,category,description,price_cents,stock,max_per_order,vial_label,media_v,(image is not null) has_image,(logo is not null) has_logo from products where active order by sort, name, strength, manufacturer, id"),
     q(`select ${REPORT_COLS} from reports where active order by product, tested desc nulls last`),
     q("select id,name,detail,price_cents,free_over_cents from shipping_methods where active order by sort, price_cents")
   ]);
@@ -576,16 +576,16 @@ admin.patch("/customers/:id", owner, wrap(async (req, res) => {
 
 /* ---------- admin: products ---------- */
 admin.get("/products", wrap(async (req, res) => {
-  const { rows } = await q(`select p.id, p.name, p.strength, p.sku, p.show_code, p.manufacturer, p.category, p.description, p.price_cents, p.stock, p.max_per_order,
+  const { rows } = await q(`select p.id, p.name, p.strength, p.manufacturer, p.category, p.description, p.price_cents, p.stock, p.max_per_order,
       p.active, p.sort, p.created_at, p.reorder_point, p.cost_cents, p.vial_label, p.media_v, (p.image is not null) has_image, (p.logo is not null) has_logo,
       (select count(*)::int from documents d where d.product_id = p.id) doc_count from products p order by sort, name, strength, manufacturer, id`);
   res.json({ products: rows });
 }));
 function productFields(b) {
   return {
-    name: str(b.name, 120), strength: str(b.strength, 40), sku: str(b.sku, 60).toUpperCase(), manufacturer: str(b.manufacturer, 80), category: str(b.category, 60) || "Research peptide",
+    name: str(b.name, 120), strength: str(b.strength, 40), manufacturer: str(b.manufacturer, 80), category: str(b.category, 60) || "Research peptide",
     description: str(b.description, 2000), price_cents: centsOrNull(b.price), stock: intOrNull(b.stock), max_per_order: intOrNull(b.maxPerOrder),
-    active: b.active !== false, sort: intOrNull(b.sort) ?? 0, show_code: b.showCode === true
+    active: b.active !== false, sort: intOrNull(b.sort) ?? 0
   };
 }
 admin.post("/products", owner, wrap(async (req, res) => {
@@ -621,13 +621,11 @@ admin.post("/products/import", owner, wrap(async (req, res) => {
     const f = {};
     if (has(r.category)) f.category = str(r.category, 60);
     if (has(r.manufacturer)) f.manufacturer = str(r.manufacturer, 80);
-    if (has(r.sku)) f.sku = str(r.sku, 60).toUpperCase();
     if (has(r.description)) f.description = str(r.description, 2000);
     if (price !== undefined) f.price_cents = price;
     if (has(r.stock)) f.stock = /^(∞|unlimited|untracked|-)$/i.test(String(r.stock).trim()) ? null : intOrNull(r.stock);
     if (has(r.maxPerOrder)) f.max_per_order = intOrNull(r.maxPerOrder);
     if (has(r.sort)) f.sort = intOrNull(r.sort) ?? 0;
-    if (has(r.showCode)) f.show_code = /^(yes|y|true|1|on|x)$/i.test(String(r.showCode).trim());
     if (has(r.active)) f.active = !/^(no|n|false|0|off|hidden|hide)$/i.test(String(r.active).trim());
     // same peptide + size can exist once per manufacturer
     const nm = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -891,7 +889,7 @@ admin.delete("/documents/:id", owner, wrap(async (req, res) => {
 /* ---------- admin: inventory ---------- */
 const OPEN_ORDER = "('new','confirmed','paid')";
 admin.get("/inventory", wrap(async (req, res) => {
-  const { rows } = await q(`select p.id, p.name, p.strength, p.manufacturer, p.sku, p.active, p.stock, p.reorder_point, p.cost_cents, p.price_cents,
+  const { rows } = await q(`select p.id, p.name, p.strength, p.manufacturer, p.active, p.stock, p.reorder_point, p.cost_cents, p.price_cents,
       coalesce((select sum(i.qty) from order_items i join orders o on o.id = i.order_id where i.product_id = p.id and o.status in ${OPEN_ORDER}), 0)::int committed,
       (select max(at) from stock_moves m where m.product_id = p.id and m.change > 0 and m.reason = 'Received') last_received,
       (select min(expires) from stock_moves m where m.product_id = p.id and m.reason = 'Received' and m.expires >= current_date) next_expiry,
@@ -952,13 +950,13 @@ admin.patch("/inventory/:id", owner, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 admin.get("/inventory.csv", wrap(async (req, res) => {
-  const { rows } = await q(`select p.name, p.strength, p.manufacturer, p.sku, p.stock, p.reorder_point, p.cost_cents, p.price_cents,
+  const { rows } = await q(`select p.name, p.strength, p.manufacturer, p.stock, p.reorder_point, p.cost_cents, p.price_cents,
       coalesce((select sum(i.qty) from order_items i join orders o on o.id = i.order_id where i.product_id = p.id and o.status in ${OPEN_ORDER}), 0)::int committed
     from products p order by p.name, p.strength, p.manufacturer`);
   const cell = (v) => { const x = String(v ?? ""); return /[",\n]/.test(x) || /^[=+\-@]/.test(x) ? `"${x.replace(/^([=+\-@])/, "'$1").replace(/"/g, '""')}"` : x; };
   const showCost = req.user.role === "owner";
-  const head = ["Name", "Size", "Manufacturer", "Code", "Available", "In open orders", "On shelf", "Reorder at", ...(showCost ? ["Cost each", "Stock value"] : []), "Price"];
-  const out = rows.map((r) => [r.name, r.strength, r.manufacturer, r.sku, r.stock ?? "not tracked", r.committed, r.stock === null ? "" : r.stock + r.committed, r.reorder_point ?? "",
+  const head = ["Name", "Size", "Manufacturer", "Available", "In open orders", "On shelf", "Reorder at", ...(showCost ? ["Cost each", "Stock value"] : []), "Price"];
+  const out = rows.map((r) => [r.name, r.strength, r.manufacturer, r.stock ?? "not tracked", r.committed, r.stock === null ? "" : r.stock + r.committed, r.reorder_point ?? "",
     ...(showCost ? [r.cost_cents === null ? "" : (r.cost_cents / 100).toFixed(2), r.cost_cents === null || r.stock === null ? "" : ((r.cost_cents * Math.max(0, r.stock)) / 100).toFixed(2)] : []),
     r.price_cents === null ? "" : (r.price_cents / 100).toFixed(2)].map(cell).join(","));
   res.set("Content-Type", "text/csv"); res.set("Content-Disposition", "attachment; filename=inventory.csv");
@@ -1010,7 +1008,6 @@ admin.put("/settings", owner, wrap(async (req, res) => {
     else if (Array.isArray(DEFAULT_SETTINGS[k])) v = (Array.isArray(v) ? v : []).map((x) => str(x, 1000)).filter(Boolean).slice(0, 30);
     else v = str(v, 3000);
     if (k === "brandUrl" && v && !/^https:\/\//i.test(v)) v = "";
-    if (k === "productLabel" && !["name", "code", "both"].includes(v)) v = "name";
     await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]);
   }
   res.json({ ok: true });
@@ -1109,7 +1106,7 @@ rep.patch("/customers/:id", wrap(async (req, res) => {
 }));
 rep.get("/catalog", wrap(async (req, res) => {
   const [{ rows: products }, { rows: shipping }] = await Promise.all([
-    q("select id, name, strength, manufacturer, sku, category, price_cents, stock, max_per_order from products where active order by sort, name, strength, manufacturer, id"),
+    q("select id, name, strength, manufacturer, category, price_cents, stock, max_per_order from products where active order by sort, name, strength, manufacturer, id"),
     q("select id, name, detail, price_cents, free_over_cents from shipping_methods where active order by sort, price_cents")
   ]);
   res.json({ products, shipping });
@@ -1196,9 +1193,9 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
           ["Ipamorelin", "10 mg", "Growth hormone research", "IP10", 3800],
           ["Epithalon", "10 mg", "Longevity research", "ET10", 4200]
         ];
-        for (const [i, [name, strength, category, sku, price]] of SAMPLES.entries()) {
-          await client.query("insert into products(name, strength, category, sku, price_cents, sort, description) values ($1,$2,$3,$4,$5,$6,$7)",
-            [name, strength, category, sku, price, i, "Sample listing. Edit or delete it in admin."]);
+        for (const [i, [name, strength, category, , price]] of SAMPLES.entries()) {
+          await client.query("insert into products(name, strength, category, price_cents, sort, description) values ($1,$2,$3,$4,$5,$6)",
+            [name, strength, category, price, i, "Sample listing. Edit or delete it in admin."]);
         }
         await client.query("insert into settings(key,value) values ('catalogResetMark',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(resetTag)]);
         await client.query("commit");

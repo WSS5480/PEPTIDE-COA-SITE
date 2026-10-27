@@ -26,7 +26,7 @@ const szk = (x) => nrm(x).replace(/mg$/, "");
 // the same peptide can come from several manufacturers: a COA only attaches to the matching maker
 // (names compared loosely, so "XINT" matches "XINTpeptides"; a report or product with no maker matches any)
 const mfrOk = (p, r) => { const a = nrm(p.manufacturer), b = nrm(r.manufacturer); return !a || !b || a.includes(b) || b.includes(a); };
-const reportMatches = (p, r) => mfrOk(p, r) && ((nrm(p.name) === nrm(r.product) && szk(p.strength) === szk(r.strength)) || (!!p.sku && nrm(p.sku) === nrm(r.sample)));
+const reportMatches = (p, r) => mfrOk(p, r) && nrm(p.name) === nrm(r.product) && szk(p.strength) === szk(r.strength);
 addEventListener("beforeunload", (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ""; } });
 let me = null, view = "dashboard", orderId = null, stats = null;
 const isOwner = () => me && me.role === "owner";
@@ -390,7 +390,7 @@ async function commissions() {
 async function products() {
   const [{ products: list }, { reports: reps }] = await Promise.all([api("/products"), api("/reports")]);
   const repFor = (p) => reps.filter((r) => r.active && reportMatches(p, r));
-  const COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["sku", "Code"], ["showCode", "Show code"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"], ["report", "Lab report"], ["docs", "Docs"]];
+  const COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"], ["report", "Lab report"], ["docs", "Docs"]];
   const NUM = new Set(["price", "stock", "maxPerOrder", "sort"]);
   const inp = (k, v, ph = "", extra = "") => `<input data-k="${k}" value="${esc(v)}" placeholder="${ph}"${extra}${ro()}>`;
   const row = (p) => `<tr data-id="${p ? p.id : ""}"${p ? "" : ' class="dirty"'}>
@@ -398,8 +398,6 @@ async function products() {
     <td>${inp("strength", p?.strength, "10 mg", ' style="min-width:4.5rem"')}</td>
     <td>${inp("category", p?.category ?? "Research peptide", "Category", ' list="catlist" style="min-width:9rem"')}</td>
     <td>${inp("manufacturer", p?.manufacturer, "e.g. XINT", ' list="mfrlist" style="min-width:7rem"')}</td>
-    <td>${inp("sku", p?.sku, "e.g. RT30", ' style="min-width:5.5rem;text-transform:uppercase"')}</td>
-    <td style="text-align:center"><input type="checkbox" data-k="showCode" title="Show the code instead of the name on the store"${p?.show_code ? " checked" : ""}${ro()}></td>
     <td>${inp("price", dollars(p?.price_cents), "Ask", ' inputmode="decimal" style="min-width:5rem"')}</td>
     <td>${inp("stock", p?.stock ?? "", "∞", ' inputmode="numeric" style="min-width:4rem"')}</td>
     <td>${inp("maxPerOrder", p?.max_per_order ?? "", "—", ' inputmode="numeric" style="min-width:4rem"')}</td>
@@ -414,7 +412,7 @@ async function products() {
   const saveBar = isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" data-saveall disabled>Save all changes</button><span class="muted" data-dirtycount></span></div>` : "";
   pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>${list.length ? `<button class="btn danger" id="clrP">Remove all products</button>` : ""}` : ""}</div></header>
     <div id="impBox"></div><div id="manageBox"></div>
-    <p class="muted">Click a column name to sort. Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). "Code" is the product code (e.g. RT30); tick "Show code" to show the code instead of the name on the store; a lab report attaches when its name and size match, or when its Sample line matches the code. Untick Active to hide a product. Products match their lab report by name and size.</p>
+    <p class="muted">Click a column name to sort. Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). Untick Active to hide a product. A lab report attaches to a product when the peptide name, size and manufacturer match.</p>
     ${(() => { const n = list.filter((p) => p.active && !repFor(p).length).length; return n ? `<p class="muted"><strong>${n} active product${n === 1 ? " has" : "s have"} no lab report.</strong> Sort by the Lab report column to see them.</p>` : ""; })()}
     ${saveBar}
     <datalist id="catlist">${cats.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
@@ -498,7 +496,7 @@ async function inventory() {
   const { items } = await api("/inventory");
   const own = isOwner();
   const label = (p) => `${p.name} ${p.strength}`.trim();
-  const sub = (p) => [p.manufacturer, p.sku, p.active ? "" : "hidden"].filter(Boolean).join(" · ");
+  const sub = (p) => [p.manufacturer, p.active ? "" : "hidden"].filter(Boolean).join(" · ");
   const soon = (d) => d && (new Date(d) - Date.now()) / 864e5 <= 60;
   const status = (p) => p.stock === null ? "untracked" : p.stock <= 0 ? "out" : p.stock <= (p.reorder_point ?? 5) ? "low" : "ok";
   const pillFor = { ok: '<span class="pill st-shipped">In stock</span>', low: '<span class="pill st-new">Low</span>', out: '<span class="pill st-cancelled">Out</span>', untracked: '<span class="pill">Not tracked</span>' };
@@ -523,7 +521,7 @@ async function inventory() {
   const draw = () => {
     const term = (document.getElementById("invQ").value || "").toLowerCase();
     const list = items.filter((p) => (invFilter === "all" || (invFilter === "expiring" ? soon(p.next_expiry) : status(p) === invFilter))
-      && (!term || [p.name, p.strength, p.manufacturer, p.sku].join(" ").toLowerCase().includes(term)));
+      && (!term || [p.name, p.strength, p.manufacturer].join(" ").toLowerCase().includes(term)));
     document.getElementById("invB").innerHTML = list.length ? list.map((p) => `<tr data-iid="${p.id}">
       <td class="namecol" title="${esc(label(p))}"><strong>${esc(label(p))}</strong>${sub(p) ? `<div class="muted" style="font-size:.78rem">${esc(sub(p))}</div>` : ""}</td>
       <td class="num"><strong>${p.stock ?? "—"}</strong></td><td class="num">${p.committed || ""}</td><td class="num">${p.stock === null ? "" : p.stock + p.committed}</td>
@@ -544,7 +542,7 @@ async function inventory() {
       <div class="grid2">${fld("rvSup", "Supplier", 'placeholder="e.g. XINT"')}${fld("rvRef", "Invoice / PO #")}${fld("rvNote", "Note")}</div>
       ${only ? "" : `<input id="rvQ" type="search" placeholder="Filter products" style="height:2.4rem;padding:0 .8rem;border:1px solid var(--line-strong);border-radius:8px;max-width:20rem">`}
       <div class="tblwrap" style="max-height:26rem;overflow:auto"><table class="tbl compact" id="rvT"><tr><th>Product</th><th class="num">Now</th><th>Qty received</th><th>Cost each $</th><th>Lot / batch</th><th>Expires</th></tr>
-      ${rows.map((p) => `<tr data-rid="${p.id}" data-txt="${esc([p.name, p.strength, p.manufacturer, p.sku].join(" ").toLowerCase())}"><td class="namecol"><strong>${esc(label(p))}</strong><div class="muted" style="font-size:.78rem">${esc(sub(p))}</div></td><td class="num">${p.stock ?? "—"}</td>
+      ${rows.map((p) => `<tr data-rid="${p.id}" data-txt="${esc([p.name, p.strength, p.manufacturer].join(" ").toLowerCase())}"><td class="namecol"><strong>${esc(label(p))}</strong><div class="muted" style="font-size:.78rem">${esc(sub(p))}</div></td><td class="num">${p.stock ?? "—"}</td>
         <td><input data-f="qty" inputmode="numeric" style="width:5rem"></td><td><input data-f="costEach" inputmode="decimal" style="width:6rem" placeholder="${p.cost_cents !== null ? dollars(p.cost_cents) : ""}"></td>
         <td><input data-f="lot" style="width:9rem"></td><td><input data-f="expires" type="date" style="width:9.5rem"></td></tr>`).join("")}</table></div>
       <div class="row2"><button class="btn solid" type="button" id="rvGo">Add to stock</button><span class="muted">Only rows with a quantity are received. Cost updates the average cost per unit.</span></div></div>`;
@@ -614,12 +612,12 @@ let pendingReport = null;
 let openManageId = null; // a peptide just added opens its Manage panel for picture/logo // opens the Lab reports form already filled in for a product
 async function manageProduct(p, reps) {
   const box = document.getElementById("manageBox");
-  const label = `${p.name} ${p.strength}`.trim() + (p.manufacturer ? ` · ${p.manufacturer}` : "") + (p.sku ? ` · ${p.sku}` : "");
+  const label = `${p.name} ${p.strength}`.trim() + (p.manufacturer ? ` · ${p.manufacturer}` : "");
   const { documents: docs, kinds } = await api("/documents?productId=" + p.id);
   const st = await api("/settings").catch(() => ({ settings: {} }));
   const vialStyle = Object.assign({}, window.VIAL_DEFAULT, st.settings.vial || {});
   const artHTML = () => p.has_image ? `<img src="/pimg/${p.id}?v=${p.media_v}" alt="">`
-    : window.drawVial({ title: vialStyle.labelShows === "code" && p.sku ? p.sku : p.name, sub: p.strength, style: Object.assign({}, vialStyle, p.vial_label ? { label: p.vial_label, photoTint: true } : {}), logoUrl: p.has_logo ? `/plogo/${p.id}?v=${p.media_v}` : st.settings.vialLogoV ? `/vial-logo?v=${st.settings.vialLogoV}` : "", photoUrl: `/vial-photo?v=${st.settings.vialPhotoV || 1}` });
+    : window.drawVial({ title: p.name, sub: p.strength, style: Object.assign({}, vialStyle, p.vial_label ? { label: p.vial_label, photoTint: true } : {}), logoUrl: p.has_logo ? `/plogo/${p.id}?v=${p.media_v}` : st.settings.vialLogoV ? `/vial-logo?v=${st.settings.vialLogoV}` : "", photoUrl: `/vial-photo?v=${st.settings.vialPhotoV || 1}` });
   box.innerHTML = `<div class="panel" style="border-color:var(--blue)">
     <div class="row2" style="justify-content:space-between;align-items:center"><h2>${esc(label)}</h2><button class="btn" type="button" id="mgClose">Close</button></div>
     <div class="row2" style="align-items:flex-start;gap:1.25rem">
@@ -638,7 +636,7 @@ async function manageProduct(p, reps) {
           <small>${r.image ? `<a href="${esc(r.image)}" target="_blank" rel="noopener">${r.isPdf ? "Open PDF" : "Open image"}</a> · ` : "No file attached · "}<a href="#" data-editrep="${r.id}">Edit</a></small></li>`).join("")}</ul>`
           : `<p class="muted">No lab report attached yet.</p>`}
         ${isOwner() ? `<div><button class="btn solid" type="button" id="mgAddCoa">Add a COA for this peptide</button></div>` : ""}
-        <p class="muted" style="font-size:.8rem">A COA attaches when its peptide name and size match this product, or its Sample line matches the code${p.sku ? ` (${esc(p.sku)})` : ""}.</p></div>
+        <p class="muted" style="font-size:.8rem">A COA attaches when its peptide name, size and manufacturer match this product.</p></div>
       <div class="stack"><h3 class="eyebrow">Other documents</h3>
         ${docs.length ? `<ul class="hist" id="docList">${docs.map((d) => `<li data-doc="${d.id}"><div class="row2" style="justify-content:space-between;align-items:center">
             <span><strong>${esc(d.title)}</strong> <span class="pill st-confirmed">${esc(d.kind)}</span>${d.public ? "" : ' <span class="pill st-new">Hidden</span>'}</span>
@@ -666,11 +664,11 @@ async function manageProduct(p, reps) {
   });
   upload($("mgPic"), "image"); upload($("mgLogo"), "logo");
   box.querySelectorAll("[data-mdel]").forEach((b) => (b.onclick = async () => { await api(`/products/${p.id}/media/${b.dataset.mdel}`, { method: "DELETE" }); toast("Removed"); refreshP(); }));
-  if ($("mgColor")) $("mgColor").oninput = () => { if (!p.has_image) $("mgArt").innerHTML = window.drawVial({ title: vialStyle.labelShows === "code" && p.sku ? p.sku : p.name, sub: p.strength, style: Object.assign({}, vialStyle, { label: $("mgColor").value, photoTint: true }), logoUrl: p.has_logo ? `/plogo/${p.id}?v=${p.media_v}` : st.settings.vialLogoV ? `/vial-logo?v=${st.settings.vialLogoV}` : "", photoUrl: `/vial-photo?v=${st.settings.vialPhotoV || 1}` }); };
+  if ($("mgColor")) $("mgColor").oninput = () => { if (!p.has_image) $("mgArt").innerHTML = window.drawVial({ title: p.name, sub: p.strength, style: Object.assign({}, vialStyle, { label: $("mgColor").value, photoTint: true }), logoUrl: p.has_logo ? `/plogo/${p.id}?v=${p.media_v}` : st.settings.vialLogoV ? `/vial-logo?v=${st.settings.vialLogoV}` : "", photoUrl: `/vial-photo?v=${st.settings.vialPhotoV || 1}` }); };
   if ($("mgColorSave")) $("mgColorSave").onclick = () => media({ vialLabel: $("mgColor").value }, "Label color saved");
   if ($("mgColorClear")) $("mgColorClear").onclick = () => media({ vialLabel: "" }, "Standard color restored");
   box.querySelectorAll("[data-editrep]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); pendingReport = { id: +a.dataset.editrep }; go("reports"); }));
-  if ($("mgAddCoa")) $("mgAddCoa").onclick = () => { pendingReport = { product: p.name, strength: p.strength, sample: p.sku || `${p.name} ${p.strength}`.trim(), manufacturer: p.manufacturer || "" }; go("reports"); };
+  if ($("mgAddCoa")) $("mgAddCoa").onclick = () => { pendingReport = { product: p.name, strength: p.strength, sample: `${p.name} ${p.strength}`.trim(), manufacturer: p.manufacturer || "" }; go("reports"); };
   if ($("dUp")) $("dUp").onclick = async () => {
     const file = $("dFile").files[0];
     if (!file) return toast("Choose a file first");
@@ -691,9 +689,9 @@ async function manageProduct(p, reps) {
 }
 
 /* ---------- product import from Excel / CSV ---------- */
-const IMPORT_COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["sku", "Code"], ["showCode", "Show code"], ["price", "Price"], ["stock", "Stock"], ["maxPerOrder", "Max per order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
+const IMPORT_COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["price", "Price"], ["stock", "Stock"], ["maxPerOrder", "Max per order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
 const HEADER_ALIASES = { name: ["name", "product", "productname", "peptide", "item"], strength: ["size", "strength", "mg", "dose", "amount", "vialsize"],
-  category: ["category", "cat", "type"], manufacturer: ["manufacturer", "mfr", "mfg", "maker", "brand", "supplier", "lab"], sku: ["sku", "code", "productcode", "itemcode", "sample", "samplename"], showCode: ["showcode", "displaycode", "usecode"], price: ["price", "cost", "retail", "priceusd", "price$"],
+  category: ["category", "cat", "type"], manufacturer: ["manufacturer", "mfr", "mfg", "maker", "brand", "supplier", "lab"], price: ["price", "cost", "retail", "priceusd", "price$"],
   stock: ["stock", "qty", "quantity", "onhand", "inventory"], maxPerOrder: ["maxperorder", "max", "limit", "maxorder", "max/order"],
   sort: ["sort", "order", "position"], active: ["active", "show", "visible", "enabled"], description: ["description", "desc", "notes", "details"] };
 const normH = (h) => String(h || "").toLowerCase().replace(/[^a-z0-9$/]/g, "");
@@ -704,15 +702,15 @@ function loadSheetJS() {
 function downloadTemplate(list) {
   const cell = (v) => { const x = String(v ?? ""); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
   const lines = [IMPORT_COLS.map(([, l]) => l).join(",")];
-  list.forEach((p) => lines.push([p.name, p.strength, p.category, p.manufacturer, p.sku, p.show_code ? "Yes" : "No", p.price_cents === null ? "" : (p.price_cents / 100).toFixed(2), p.stock ?? "", p.max_per_order ?? "", p.sort, p.active ? "Yes" : "No", p.description].map(cell).join(",")));
-  if (!list.length) lines.push("BPC-157,10 mg,Tissue repair research,XINT,BPC10,No,45.00,25,,0,Yes,");
+  list.forEach((p) => lines.push([p.name, p.strength, p.category, p.manufacturer, p.price_cents === null ? "" : (p.price_cents / 100).toFixed(2), p.stock ?? "", p.max_per_order ?? "", p.sort, p.active ? "Yes" : "No", p.description].map(cell).join(",")));
+  if (!list.length) lines.push("BPC-157,10 mg,Tissue repair research,XINT,45.00,25,,0,Yes,");
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" })); a.download = "products.csv"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 function importBox(list) {
   const box = document.getElementById("impBox");
   if (box.innerHTML) { box.innerHTML = ""; return; }
   box.innerHTML = `<div class="panel"><h2>Import products from a file</h2>
-    <p class="muted">Upload an Excel (.xlsx, .xls) or CSV file with a header row. Columns: <strong>Name</strong>, <strong>Size</strong>, Category, Manufacturer, Code (e.g. RT30), Price, Stock, Max per order, Sort, Active (Yes/No), Description. Only Name is required. A row whose Name, Size and Manufacturer match an existing product updates it; anything else is added as a new product, so the same peptide from two manufacturers becomes two products with their own prices. Blank cells keep the current value.</p>
+    <p class="muted">Upload an Excel (.xlsx, .xls) or CSV file with a header row. Columns: <strong>Name</strong>, <strong>Size</strong>, Category, Manufacturer, Price, Stock, Max per order, Sort, Active (Yes/No), Description. Only Name is required. A row whose Name, Size and Manufacturer match an existing product updates it; anything else is added as a new product, so the same peptide from two manufacturers becomes two products with their own prices. Blank cells keep the current value.</p>
     <div class="row2"><button class="btn" type="button" id="tpl">Download current products as a template</button>
       <label class="btn solid" style="display:inline-grid;place-items:center;cursor:pointer">Choose file<input type="file" id="impFile" accept=".xlsx,.xls,.csv,text/csv" hidden></label></div>
     <div id="impPrev"></div></div>`;
@@ -758,12 +756,12 @@ async function reports() {
   const attached = (r) => prods.filter((p) => reportMatches(p, r));
   const orphans = list.filter((r) => r.active && !attached(r).some((p) => p.active)).length;
   pane().innerHTML = `<header><h1>Lab reports</h1><div class="row2">${isOwner() ? `<button class="btn solid" id="addR">Add report</button>${list.length ? `<button class="btn danger" id="clrR">Remove all lab reports</button>` : ""}` : ""}</div></header>
-    <p class="muted">Copy each field from the lab's document exactly as printed. A report attaches to a product when the peptide name and size match, or when the product's Code matches the report's Sample line (e.g. RT30).</p>
+    <p class="muted">Copy each field from the lab's document exactly as printed. A report attaches to a product when the peptide name, size and manufacturer match.</p>
     ${!list.length ? `<div class="okbox" style="padding:.7rem 1rem">No lab reports yet. Click Add report, or open a product's Manage button under Products &amp; prices.</div>` : orphans ? `<div class="err">${orphans} lab report${orphans === 1 ? " isn't" : "s aren't"} attached to any product on the store. Add the product, or give an existing product the matching name, size or code.</div>` : `<div class="okbox" style="padding:.7rem 1rem">Every lab report is attached to a product.</div>`}
     <div id="rform"></div>
     <div class="tblwrap"><table class="tbl"><tr><th></th><th>Peptide</th><th>Size</th><th>Sample</th><th>Task</th><th>Tested</th><th>Attached to</th><th>Shown</th></tr>
     ${list.map((r) => `<tr class="click" data-rid="${r.id}"><td>${r.image ? (r.isPdf ? '<span class="pdfthumb">PDF</span>' : `<img class="thumbimg" src="${esc(r.image)}" alt="">`) : ""}</td><td>${esc(r.product)}</td><td>${esc(r.strength)}</td><td class="mono">${esc(r.sample)}</td><td class="mono">${esc(r.task)}</td><td>${esc(r.tested)}</td>
-      <td>${(() => { const a = attached(r); if (!a.length) return '<span class="pill st-cancelled">No product</span>'; return a.map((p) => `<span class="pill ${p.active ? "st-shipped" : "st-new"}">${esc(p.name)} ${esc(p.strength)}${p.sku ? " · " + esc(p.sku) : ""}${p.active ? "" : " (hidden)"}</span>`).join(" "); })()}</td>
+      <td>${(() => { const a = attached(r); if (!a.length) return '<span class="pill st-cancelled">No product</span>'; return a.map((p) => `<span class="pill ${p.active ? "st-shipped" : "st-new"}">${esc(p.name)} ${esc(p.strength)}${p.manufacturer ? " · " + esc(p.manufacturer) : ""}${p.active ? "" : " (hidden)"}</span>`).join(" "); })()}</td>
       <td>${r.active ? "Yes" : "Hidden"}</td></tr>`).join("")}</table></div>`;
   const form = (r) => {
     r = r || { results: [["", ""], ["Purity", ""]], lab: "Janoshik", active: true };
@@ -871,7 +869,7 @@ async function page() {
       <p class="muted">How the drawn vial looks on every product that doesn't have its own picture. Each peptide can also have its own picture, logo or label color under Products &amp; prices → Manage.</p>
       <div class="two"><div class="stack">
         <div class="grid2"><div class="field"><label class="eyebrow" for="vl-shape">Shape</label><select id="vl-shape"${ro()}>${[["photo", "Photo of a real vial"], ["vial", "Drawn vial"], ["tall", "Drawn tall vial"], ["round", "Drawn rounded bottle"]].map(([v, l]) => `<option value="${v}"${vial.shape === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>
-          <div class="field"><label class="eyebrow" for="vl-shows">Label shows</label><select id="vl-shows"${ro()}><option value="name"${vial.labelShows !== "code" ? " selected" : ""}>Peptide name</option><option value="code"${vial.labelShows === "code" ? " selected" : ""}>Product code (when it has one)</option></select></div></div>
+</div>
         <div class="colors" data-photo-only><label><input type="color" data-vc="photoName" value="${esc(vial.photoName)}"${ro()}> Peptide name</label><label><input type="color" data-vc="photoMg" value="${esc(vial.photoMg)}"${ro()}> Size (mg)</label>
           <label class="chk" style="grid-column:1/-1"><input type="checkbox" id="vl-tint"${vial.photoTint ? " checked" : ""}${ro()}> Color the label (uses the Label, Label name and Label size colors below)</label></div>
         <div class="colors">${COLORS.map(([k, l]) => `<label${["cap", "band", "glass", "liquid"].includes(k) ? " data-drawn-only" : ""}><input type="color" data-vc="${k}" value="${esc(vial[k])}"${ro()}> ${l}</label>`).join("")}</div>
@@ -884,11 +882,11 @@ async function page() {
       <div class="stack" style="justify-items:center"><div class="vialprev" id="vlPrev"></div><input id="vl-sample" value="BPC-157" style="height:2.2rem;padding:0 .6rem;border:1px solid var(--line-strong);border-radius:8px;width:9rem;text-align:center" title="Sample name for the preview"><span class="muted" style="font-size:.78rem">Live preview</span></div></div></div>
     ${own ? `<div><button class="btn solid" id="pgSave2">Save page setup</button></div>` : ""}`;
   const $ = (x) => document.getElementById(x);
-  const readVial = () => { const v = { shape: $("vl-shape").value, labelShows: $("vl-shows").value, photoTint: $("vl-tint").checked }; document.querySelectorAll("[data-vc]").forEach((i) => { v[i.dataset.vc] = i.value; }); return v; };
+  const readVial = () => { const v = { shape: $("vl-shape").value, labelShows: "name", photoTint: $("vl-tint").checked }; document.querySelectorAll("[data-vc]").forEach((i) => { v[i.dataset.vc] = i.value; }); return v; };
   const modeUI = () => { const photo = $("vl-shape").value === "photo"; document.querySelectorAll("[data-photo-only]").forEach((el) => { el.hidden = !photo; }); document.querySelectorAll("[data-drawn-only]").forEach((el) => { el.hidden = photo; }); };
-  const preview = () => { modeUI(); const v = readVial(); $("vlPrev").innerHTML = window.drawVial({ title: v.labelShows === "code" ? "BC10" : ($("vl-sample").value || "BPC-157"), sub: "10 mg", style: v, logoUrl: logoV ? `/vial-logo?v=${logoV}` : "", photoUrl: `/vial-photo?v=${photoV}` }); };
-  pane().oninput = (e) => { if (e.target.closest("[data-vc], #vl-shape, #vl-shows, #vl-sample, #vl-tint")) preview(); };
-  pane().onchange = (e) => { if (e.target.closest("#vl-shape, #vl-shows, #vl-tint")) preview(); };
+  const preview = () => { modeUI(); const v = readVial(); $("vlPrev").innerHTML = window.drawVial({ title: $("vl-sample").value || "BPC-157", sub: "10 mg", style: v, logoUrl: logoV ? `/vial-logo?v=${logoV}` : "", photoUrl: `/vial-photo?v=${photoV}` }); };
+  pane().oninput = (e) => { if (e.target.closest("[data-vc], #vl-shape, #vl-sample, #vl-tint")) preview(); };
+  pane().onchange = (e) => { if (e.target.closest("#vl-shape, #vl-tint")) preview(); };
   preview();
   if (!own) return;
   $("vl-reset").onclick = () => { const d = window.VIAL_DEFAULT; document.querySelectorAll("[data-vc]").forEach((i) => { i.value = d[i.dataset.vc]; }); $("vl-shape").value = d.shape; preview(); toast("Original colors restored. Save to keep them."); };
@@ -946,10 +944,6 @@ async function settings() {
       <button class="btn solid" type="button" id="pinSave">Save PIN setting</button></div>
       <span class="muted" id="pinState"></span>
       <div><button class="linkbtn" type="button" id="pinClear">Remove the shared PIN (only customers' own PINs will work)</button></div></div>` : ""}
-    <div class="panel"><h2>Product names on the store</h2>
-      <div class="field" style="max-width:24rem"><label class="eyebrow" for="s-productLabel">Show products by</label>
-      <select id="s-productLabel"${ro()}>${[["name", "Name and size (Retatrutide 30 mg)"], ["code", "Code (RT30)"], ["both", "Both (Retatrutide 30 mg · RT30)"]].map(([v, l]) => `<option value="${v}"${(s.productLabel || "name") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
-      <span class="muted">Products without a code always show their name. Search finds products by name or code either way.</span></div></div>
     <div class="panel"><h2>Age gate</h2>
       <label class="chk"><input type="checkbox" id="s-ageGate"${s.ageGate ? " checked" : ""}${ro()}> Ask visitors to confirm age and research use before entering</label>
       <div class="field" style="max-width:10rem"><label class="eyebrow" for="s-minAge">Minimum age</label><input id="s-minAge" value="${esc(s.minAge)}" inputmode="numeric"${ro()}></div></div>
@@ -985,7 +979,7 @@ async function settings() {
     body.storeOpen = v("storeOpen").checked; body.ageGate = v("ageGate").checked; body.minAge = v("minAge").value;
     body.minOrderCents = Math.round(parseFloat(v("minOrder").value || 0) * 100);
     ["footerNotice", "disclaimers", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"].forEach((k) => { body[k] = v(k).value.split("\n").map((x) => x.trim()).filter(Boolean); });
-    body.announcementOn = false; body.productLabel = v("productLabel").value;
+    body.announcementOn = false;
     await api("/settings", { method: "PUT", body }); toast("Settings saved");
   };
 }

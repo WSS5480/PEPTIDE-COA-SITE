@@ -63,22 +63,16 @@ function productArt(p) {
   if (p.has_image) return `<img class="pimg" src="/pimg/${p.id}?v=${p.media_v}" alt="${esc(`${p.name} ${p.strength}`)}" loading="lazy">`;
   const v = S.vial || {};
   const style = Object.assign({}, v, p.vial_label ? { label: p.vial_label, photoTint: true } : {});
-  const useCode = !!p.sku && (v.labelShows === "code" || codeMode(p));
   const logoUrl = p.has_logo ? `/plogo/${p.id}?v=${p.media_v}` : S.vialLogoV ? `/vial-logo?v=${S.vialLogoV}` : "";
-  return window.drawVial({ title: useCode ? p.sku : p.name, sub: p.strength, style, logoUrl, photoUrl: `/vial-photo?v=${S.vialPhotoV || 1}` });
+  return window.drawVial({ title: p.name, sub: p.strength, style, logoUrl, photoUrl: `/vial-photo?v=${S.vialPhotoV || 1}` });
 }
 // A product's lab report matches by name + size, or by its code (e.g. RT30) against the report's Sample line.
 const mfrOk = (p, r) => { const a = norm(p.manufacturer), b = norm(r.manufacturer); return !a || !b || a.includes(b) || b.includes(a); };
 const reportFor = (p) => REPORTS.find((r) => mfrOk(p, r) && norm(r.product) === norm(p.name) && sizeKey(r.strength) === sizeKey(p.strength))
-  || (p.sku ? REPORTS.find((r) => mfrOk(p, r) && norm(r.sample) === norm(p.sku)) : undefined);
+  ;
 // How a product is named on the store: "name" (Retatrutide 30 mg), "code" (RT30) or "both" (Retatrutide 30 mg · RT30)
-const codeMode = (p) => !!p.sku && (p.show_code || S.productLabel === "code");
 const withMfr = (p, t) => (p.manufacturer ? `${t} · ${p.manufacturer}` : t);
-const labelOf = (p) => {
-  const nm = `${p.name} ${p.strength}`.trim(), mode = p.show_code && p.sku ? "code" : S.productLabel || "name";
-  if (!p.sku || mode === "name") return nm;
-  return mode === "code" ? p.sku : `${nm} · ${p.sku}`;
-};
+const labelOf = (p) => `${p.name} ${p.strength}`.trim();
 const inCart = (id) => (cart.find((c) => c.id === id) || {}).qty || 0;
 
 function drawChips() {
@@ -90,7 +84,7 @@ function drawChips() {
 function drawProducts() {
   drawChips();
   const words = norm($("hq").value) ? $("hq").value.toLowerCase().split(/\s+/).map(norm).filter(Boolean) : [];
-  const list = PRODUCTS.filter((p) => (!coaOnly || reportFor(p)) && (!cat || (p.category || "Research peptide") === cat) && words.every((w) => norm([p.name, p.strength, p.sku, p.manufacturer, p.category, (reportFor(p) || {}).sample].join(" ")).includes(w)));
+  const list = PRODUCTS.filter((p) => (!coaOnly || reportFor(p)) && (!cat || (p.category || "Research peptide") === cat) && words.every((w) => norm([p.name, p.strength, p.manufacturer, p.category, (reportFor(p) || {}).sample].join(" ")).includes(w)));
   $("pgrid").innerHTML = list.length ? list.map((p) => {
     const r = reportFor(p);
     const purity = r ? ((r.results || []).find(([n]) => isPurity(n)) || [])[1] : "";
@@ -103,8 +97,8 @@ function drawProducts() {
       <div class="thumb${!p.has_image && (S.vial || {}).shape !== "vial" && (S.vial || {}).shape !== "tall" && (S.vial || {}).shape !== "round" ? " photo" : ""}">${productArt(p)}</div>
       <div class="pbody">
         <span class="pcat">${esc(p.category || "Research peptide")}${p.manufacturer ? ` · ${esc(p.manufacturer)}` : ""}</span>
-        <h3 class="pname">${esc(codeMode(p) ? p.sku : p.name)}</h3>
-        <span class="pmeta">${[codeMode(p) ? `${p.name} ${p.strength}`.trim() : p.strength, !codeMode(p) && S.productLabel === "both" && p.sku ? p.sku : "", purity ? `${purity} purity` : ""].filter(Boolean).map(esc).join(" · ")}</span>
+        <h3 class="pname">${esc(p.name)}</h3>
+        <span class="pmeta">${[p.strength, purity ? `${purity} purity` : ""].filter(Boolean).map(esc).join(" · ")}</span>
         ${p.description ? `<p class="stockline">${esc(p.description)}</p>` : ""}
         ${price}${stock}
         <p class="research">For laboratory research use only.</p>
