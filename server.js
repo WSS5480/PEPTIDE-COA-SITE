@@ -446,12 +446,13 @@ const mailHtml = (text) => `<div style="font:15px/1.5 -apple-system,'Segoe UI',R
 // A branded HTML email (tables + inline styles, so it looks right in Outlook, Gmail and phones).
 // parts: { preheader, eyebrow, title, intro, badge: {text, tone}, facts: [[label, value|html]], address: {label, lines[]},
 //         items: [{name, strength, qty, unit_cents}], totals: [[label, value, strong?]], note: {label, text}, button: {text, url}, after, footer }
-const NAVY = "#0f1b33", BLUE = "#0b4d96", INK = "#121c2f", INK2 = "#5d6879", LINE = "#e2e7ee", GROUND = "#f3f5f8";
+// 360 Medical colours: the logo's teal and black, on white and light grey
+const TEAL = "#0097b2", TEAL_DARK = "#00718a", TEAL_WASH = "#e3f5f8", NAVY = "#111111", BLUE = TEAL_DARK, INK = "#111111", INK2 = "#5f6b76", LINE = "#e3e8ec", GROUND = "#f4f6f8";
 const FONT = "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 function emailHtml(s, p) {
   const $ = (c) => "$" + ((c || 0) / 100).toFixed(2);
-  const tone = { ok: ["#e3f4eb", "#15734a"], warn: ["#fff4d6", "#7a5300"], bad: ["#f3e1e1", "#8a1c1c"], info: ["#e9f1fb", BLUE] }[p.badge && p.badge.tone] || ["#e9f1fb", BLUE];
-  const logo = BASE_URL && s.siteLogoV ? `<img src="${escHtml(BASE_URL)}/site-logo?v=${encodeURIComponent(s.siteLogoV)}" alt="${escHtml(s.brand)}" height="34" style="display:block;height:34px;width:auto;max-width:220px;border:0;background:#fff;padding:6px 10px;border-radius:8px">` : `<span style="font:700 20px/1 ${FONT};color:#fff;letter-spacing:.02em">${escHtml(s.brand)}</span>`;
+  const tone = { ok: [TEAL, "#ffffff"], warn: ["#fff1cc", "#6b4b00"], bad: ["#fbe3e3", "#8a1c1c"], info: [TEAL_WASH, TEAL_DARK] }[p.badge && p.badge.tone] || [TEAL_WASH, TEAL_DARK];
+  const logo = BASE_URL && s.siteLogoV ? `<img src="${escHtml(BASE_URL)}/site-logo?v=${encodeURIComponent(s.siteLogoV)}" alt="${escHtml(s.brand)}" height="40" style="display:block;height:40px;width:auto;max-width:240px;border:0">` : `<span style="font:800 22px/1 ${FONT};color:${INK};letter-spacing:.02em"><span style="color:${TEAL}">360</span>MEDICAL</span>`;
   const row = (l, v) => `<tr><td style="padding:6px 16px 6px 0;font:600 12px/1.4 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.08em;vertical-align:top;white-space:nowrap">${escHtml(l)}</td><td style="padding:6px 0;font:600 16px/1.4 ${FONT};color:${INK};vertical-align:top">${v}</td></tr>`;
   const items = (p.items || []).map((i) => `<tr>
       <td style="padding:9px 10px;border-top:1px solid ${LINE};font:15px/1.35 ${FONT};color:${INK}">${escHtml(`${i.name} ${i.strength}`.trim())}</td>
@@ -463,22 +464,22 @@ function emailHtml(s, p) {
 <body style="margin:0;padding:0;background:${GROUND}">
 <span style="display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden">${escHtml(p.preheader || p.title)}</span>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${GROUND};padding:24px 12px"><tr><td align="center">
-<table role="presentation" width="760" cellpadding="0" cellspacing="0" style="max-width:760px;width:100%;background:#fff;border-radius:14px;overflow:hidden;border:1px solid ${LINE}">
-  <tr><td style="background:${NAVY};padding:22px 32px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="left">${logo}</td><td align="right" style="font:600 13px/1.3 ${FONT};color:#c9d1dc;text-transform:uppercase;letter-spacing:.1em">${escHtml(p.eyebrow || "")}</td></tr></table></td></tr>
+<table role="presentation" width="760" cellpadding="0" cellspacing="0" style="max-width:760px;width:100%;background:#fff;border-radius:12px;overflow:hidden;border:1px solid ${LINE}">
+  <tr><td style="background:#ffffff;padding:24px 32px 20px;border-bottom:4px solid ${TEAL}"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="left">${logo}</td><td align="right" style="font:700 12px/1.3 ${FONT};color:${TEAL_DARK};text-transform:uppercase;letter-spacing:.12em">${escHtml(p.eyebrow || "")}</td></tr></table></td></tr>
   <tr><td style="padding:30px 32px 8px">
-    ${p.kicker ? `<div style="font:600 12px/1.4 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">${escHtml(p.kicker)}</div>` : ""}
+    ${p.kicker ? `<div style="font:700 12px/1.4 ${FONT};color:${TEAL_DARK};text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">${escHtml(p.kicker)}</div>` : ""}
     <h1 style="margin:0 0 10px;font:800 30px/1.15 ${FONT};color:${INK}">${escHtml(p.title)}${p.badge ? ` &nbsp;<span style="display:inline-block;vertical-align:middle;padding:5px 12px;border-radius:999px;background:${tone[0]};color:${tone[1]};font:700 12px/1.3 ${FONT};text-transform:uppercase;letter-spacing:.06em">${escHtml(p.badge.text)}</span>` : ""}</h1>
     ${p.intro ? `<p style="margin:0 0 6px;font:16px/1.55 ${FONT};color:${INK}">${escHtml(p.intro)}</p>` : ""}
   </td></tr>
   ${p.facts && p.facts.length ? `<tr><td style="padding:10px 32px 4px"><table role="presentation" cellpadding="0" cellspacing="0">${p.facts.map(([l, v]) => row(l, v)).join("")}</table></td></tr>` : ""}
-  ${p.address ? `<tr><td style="padding:14px 32px 4px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${GROUND};border-radius:10px"><tr><td style="padding:12px 16px"><div style="font:600 12px/1.4 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">${escHtml(p.address.label)}</div><div style="font:15px/1.5 ${FONT};color:${INK}">${p.address.lines.filter(Boolean).map(escHtml).join("<br>")}</div></td></tr></table></td></tr>` : ""}
+  ${p.address ? `<tr><td style="padding:14px 32px 4px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${GROUND};border-left:4px solid ${TEAL};border-radius:8px"><tr><td style="padding:12px 16px"><div style="font:700 12px/1.4 ${FONT};color:${TEAL_DARK};text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">${escHtml(p.address.label)}</div><div style="font:15px/1.5 ${FONT};color:${INK}">${p.address.lines.filter(Boolean).map(escHtml).join("<br>")}</div></td></tr></table></td></tr>` : ""}
   ${items ? `<tr><td style="padding:20px 32px 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${LINE};border-radius:10px;overflow:hidden">
     <tr style="background:${GROUND}"><th align="left" style="padding:8px 10px;font:600 11px/1.3 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.07em">Item</th><th align="center" style="padding:8px 10px;font:600 11px/1.3 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.07em">Qty</th><th align="right" style="padding:8px 10px;font:600 11px/1.3 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.07em">Each</th><th align="right" style="padding:8px 10px;font:600 11px/1.3 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.07em">Line</th></tr>
     ${items}${totals}</table></td></tr>` : ""}
-  ${p.note ? `<tr><td style="padding:14px 32px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fff8e1;border-radius:10px"><tr><td style="padding:12px 16px;font:14px/1.5 ${FONT};color:${INK}"><strong>${escHtml(p.note.label)}:</strong> ${escHtml(p.note.text)}</td></tr></table></td></tr>` : ""}
+  ${p.note ? `<tr><td style="padding:14px 32px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${TEAL_WASH};border-radius:8px"><tr><td style="padding:12px 16px;font:14px/1.5 ${FONT};color:${INK}"><strong style="color:${TEAL_DARK}">${escHtml(p.note.label)}:</strong> ${escHtml(p.note.text)}</td></tr></table></td></tr>` : ""}
   ${p.after ? `<tr><td style="padding:18px 32px 0;font:16px/1.55 ${FONT};color:${INK}">${p.after}</td></tr>` : ""}
-  ${p.button ? `<tr><td style="padding:22px 32px 8px"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:${BLUE};border-radius:8px"><a href="${escHtml(p.button.url)}" style="display:inline-block;padding:12px 22px;font:600 15px/1 ${FONT};color:#fff;text-decoration:none">${escHtml(p.button.text)}</a></td></tr></table></td></tr>` : ""}
-  <tr><td style="padding:22px 32px 26px;font:13px/1.5 ${FONT};color:${INK2};border-top:1px solid ${LINE}">${p.footer || ""}</td></tr>
+  ${p.button ? `<tr><td style="padding:22px 32px 8px"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:${TEAL};border-radius:8px"><a href="${escHtml(p.button.url)}" style="display:inline-block;padding:13px 24px;font:700 15px/1 ${FONT};color:#ffffff;text-decoration:none">${escHtml(p.button.text)}</a></td></tr></table></td></tr>` : ""}
+  <tr><td style="padding:22px 32px 26px;font:13px/1.5 ${FONT};color:${INK2};background:${GROUND};border-top:1px solid ${LINE}">${p.footer || ""}</td></tr>
 </table>
 </td></tr></table></body></html>`;
 }
