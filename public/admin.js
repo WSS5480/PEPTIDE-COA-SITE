@@ -49,7 +49,7 @@ function drawLogin(msg) {
 }
 
 /* ---------- shell ---------- */
-const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Customers"], ["products", "Products & prices"], ["reports", "Lab reports"], ["shipping", "Shipping"], ["settings", "Site settings"], ["staff", "Staff logins", true], ["account", "My account"]];
+const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Customers"], ["products", "Products & prices"], ["inventory", "Inventory"], ["reports", "Lab reports"], ["shipping", "Shipping"], ["settings", "Site settings"], ["staff", "Staff logins", true], ["account", "My account"]];
 function shell() {
   app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><button type="button" id="mm">Menu</button></div>
   <div class="adm" id="adm"><aside class="side">
@@ -69,10 +69,11 @@ async function drawNav() {
 function go(v, id) {
   if (unsaved && !confirm("You have unsaved product changes. Leave without saving?")) return;
   unsaved = false;
+  const pn = document.getElementById("pane"); if (pn) pn.onclick = null; // drop the last screen's click handler
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  ({ dashboard, orders, customers, products, reports, shipping, settings, staff, account }[v] || dashboard)();
+  ({ dashboard, orders, customers, products, inventory, reports, shipping, settings, staff, account }[v] || dashboard)();
   window.scrollTo(0, 0);
 }
 const pane = () => document.getElementById("pane");
@@ -97,7 +98,7 @@ async function dashboard() {
     </dl>
     <div id="linkCheck"></div>
     ${s.unpriced ? `<div class="panel"><strong>${s.unpriced} product${s.unpriced === 1 ? " has" : "s have"} no price.</strong><span class="muted">They show "Ask for price" and can't be added to the cart.</span><div><button class="btn" data-nav="products">Set prices</button></div></div>` : ""}
-    ${s.lowStock.length ? `<div class="panel"><h2>Low stock</h2><div class="tblwrap"><table class="tbl"><tr><th>Product</th><th class="num">Left</th></tr>${s.lowStock.map((p) => `<tr><td>${esc(p.name)} ${esc(p.strength)}</td><td class="num">${p.stock}</td></tr>`).join("")}</table></div></div>` : ""}
+    ${s.lowStock.length ? `<div class="panel"><h2>Low stock</h2><div class="tblwrap"><table class="tbl"><tr><th>Product</th><th class="num">Left</th><th class="num">Reorder at</th></tr>${s.lowStock.map((p) => `<tr><td>${esc(p.name)} ${esc(p.strength)}${p.manufacturer ? ` · ${esc(p.manufacturer)}` : ""}</td><td class="num">${p.stock}</td><td class="num">${p.reorder_at}</td></tr>`).join("")}</table></div><div><button class="btn" data-nav="inventory">Open inventory</button></div></div>` : ""}
     <div class="panel"><h2>How orders flow</h2><p class="muted">New → Confirmed (you've sent the total and payment info) → Paid → Shipped (add carrier and tracking) → Delivered. Cancelling puts the stock back.</p></div>`;
 }
 
@@ -353,6 +354,120 @@ async function products() {
   refresh();
 }
 
+
+/* ---------- inventory ---------- */
+let invFilter = "all";
+async function inventory() {
+  const { items } = await api("/inventory");
+  const own = isOwner();
+  const label = (p) => `${p.name} ${p.strength}`.trim();
+  const sub = (p) => [p.manufacturer, p.sku, p.active ? "" : "hidden"].filter(Boolean).join(" · ");
+  const soon = (d) => d && (new Date(d) - Date.now()) / 864e5 <= 60;
+  const status = (p) => p.stock === null ? "untracked" : p.stock <= 0 ? "out" : p.stock <= (p.reorder_point ?? 5) ? "low" : "ok";
+  const pillFor = { ok: '<span class="pill st-shipped">In stock</span>', low: '<span class="pill st-new">Low</span>', out: '<span class="pill st-cancelled">Out</span>', untracked: '<span class="pill">Not tracked</span>' };
+  const tracked = items.filter((p) => p.stock !== null);
+  const value = tracked.reduce((t, p) => t + (p.cost_cents ? p.cost_cents * Math.max(0, p.stock) : 0), 0);
+  const counts = { low: items.filter((p) => status(p) === "low").length, out: items.filter((p) => status(p) === "out").length, untracked: items.filter((p) => p.stock === null).length, expiring: items.filter((p) => soon(p.next_expiry)).length };
+  const weeksLeft = (p) => (p.stock > 0 && p.sold_30d > 0 ? Math.round((p.stock / p.sold_30d) * 30 / 7) : null);
+  pane().innerHTML = `<header><h1>Inventory</h1><div class="row2"><button class="btn solid" id="rcvBtn">Receive shipment</button><a class="btn" href="/api/admin/inventory.csv" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></div></header>
+    <dl class="kpis">
+      <div class="kpi"><dt>Products tracked</dt><dd>${tracked.length}</dd></div>
+      <div class="kpi"><dt>Units available</dt><dd>${tracked.reduce((t, p) => t + Math.max(0, p.stock), 0)}</dd></div>
+      ${own ? `<div class="kpi"><dt>Stock value at cost</dt><dd>${money(value)}</dd></div>` : ""}
+      <div class="kpi" data-invf="low"><dt>Low stock</dt><dd>${counts.low}</dd></div>
+      <div class="kpi" data-invf="out"><dt>Out of stock</dt><dd>${counts.out}</dd></div>
+      <div class="kpi" data-invf="expiring"><dt>Lots expiring ≤ 60 days</dt><dd>${counts.expiring}</dd></div>
+    </dl>
+    <div id="invPanel"></div>
+    <div class="filters"><input id="invQ" type="search" placeholder="Search name, maker or code">
+      ${[["all", "All"], ["low", "Low"], ["out", "Out"], ["expiring", "Expiring"], ["untracked", "Not tracked"]].map(([k, l]) => `<button class="chip${invFilter === k ? " on" : ""}" type="button" data-invf="${k}">${l}${counts[k] ? ` (${counts[k]})` : ""}</button>`).join("")}</div>
+    <p class="muted">Available is what customers can still buy. Stock comes off when an order is placed and goes back if it's cancelled; "In orders" is stock held by orders not yet shipped, so On shelf = Available + In orders. Every change is kept in each product's History.</p>
+    <div class="tblwrap"><table class="tbl" id="invT"><thead><tr><th>Product</th><th class="num">Available</th><th class="num">In orders</th><th class="num">On shelf</th><th class="num">Sold 30 days</th><th class="num">Reorder at</th>${own ? '<th class="num">Cost each</th><th class="num">Value</th>' : ""}<th>Next expiry</th><th>Status</th><th></th></tr></thead><tbody id="invB"></tbody></table></div>`;
+  const draw = () => {
+    const term = (document.getElementById("invQ").value || "").toLowerCase();
+    const list = items.filter((p) => (invFilter === "all" || (invFilter === "expiring" ? soon(p.next_expiry) : status(p) === invFilter))
+      && (!term || [p.name, p.strength, p.manufacturer, p.sku].join(" ").toLowerCase().includes(term)));
+    document.getElementById("invB").innerHTML = list.length ? list.map((p) => `<tr data-iid="${p.id}">
+      <td><strong>${esc(label(p))}</strong>${sub(p) ? `<div class="muted" style="font-size:.78rem">${esc(sub(p))}</div>` : ""}</td>
+      <td class="num"><strong>${p.stock ?? "—"}</strong></td><td class="num">${p.committed || ""}</td><td class="num">${p.stock === null ? "" : p.stock + p.committed}</td>
+      <td class="num">${p.sold_30d || ""}${weeksLeft(p) !== null ? `<div class="muted" style="font-size:.72rem">~${weeksLeft(p)} wk left</div>` : ""}</td>
+      <td class="num">${own ? `<input data-reorder value="${p.reorder_point ?? ""}" placeholder="5" inputmode="numeric" style="width:4.2rem;text-align:right">` : (p.reorder_point ?? 5)}</td>
+      ${own ? `<td class="num"><input data-cost value="${dollars(p.cost_cents)}" placeholder="—" inputmode="decimal" style="width:5.5rem;text-align:right"></td><td class="num">${p.cost_cents !== null && p.stock !== null ? money(p.cost_cents * Math.max(0, p.stock)) : ""}</td>` : ""}
+      <td>${p.next_expiry ? `<span${soon(p.next_expiry) ? ' class="pill st-new"' : ""}>${esc(String(p.next_expiry).slice(0, 10))}</span>` : ""}</td>
+      <td>${pillFor[status(p)]}</td>
+      <td class="row2" style="flex-wrap:nowrap"><button class="btn" data-act="receive">Receive</button>${p.stock === null ? (own ? '<button class="btn" data-act="track">Track</button>' : "") : '<button class="btn" data-act="adjust">Adjust</button>'}<button class="btn" data-act="history">History</button></td></tr>`).join("")
+      : `<tr><td colspan="11" class="muted">Nothing here.</td></tr>`;
+  };
+  draw();
+  const panel = document.getElementById("invPanel");
+  const fld = (id, label, attrs = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" ${attrs}></div>`;
+  const receiveForm = (only) => {
+    const rows = only ? [only] : items.filter((p) => p.active);
+    panel.innerHTML = `<div class="panel" style="border-color:var(--blue)"><div class="row2" style="justify-content:space-between;align-items:center"><h2>${only ? `Receive ${esc(label(only))}` : "Receive shipment"}</h2><button class="btn" type="button" data-pclose>Close</button></div>
+      <div class="grid2">${fld("rvSup", "Supplier", 'placeholder="e.g. XINT"')}${fld("rvRef", "Invoice / PO #")}${fld("rvNote", "Note")}</div>
+      ${only ? "" : `<input id="rvQ" type="search" placeholder="Filter products" style="height:2.4rem;padding:0 .8rem;border:1px solid var(--line-strong);border-radius:8px;max-width:20rem">`}
+      <div class="tblwrap" style="max-height:26rem;overflow:auto"><table class="tbl" id="rvT"><tr><th>Product</th><th class="num">Now</th><th>Qty received</th><th>Cost each $</th><th>Lot / batch</th><th>Expires</th></tr>
+      ${rows.map((p) => `<tr data-rid="${p.id}" data-txt="${esc([p.name, p.strength, p.manufacturer, p.sku].join(" ").toLowerCase())}"><td>${esc(label(p))}<div class="muted" style="font-size:.78rem">${esc(sub(p))}</div></td><td class="num">${p.stock ?? "—"}</td>
+        <td><input data-f="qty" inputmode="numeric" style="width:5rem"></td><td><input data-f="costEach" inputmode="decimal" style="width:6rem" placeholder="${p.cost_cents !== null ? dollars(p.cost_cents) : ""}"></td>
+        <td><input data-f="lot" style="width:9rem"></td><td><input data-f="expires" type="date" style="width:9.5rem"></td></tr>`).join("")}</table></div>
+      <div class="row2"><button class="btn solid" type="button" id="rvGo">Add to stock</button><span class="muted">Only rows with a quantity are received. Cost updates the average cost per unit.</span></div></div>`;
+    if (!only) document.getElementById("rvQ").oninput = (e) => { const t = e.target.value.toLowerCase(); document.querySelectorAll("#rvT tr[data-rid]").forEach((tr) => { tr.hidden = t && !tr.dataset.txt.includes(t); }); };
+    document.getElementById("rvGo").onclick = async () => {
+      const lines = [...document.querySelectorAll("#rvT tr[data-rid]")].map((tr) => { const l = { productId: +tr.dataset.rid }; tr.querySelectorAll("[data-f]").forEach((i) => { l[i.dataset.f] = i.value.trim(); }); return l; }).filter((l) => +l.qty > 0);
+      if (!lines.length) return toast("Enter a quantity on at least one row");
+      const r = await api("/inventory/receive", { method: "POST", body: { supplier: document.getElementById("rvSup").value, ref: document.getElementById("rvRef").value, note: document.getElementById("rvNote").value, lines } });
+      toast(`Received ${r.lines} product${r.lines === 1 ? "" : "s"}`); inventory(); drawNav();
+    };
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const adjustForm = (p) => {
+    panel.innerHTML = `<div class="panel" style="border-color:var(--blue)"><div class="row2" style="justify-content:space-between;align-items:center"><h2>Adjust ${esc(label(p))}</h2><button class="btn" type="button" data-pclose>Close</button></div>
+      <p class="muted">Available now: <strong>${p.stock}</strong>${p.committed ? ` (plus ${p.committed} held in unshipped orders)` : ""}</p>
+      <div class="row2"><label class="chk"><input type="radio" name="adjM" value="set" checked> Set the count to</label><label class="chk"><input type="radio" name="adjM" value="add"> Add or remove (use − to remove)</label></div>
+      <div class="grid2">${fld("adjQ", "Quantity", 'inputmode="numeric"')}
+        <div class="field"><label class="eyebrow" for="adjR">Reason</label><select id="adjR">${["Count correction", "Damaged", "Expired", "Lost", "Sample / testing", "Returned by customer", "Other"].map((r) => `<option>${r}</option>`).join("")}</select></div>
+        ${fld("adjN", "Note")}</div>
+      <div><button class="btn solid" type="button" id="adjGo">Save adjustment</button></div></div>`;
+    document.getElementById("adjGo").onclick = async () => {
+      const mode = document.querySelector("[name=adjM]:checked").value, qty = document.getElementById("adjQ").value.trim();
+      if (!/^-?\d+$/.test(qty)) return toast("Enter a whole number");
+      const r = await api(`/inventory/${p.id}/adjust`, { method: "POST", body: { mode, qty: +qty, reason: document.getElementById("adjR").value, note: document.getElementById("adjN").value } });
+      toast(`Now ${r.stock} available`); inventory(); drawNav();
+    };
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const historyView = async (p) => {
+    const { moves } = await api(`/inventory/${p.id}/moves`);
+    panel.innerHTML = `<div class="panel"><div class="row2" style="justify-content:space-between;align-items:center"><h2>History: ${esc(label(p))}</h2><button class="btn" type="button" data-pclose>Close</button></div>
+      ${moves.length ? `<div class="tblwrap" style="max-height:26rem;overflow:auto"><table class="tbl"><tr><th>When</th><th>What</th><th class="num">Change</th><th class="num">Balance</th><th>Lot</th><th>Expires</th>${own ? '<th class="num">Cost each</th>' : ""}<th>Ref</th><th>By</th><th>Note</th></tr>
+      ${moves.map((m) => `<tr><td>${when(m.at)}</td><td>${esc(m.reason)}${m.supplier ? `<div class="muted" style="font-size:.75rem">${esc(m.supplier)}</div>` : ""}</td><td class="num" style="color:${m.change > 0 ? "var(--pass)" : m.change < 0 ? "#9b1c1c" : "inherit"}">${m.change > 0 ? "+" : ""}${m.change}</td><td class="num">${m.balance ?? ""}</td>
+        <td class="mono">${esc(m.lot)}</td><td>${m.expires ? esc(String(m.expires).slice(0, 10)) : ""}</td>${own ? `<td class="num">${m.cost_cents !== null ? money(m.cost_cents) : ""}</td>` : ""}<td class="mono">${m.ref ? (m.reason.startsWith("Order") ? `<a href="#" data-orderq="${esc(m.ref)}">${esc(m.ref)}</a>` : esc(m.ref)) : ""}</td><td>${esc(m.who)}</td><td>${esc(m.note)}</td></tr>`).join("")}</table></div>`
+      : `<p class="muted">No stock changes recorded yet.</p>`}</div>`;
+    panel.querySelectorAll("[data-orderq]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); oFilter = { status: "", q: a.dataset.orderq }; go("orders"); }));
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  document.getElementById("rcvBtn").onclick = () => receiveForm(null);
+  document.getElementById("invQ").oninput = draw;
+  pane().onclick = async (e) => {
+    const f = e.target.closest("[data-invf]");
+    if (f) { invFilter = invFilter === f.dataset.invf && f.classList.contains("kpi") ? "all" : f.dataset.invf; pane().querySelectorAll("[data-invf].chip").forEach((c) => c.classList.toggle("on", c.dataset.invf === invFilter)); draw(); return; }
+    if (e.target.closest("[data-pclose]")) { panel.innerHTML = ""; return; }
+    const a = e.target.closest("[data-act]"); if (!a) return;
+    const p = items.find((x) => String(x.id) === a.closest("tr").dataset.iid);
+    if (a.dataset.act === "receive") receiveForm(p);
+    else if (a.dataset.act === "adjust") adjustForm(p);
+    else if (a.dataset.act === "history") historyView(p);
+    else if (a.dataset.act === "track") { const n = prompt(`Start tracking ${label(p)}. How many are on hand now?`, "0"); if (n === null) return; if (!/^\d+$/.test(n.trim())) return toast("Enter a whole number"); await api(`/inventory/${p.id}`, { method: "PATCH", body: { track: true, startAt: +n } }); toast("Tracking started"); inventory(); }
+  };
+  if (own) document.getElementById("invB").addEventListener("change", async (e) => {
+    const tr = e.target.closest("tr[data-iid]"); if (!tr) return;
+    if (e.target.matches("[data-reorder]")) { await api(`/inventory/${tr.dataset.iid}`, { method: "PATCH", body: { reorderPoint: e.target.value.trim() } }); toast("Reorder point saved"); }
+    if (e.target.matches("[data-cost]")) { await api(`/inventory/${tr.dataset.iid}`, { method: "PATCH", body: { costEach: e.target.value.trim() } }); toast("Cost saved"); }
+    const p = items.find((x) => String(x.id) === tr.dataset.iid);
+    if (e.target.matches("[data-reorder]")) p.reorder_point = e.target.value.trim() === "" ? null : +e.target.value;
+    if (e.target.matches("[data-cost]")) p.cost_cents = e.target.value.trim() === "" ? null : Math.round(parseFloat(e.target.value) * 100);
+  });
+}
 
 /* ---------- one peptide: its lab reports (COAs) and other documents ---------- */
 const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");

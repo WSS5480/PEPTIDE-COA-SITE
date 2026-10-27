@@ -140,6 +140,25 @@ alter table customers add column if not exists access_pin_key text unique;
 alter table customers add column if not exists pin_version int not null default 0;
 alter table customers add column if not exists pin_set_at timestamptz;
 alter table customers add column if not exists pin_used_at timestamptz;
+alter table products add column if not exists reorder_point int;
+alter table products add column if not exists cost_cents int;
+create table if not exists stock_moves (
+  id serial primary key,
+  product_id int not null references products(id) on delete cascade,
+  at timestamptz not null default now(),
+  change int not null,
+  balance int,
+  reason text not null,
+  ref text not null default '',
+  lot text not null default '',
+  expires date,
+  cost_cents int,
+  supplier text not null default '',
+  note text not null default '',
+  who text not null default ''
+);
+create index if not exists stock_moves_product_idx on stock_moves(product_id, at desc);
+create index if not exists stock_moves_expiry_idx on stock_moves(expires) where expires is not null;
 alter table products add column if not exists manufacturer text not null default '';
 alter table products add column if not exists show_code boolean not null default false;
 alter table orders add column if not exists customer_id int references customers(id) on delete set null;

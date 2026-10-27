@@ -3,7 +3,7 @@ const path = require("path");
 const crypto = require("crypto");
 const express = require("express");
 const bcrypt = require("bcryptjs");
-const { q, init, getSettings, DEFAULT_SETTINGS } = require("./server/db");
+const { q, pool, init, getSettings, DEFAULT_SETTINGS } = require("./server/db");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -123,11 +123,27 @@ app.post("/api/pin", limit("pin", 10, 15 * 60 * 1000), wrap(async (req, res) => 
   res.json({ ok: true });
 }));
 
+/* ---------- inventory: every stock change is logged ---------- */
+// change: + adds, - removes. setTo: set the count exactly (for counts). Starts tracking an untracked product.
+async function moveStock(db, productId, change, info = {}) {
+  const sql = info.setTo !== undefined
+    ? ["update products set stock = $1 where id = $2 returning stock, (select coalesce(stock, 0) from products where id = $2) before", [info.setTo, productId]]
+    : ["update products set stock = coalesce(stock, 0) + $1 where id = $2 returning stock, stock - $1 before", [change, productId]];
+  const { rows: [r] } = await db.query(sql[0], sql[1]);
+  if (!r) return null;
+  const delta = info.setTo !== undefined ? info.setTo - r.before : change;
+  if (delta === 0 && info.setTo === undefined) return r.stock;
+  await db.query(`insert into stock_moves(product_id, change, balance, reason, ref, lot, expires, cost_cents, supplier, note, who)
+    values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    [productId, delta, r.stock, info.reason || "Adjustment", info.ref || "", info.lot || "", info.expires || null, info.costCents ?? null, info.supplier || "", info.note || "", info.who || ""]);
+  return r.stock;
+}
+
 /* ---------- public API ---------- */
 app.get("/api/store", wrap(async (req, res) => {
   const s = await getSettings();
   const [{ rows: products }, { rows: reports }, { rows: shipping }] = await Promise.all([
-    q("select id,name,strength,sku,show_code,manufacturer,category,description,price_cents,stock,max_per_order from products where active order by sort, name, strength"),
+    q("select id,name,strength,sku,show_code,manufacturer,category,description,price_cents,stock,max_per_order from products where active order by sort, name, strength, manufacturer, id"),
     q(`select ${REPORT_COLS} from reports where active order by product, tested desc nulls last`),
     q("select id,name,detail,price_cents,free_over_cents from shipping_methods where active order by sort, price_cents")
   ]);
@@ -184,7 +200,7 @@ app.post("/api/orders", limit("order", 6, 15 * 60 * 1000), wrap(async (req, res)
       if (p.price_cents === null) throw new Error(`${p.name} ${p.strength} has no price yet. Remove it and contact us for a quote.`);
       if (p.max_per_order && qty > p.max_per_order) throw new Error(`${p.name} ${p.strength} is limited to ${p.max_per_order} per order.`);
       if (p.stock !== null && qty > p.stock) throw new Error(p.stock > 0 ? `Only ${p.stock} of ${p.name} ${p.strength} left.` : `${p.name} ${p.strength} is sold out.`);
-      if (p.stock !== null) await client.query("update products set stock = stock - $1 where id = $2", [qty, p.id]);
+      // stock is taken when the order is placed and logged against the order below
       subtotal += p.price_cents * qty;
       lines.push({ p, qty });
     }
@@ -205,6 +221,7 @@ app.post("/api/orders", limit("order", 6, 15 * 60 * 1000), wrap(async (req, res)
     for (const { p, qty } of lines) {
       // the maker goes into the line name so orders show which one was bought
       await client.query("insert into order_items(order_id,product_id,name,strength,unit_cents,qty) values ($1,$2,$3,$4,$5,$6)", [o.id, p.id, p.manufacturer ? `${p.name} (${p.manufacturer})` : p.name, p.strength, p.price_cents, qty]);
+      if (p.stock !== null) await moveStock(client, p.id, -qty, { reason: "Order", ref: number, who: name });
     }
     await client.query("insert into order_events(order_id, who, text) values ($1, 'Customer', 'Order placed; customer confirmed research use and age')", [o.id]);
     await client.query("commit");
@@ -328,7 +345,7 @@ admin.use(wrap(auth));
 admin.get("/stats", wrap(async (req, res) => {
   const { rows: byStatus } = await q("select status, count(*)::int n from orders group by status");
   const { rows: [m] } = await q("select coalesce(sum(total_cents),0)::int paid_cents, count(*)::int paid_n from orders where paid_at >= date_trunc('month', now())");
-  const { rows: low } = await q("select id,name,strength,stock from products where active and stock is not null and stock <= 5 order by stock");
+  const { rows: low } = await q("select id,name,strength,manufacturer,stock,coalesce(reorder_point,5) reorder_at from products where active and stock is not null and stock <= coalesce(reorder_point,5) order by stock");
   const { rows: [np] } = await q("select count(*)::int n from products where active and price_cents is null");
   res.json({ byStatus: Object.fromEntries(byStatus.map((r) => [r.status, r.n])), month: m, lowStock: low, unpriced: np.n });
 }));
@@ -379,7 +396,8 @@ admin.patch("/orders/:id", wrap(async (req, res) => {
     // put stock back when an order is cancelled, take it again if un-cancelled
     if (b.status === "cancelled" || o.status === "cancelled") {
       const sign = b.status === "cancelled" ? "+" : "-";
-      await q(`update products p set stock = p.stock ${sign} i.qty from order_items i where i.order_id = $1 and i.product_id = p.id and p.stock is not null`, [id]);
+      const { rows: its } = await q("select i.product_id, i.qty from order_items i join products p on p.id = i.product_id where i.order_id = $1 and p.stock is not null", [id]);
+      for (const it of its) await moveStock(pool, it.product_id, sign === "+" ? it.qty : -it.qty, { reason: sign === "+" ? "Order cancelled" : "Order reinstated", ref: o.number, who: req.user.name || req.user.email });
       log.push(b.status === "cancelled" ? "Stock returned" : "Stock taken again");
     }
   }
@@ -462,7 +480,7 @@ admin.patch("/customers/:id", owner, wrap(async (req, res) => {
 
 /* ---------- admin: products ---------- */
 admin.get("/products", wrap(async (req, res) => {
-  const { rows } = await q("select p.*, (select count(*)::int from documents d where d.product_id = p.id) doc_count from products p order by sort, name, strength");
+  const { rows } = await q("select p.*, (select count(*)::int from documents d where d.product_id = p.id) doc_count from products p order by sort, name, strength, manufacturer, id");
   res.json({ products: rows });
 }));
 function productFields(b) {
@@ -480,6 +498,11 @@ admin.post("/products", owner, wrap(async (req, res) => {
 }));
 admin.patch("/products/:id", owner, wrap(async (req, res) => {
   const f = productFields(req.body || {}); if (!f.name) return bad(res, "Name is required");
+  const pid = intOrNull(req.params.id);
+  const { rows: [before] } = await q("select stock from products where id = $1", [pid]);
+  if (before && f.stock !== null && f.stock !== before.stock) {
+    await moveStock(pool, pid, 0, { setTo: f.stock, reason: "Edited in Products", who: req.user.name || req.user.email });
+  }
   const cols = Object.keys(f);
   await q(`update products set ${cols.map((c, i) => `${c} = $${i + 1}`)} where id = $${cols.length + 1}`, [...Object.values(f), intOrNull(req.params.id)]);
   res.json({ ok: true });
@@ -516,6 +539,7 @@ admin.post("/products/import", owner, wrap(async (req, res) => {
     else if (same.length > 1) { problems.push(`Row ${i + 2}: ${name} ${strength} comes from more than one manufacturer; add a Manufacturer column so it updates the right one`); continue; }
     else match = same[0];
     if (match) {
+      if (f.stock !== undefined && f.stock !== null && f.stock !== match.stock) await moveStock(pool, match.id, 0, { setTo: f.stock, reason: "Spreadsheet import", who: req.user.name || req.user.email });
       const cols = Object.keys(f);
       if (cols.length) await q(`update products set ${cols.map((c, j) => `${c} = $${j + 1}`)} where id = $${cols.length + 1}`, [...Object.values(f), match.id]);
       updated++;
@@ -523,6 +547,7 @@ admin.post("/products/import", owner, wrap(async (req, res) => {
       const g = { name, strength, category: "Research peptide", ...f };
       const cols = Object.keys(g);
       const { rows: [n] } = await q(`insert into products(${cols}) values (${cols.map((_, j) => "$" + (j + 1))}) returning *`, Object.values(g));
+      if (n.stock) await q("insert into stock_moves(product_id, change, balance, reason, who) values ($1,$2,$2,'Opening count (import)',$3)", [n.id, n.stock, req.user.name || req.user.email]);
       existing.push(n); created++;
     }
   }
@@ -620,6 +645,83 @@ admin.patch("/documents/:id", owner, wrap(async (req, res) => {
 admin.delete("/documents/:id", owner, wrap(async (req, res) => {
   await q("delete from documents where id = $1", [intOrNull(req.params.id)]);
   res.json({ ok: true });
+}));
+
+/* ---------- admin: inventory ---------- */
+const OPEN_ORDER = "('new','confirmed','paid')";
+admin.get("/inventory", wrap(async (req, res) => {
+  const { rows } = await q(`select p.id, p.name, p.strength, p.manufacturer, p.sku, p.active, p.stock, p.reorder_point, p.cost_cents, p.price_cents,
+      coalesce((select sum(i.qty) from order_items i join orders o on o.id = i.order_id where i.product_id = p.id and o.status in ${OPEN_ORDER}), 0)::int committed,
+      (select max(at) from stock_moves m where m.product_id = p.id and m.change > 0 and m.reason = 'Received') last_received,
+      (select min(expires) from stock_moves m where m.product_id = p.id and m.reason = 'Received' and m.expires >= current_date) next_expiry,
+      coalesce((select sum(-m.change) from stock_moves m where m.product_id = p.id and m.reason = 'Order' and m.at > now() - interval '30 days'), 0)::int sold_30d
+    from products p order by p.sort, p.name, p.strength, p.manufacturer, p.id`);
+  res.json({ items: rows, role: req.user.role });
+}));
+admin.get("/inventory/:id/moves", wrap(async (req, res) => {
+  const { rows } = await q("select at, change, balance, reason, ref, lot, expires, cost_cents, supplier, note, who from stock_moves where product_id = $1 order by at desc, id desc limit 300", [intOrNull(req.params.id)]);
+  res.json({ moves: rows });
+}));
+const dateOrNull = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? v : null);
+// receive one or more lines in a single shipment; updates the average cost per unit
+admin.post("/inventory/receive", wrap(async (req, res) => {
+  const b = req.body || {};
+  const lines = (Array.isArray(b.lines) ? b.lines : []).map((l) => ({ id: intOrNull(l.productId), qty: intOrNull(l.qty), cost: centsOrNull(String(l.costEach ?? "").replace(/[$,\s]/g, "")), lot: str(l.lot, 60), expires: dateOrNull(l.expires) }))
+    .filter((l) => l.id && l.qty > 0);
+  if (!lines.length) return bad(res, "Enter a quantity for at least one product.");
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    for (const l of lines) {
+      const { rows: [p] } = await client.query("select stock, cost_cents from products where id = $1 for update", [l.id]);
+      if (!p) throw new Error("A product in this shipment no longer exists.");
+      if (l.cost !== null && l.cost !== undefined) {
+        const have = Math.max(0, p.stock || 0);
+        const avg = p.cost_cents === null || !have ? l.cost : Math.round((p.cost_cents * have + l.cost * l.qty) / (have + l.qty));
+        await client.query("update products set cost_cents = $1 where id = $2", [avg, l.id]);
+      }
+      await moveStock(client, l.id, l.qty, { reason: "Received", lot: l.lot, expires: l.expires, costCents: l.cost, supplier: str(b.supplier, 120), ref: str(b.ref, 60), note: str(b.note, 500), who: req.user.name || req.user.email });
+    }
+    await client.query("commit");
+    res.json({ ok: true, lines: lines.length });
+  } catch (e) { await client.query("rollback").catch(() => {}); bad(res, e.message || "Couldn't receive that shipment."); }
+  finally { client.release(); }
+}));
+const ADJUST_REASONS = ["Count correction", "Damaged", "Expired", "Lost", "Sample / testing", "Returned by customer", "Other"];
+admin.post("/inventory/:id/adjust", wrap(async (req, res) => {
+  const id = intOrNull(req.params.id), b = req.body || {};
+  const reason = ADJUST_REASONS.includes(b.reason) ? b.reason : "Other";
+  const who = req.user.name || req.user.email, note = str(b.note, 500);
+  if (b.mode === "set") {
+    const n = intOrNull(b.qty); if (n === null || n < 0) return bad(res, "Enter the counted quantity (0 or more).");
+    await moveStock(pool, id, 0, { setTo: n, reason, note, who });
+  } else {
+    const n = intOrNull(b.qty); if (!n) return bad(res, "Enter how many to add (+) or remove (−).");
+    await moveStock(pool, id, n, { reason, note, who });
+  }
+  const { rows: [p] } = await q("select stock from products where id = $1", [id]);
+  res.json({ ok: true, stock: p ? p.stock : null });
+}));
+admin.patch("/inventory/:id", owner, wrap(async (req, res) => {
+  const id = intOrNull(req.params.id), b = req.body || {};
+  if (b.reorderPoint !== undefined) await q("update products set reorder_point = $1 where id = $2", [b.reorderPoint === "" ? null : Math.max(0, intOrNull(b.reorderPoint) ?? 0), id]);
+  if (b.costEach !== undefined) await q("update products set cost_cents = $1 where id = $2", [centsOrNull(String(b.costEach).replace(/[$,\s]/g, "")), id]);
+  if (b.track === false) { await q("update products set stock = null where id = $1", [id]); await q("insert into stock_moves(product_id, change, balance, reason, who) values ($1,0,null,'Stopped tracking',$2)", [id, req.user.name || req.user.email]); }
+  if (b.track === true) await moveStock(pool, id, 0, { setTo: Math.max(0, intOrNull(b.startAt) ?? 0), reason: "Started tracking", who: req.user.name || req.user.email });
+  res.json({ ok: true });
+}));
+admin.get("/inventory.csv", wrap(async (req, res) => {
+  const { rows } = await q(`select p.name, p.strength, p.manufacturer, p.sku, p.stock, p.reorder_point, p.cost_cents, p.price_cents,
+      coalesce((select sum(i.qty) from order_items i join orders o on o.id = i.order_id where i.product_id = p.id and o.status in ${OPEN_ORDER}), 0)::int committed
+    from products p order by p.name, p.strength, p.manufacturer`);
+  const cell = (v) => { const x = String(v ?? ""); return /[",\n]/.test(x) || /^[=+\-@]/.test(x) ? `"${x.replace(/^([=+\-@])/, "'$1").replace(/"/g, '""')}"` : x; };
+  const showCost = req.user.role === "owner";
+  const head = ["Name", "Size", "Manufacturer", "Code", "Available", "In open orders", "On shelf", "Reorder at", ...(showCost ? ["Cost each", "Stock value"] : []), "Price"];
+  const out = rows.map((r) => [r.name, r.strength, r.manufacturer, r.sku, r.stock ?? "not tracked", r.committed, r.stock === null ? "" : r.stock + r.committed, r.reorder_point ?? "",
+    ...(showCost ? [r.cost_cents === null ? "" : (r.cost_cents / 100).toFixed(2), r.cost_cents === null || r.stock === null ? "" : ((r.cost_cents * Math.max(0, r.stock)) / 100).toFixed(2)] : []),
+    r.price_cents === null ? "" : (r.price_cents / 100).toFixed(2)].map(cell).join(","));
+  res.set("Content-Type", "text/csv"); res.set("Content-Disposition", "attachment; filename=inventory.csv");
+  res.send([head.join(","), ...out].join("\n"));
 }));
 
 /* ---------- admin: shipping ---------- */
