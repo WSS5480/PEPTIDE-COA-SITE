@@ -7,7 +7,7 @@
 <title>Policies</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Poppins:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="/store.css?v=1793121891">
+<link rel="stylesheet" href="/store.css?v=1793122447">
 <style>
 .pol { display: grid; grid-template-columns: 14rem minmax(0, 1fr); gap: 2rem; padding-block: 2rem 4rem; align-items: start; }
 .pol nav { position: sticky; top: 5rem; display: grid; gap: .2rem; }
@@ -22,7 +22,7 @@
 <body>
 <div class="announce" id="announce" hidden></div>
 <header class="top"><div class="wrap">
-  <a class="logo" href="/" style="text-decoration:none"><span id="brand">Research Peptides</span></a>
+  <a class="logo" href="/" style="text-decoration:none"><span id="brand">360 Medical Peptides</span></a>
   <a class="btn" href="/" style="display:inline-grid;place-items:center;text-decoration:none">← Back to store</a>
 </div></header>
 <main class="wrap pol">
@@ -39,7 +39,7 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const para = (t) => { const m = /^([^:]{2,40}):\s+(.*)$/.exec(String(t)); return m ? `<strong>${esc(m[1])}.</strong> ${esc(m[2])}` : esc(t); };
   const { settings: S } = await (await fetch("/api/store")).json();
-  const name = S.brand || "Research Peptides";
+  const name = S.brand || "360 Medical Peptides";
   document.title = "Policies · " + name; $("brand").textContent = name;
   if (S.announcementOn && S.announcement) {
     const el = $("announce"); el.hidden = false;

@@ -140,6 +140,7 @@ alter table customers add column if not exists access_pin_key text unique;
 alter table customers add column if not exists pin_version int not null default 0;
 alter table customers add column if not exists pin_set_at timestamptz;
 alter table customers add column if not exists pin_used_at timestamptz;
+alter table products add column if not exists manufacturer text not null default '';
 alter table products add column if not exists show_code boolean not null default false;
 alter table orders add column if not exists customer_id int references customers(id) on delete set null;
 create index if not exists orders_customer_idx on orders(customer_id);
@@ -148,7 +149,7 @@ create index if not exists orders_created_idx on orders(created_at desc);
 `;
 
 const DEFAULT_SETTINGS = {
-  brand: "",
+  brand: "360 Medical Peptides",
   tagline: "",
   distributorOf: "XINT",
   brandUrl: "https://xintpeptides.com/",
@@ -247,6 +248,12 @@ async function init() {
   const { rows: [{ n: pc0 }] } = await q("select count(*)::int n from products");
   const firstRun = !seeded && rc === 0 && pc0 === 0;
   await q("insert into settings(key, value) values ('catalogSeeded', 'true') on conflict (key) do nothing");
+  // one-time rename: a store still on the old default name becomes 360 Medical Peptides
+  const { rows: [renamed] } = await q("select 1 from settings where key = 'brandRenamed360'");
+  if (!renamed) {
+    await q(`update settings set value = '"360 Medical Peptides"' where key = 'brand' and value::text in ('""', '"Research Peptides"')`);
+    await q("insert into settings(key, value) values ('brandRenamed360', 'true') on conflict (key) do nothing");
+  }
   if (firstRun) {
     for (const r of readSeedReports()) {
       const imgPath = path.join(__dirname, "..", "coa", r.image || "");

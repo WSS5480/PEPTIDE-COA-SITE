@@ -127,7 +127,7 @@ app.post("/api/pin", limit("pin", 10, 15 * 60 * 1000), wrap(async (req, res) => 
 app.get("/api/store", wrap(async (req, res) => {
   const s = await getSettings();
   const [{ rows: products }, { rows: reports }, { rows: shipping }] = await Promise.all([
-    q("select id,name,strength,sku,show_code,category,description,price_cents,stock,max_per_order from products where active order by sort, name, strength"),
+    q("select id,name,strength,sku,show_code,manufacturer,category,description,price_cents,stock,max_per_order from products where active order by sort, name, strength"),
     q(`select ${REPORT_COLS} from reports where active order by product, tested desc nulls last`),
     q("select id,name,detail,price_cents,free_over_cents from shipping_methods where active order by sort, price_cents")
   ]);
@@ -203,7 +203,8 @@ app.post("/api/orders", limit("order", 6, 15 * 60 * 1000), wrap(async (req, res)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id`,
       [number, name, email, phone, JSON.stringify(address), shipName, shipCents, subtotal, subtotal + shipCents, str(b.note, 1000), cust ? cust.id : null]);
     for (const { p, qty } of lines) {
-      await client.query("insert into order_items(order_id,product_id,name,strength,unit_cents,qty) values ($1,$2,$3,$4,$5,$6)", [o.id, p.id, p.name, p.strength, p.price_cents, qty]);
+      // the maker goes into the line name so orders show which one was bought
+      await client.query("insert into order_items(order_id,product_id,name,strength,unit_cents,qty) values ($1,$2,$3,$4,$5,$6)", [o.id, p.id, p.manufacturer ? `${p.name} (${p.manufacturer})` : p.name, p.strength, p.price_cents, qty]);
     }
     await client.query("insert into order_events(order_id, who, text) values ($1, 'Customer', 'Order placed; customer confirmed research use and age')", [o.id]);
     await client.query("commit");
@@ -466,7 +467,7 @@ admin.get("/products", wrap(async (req, res) => {
 }));
 function productFields(b) {
   return {
-    name: str(b.name, 120), strength: str(b.strength, 40), sku: str(b.sku, 60).toUpperCase(), category: str(b.category, 60) || "Research peptide",
+    name: str(b.name, 120), strength: str(b.strength, 40), sku: str(b.sku, 60).toUpperCase(), manufacturer: str(b.manufacturer, 80), category: str(b.category, 60) || "Research peptide",
     description: str(b.description, 2000), price_cents: centsOrNull(b.price), stock: intOrNull(b.stock), max_per_order: intOrNull(b.maxPerOrder),
     active: b.active !== false, sort: intOrNull(b.sort) ?? 0, show_code: b.showCode === true
   };
@@ -498,6 +499,7 @@ admin.post("/products/import", owner, wrap(async (req, res) => {
     if (has(r.price) && price === null) { problems.push(`Row ${i + 2}: price "${r.price}" isn't a number`); continue; }
     const f = {};
     if (has(r.category)) f.category = str(r.category, 60);
+    if (has(r.manufacturer)) f.manufacturer = str(r.manufacturer, 80);
     if (has(r.sku)) f.sku = str(r.sku, 60).toUpperCase();
     if (has(r.description)) f.description = str(r.description, 2000);
     if (price !== undefined) f.price_cents = price;
@@ -506,7 +508,13 @@ admin.post("/products/import", owner, wrap(async (req, res) => {
     if (has(r.sort)) f.sort = intOrNull(r.sort) ?? 0;
     if (has(r.showCode)) f.show_code = /^(yes|y|true|1|on|x)$/i.test(String(r.showCode).trim());
     if (has(r.active)) f.active = !/^(no|n|false|0|off|hidden|hide)$/i.test(String(r.active).trim());
-    const match = existing.find((p) => p.name.toLowerCase() === name.toLowerCase() && sk(p.strength) === sk(strength));
+    // same peptide + size can exist once per manufacturer
+    const nm = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const same = existing.filter((p) => p.name.toLowerCase() === name.toLowerCase() && sk(p.strength) === sk(strength));
+    let match;
+    if (has(r.manufacturer)) match = same.find((p) => nm(p.manufacturer) === nm(r.manufacturer));
+    else if (same.length > 1) { problems.push(`Row ${i + 2}: ${name} ${strength} comes from more than one manufacturer; add a Manufacturer column so it updates the right one`); continue; }
+    else match = same[0];
     if (match) {
       const cols = Object.keys(f);
       if (cols.length) await q(`update products set ${cols.map((c, j) => `${c} = $${j + 1}`)} where id = $${cols.length + 1}`, [...Object.values(f), match.id]);

@@ -1,6 +1,6 @@
 {
- "name": "Peptide Admin",
- "short_name": "Peptide Admin",
+ "name": "360 Medical Peptides Admin",
+ "short_name": "360 Peptides Admin",
  "start_url": "/admin",
  "scope": "/admin",
  "display": "standalone",

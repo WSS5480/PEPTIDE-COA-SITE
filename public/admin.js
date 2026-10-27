@@ -23,7 +23,10 @@ let unsaved = false;
 // Same rule the store uses: a report belongs to a product when name + size match, or the product code matches the report's Sample line.
 const nrm = (x) => String(x ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const szk = (x) => nrm(x).replace(/mg$/, "");
-const reportMatches = (p, r) => (nrm(p.name) === nrm(r.product) && szk(p.strength) === szk(r.strength)) || (!!p.sku && nrm(p.sku) === nrm(r.sample));
+// the same peptide can come from several manufacturers: a COA only attaches to the matching maker
+// (names compared loosely, so "XINT" matches "XINTpeptides"; a report or product with no maker matches any)
+const mfrOk = (p, r) => { const a = nrm(p.manufacturer), b = nrm(r.manufacturer); return !a || !b || a.includes(b) || b.includes(a); };
+const reportMatches = (p, r) => mfrOk(p, r) && ((nrm(p.name) === nrm(r.product) && szk(p.strength) === szk(r.strength)) || (!!p.sku && nrm(p.sku) === nrm(r.sample)));
 addEventListener("beforeunload", (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ""; } });
 let me = null, view = "dashboard", orderId = null, stats = null;
 const isOwner = () => me && me.role === "owner";
@@ -31,7 +34,7 @@ const isOwner = () => me && me.role === "owner";
 /* ---------- login ---------- */
 function drawLogin(msg) {
   app.innerHTML = `<div class="login"><form id="lf">
-    <h1>Peptide Admin</h1><p class="muted">Sign in to manage orders, prices and the site.</p>
+    <h1>360 Peptides Admin</h1><p class="muted">Sign in to manage orders, prices and the site.</p>
     <div class="field"><label class="eyebrow" for="le">Email</label><input id="le" type="email" autocomplete="username" required></div>
     <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>
     ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
@@ -48,9 +51,9 @@ function drawLogin(msg) {
 /* ---------- shell ---------- */
 const NAV = [["dashboard", "Dashboard"], ["orders", "Orders"], ["customers", "Customers"], ["products", "Products & prices"], ["reports", "Lab reports"], ["shipping", "Shipping"], ["settings", "Site settings"], ["staff", "Staff logins", true], ["account", "My account"]];
 function shell() {
-  app.innerHTML = `<div class="mtop"><strong>Peptide Admin</strong><button type="button" id="mm">Menu</button></div>
+  app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><button type="button" id="mm">Menu</button></div>
   <div class="adm" id="adm"><aside class="side">
-    <div class="logo"><span>Peptide Admin</span><small>Store manager</small></div>
+    <div class="logo"><span>360 Peptides Admin</span><small>Store manager</small></div>
     <nav id="nav"></nav>
     <div class="who"><span>${esc(me.name || me.email)} · ${esc(me.role)}</span><a href="/" target="_blank" style="color:#fff">View store ↗</a><button type="button" data-install>Download admin app</button><button type="button" id="lo">Sign out</button></div>
   </aside><section class="pane" id="pane"></section></div>`;
@@ -252,13 +255,14 @@ async function customers() {
 async function products() {
   const [{ products: list }, { reports: reps }] = await Promise.all([api("/products"), api("/reports")]);
   const repFor = (p) => reps.filter((r) => r.active && reportMatches(p, r));
-  const COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["sku", "Code"], ["showCode", "Show code"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"], ["report", "Lab report"], ["docs", "Docs"]];
+  const COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["sku", "Code"], ["showCode", "Show code"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"], ["report", "Lab report"], ["docs", "Docs"]];
   const NUM = new Set(["price", "stock", "maxPerOrder", "sort"]);
   const inp = (k, v, ph = "", extra = "") => `<input data-k="${k}" value="${esc(v)}" placeholder="${ph}"${extra}${ro()}>`;
   const row = (p) => `<tr data-id="${p ? p.id : ""}"${p ? "" : ' class="dirty"'}>
     <td>${inp("name", p?.name, "Name")}</td>
     <td>${inp("strength", p?.strength, "10 mg", ' style="min-width:4.5rem"')}</td>
     <td>${inp("category", p?.category ?? "Research peptide", "Category", ' list="catlist" style="min-width:9rem"')}</td>
+    <td>${inp("manufacturer", p?.manufacturer, "e.g. XINT", ' list="mfrlist" style="min-width:7rem"')}</td>
     <td>${inp("sku", p?.sku, "e.g. RT30", ' style="min-width:5.5rem;text-transform:uppercase"')}</td>
     <td style="text-align:center"><input type="checkbox" data-k="showCode" title="Show the code instead of the name on the store"${p?.show_code ? " checked" : ""}${ro()}></td>
     <td>${inp("price", dollars(p?.price_cents), "Ask", ' inputmode="decimal" style="min-width:5rem"')}</td>
@@ -279,6 +283,7 @@ async function products() {
     ${(() => { const n = list.filter((p) => p.active && !repFor(p).length).length; return n ? `<p class="muted"><strong>${n} active product${n === 1 ? " has" : "s have"} no lab report.</strong> Sort by the Lab report column to see them.</p>` : ""; })()}
     ${saveBar}
     <datalist id="catlist">${cats.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
+    <datalist id="mfrlist">${[...new Set(list.map((p) => p.manufacturer).filter(Boolean))].map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
     <div class="tblwrap"><table class="tbl" id="pt"><thead><tr>${COLS.map(([k, l]) => `<th class="sortable" data-sort="${k}">${l}<span class="arr"></span></th>`).join("")}${isOwner() ? "<th></th>" : ""}</tr></thead>
     <tbody id="pb">${list.map(row).join("")}</tbody></table></div>
     ${saveBar}`;
@@ -356,7 +361,7 @@ const OK_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
 let pendingReport = null; // opens the Lab reports form already filled in for a product
 async function manageProduct(p, reps) {
   const box = document.getElementById("manageBox");
-  const label = `${p.name} ${p.strength}`.trim() + (p.sku ? ` · ${p.sku}` : "");
+  const label = `${p.name} ${p.strength}`.trim() + (p.manufacturer ? ` · ${p.manufacturer}` : "") + (p.sku ? ` · ${p.sku}` : "");
   const { documents: docs, kinds } = await api("/documents?productId=" + p.id);
   box.innerHTML = `<div class="panel" style="border-color:var(--blue)">
     <div class="row2" style="justify-content:space-between;align-items:center"><h2>${esc(label)}</h2><button class="btn" type="button" id="mgClose">Close</button></div>
@@ -385,7 +390,7 @@ async function manageProduct(p, reps) {
   const $ = (x) => document.getElementById(x);
   $("mgClose").onclick = () => { box.innerHTML = ""; };
   box.querySelectorAll("[data-editrep]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); pendingReport = { id: +a.dataset.editrep }; go("reports"); }));
-  if ($("mgAddCoa")) $("mgAddCoa").onclick = () => { pendingReport = { product: p.name, strength: p.strength, sample: p.sku || `${p.name} ${p.strength}`.trim() }; go("reports"); };
+  if ($("mgAddCoa")) $("mgAddCoa").onclick = () => { pendingReport = { product: p.name, strength: p.strength, sample: p.sku || `${p.name} ${p.strength}`.trim(), manufacturer: p.manufacturer || "" }; go("reports"); };
   if ($("dUp")) $("dUp").onclick = async () => {
     const file = $("dFile").files[0];
     if (!file) return toast("Choose a file first");
@@ -406,9 +411,9 @@ async function manageProduct(p, reps) {
 }
 
 /* ---------- product import from Excel / CSV ---------- */
-const IMPORT_COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["sku", "Code"], ["showCode", "Show code"], ["price", "Price"], ["stock", "Stock"], ["maxPerOrder", "Max per order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
+const IMPORT_COLS = [["name", "Name"], ["strength", "Size"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["sku", "Code"], ["showCode", "Show code"], ["price", "Price"], ["stock", "Stock"], ["maxPerOrder", "Max per order"], ["sort", "Sort"], ["active", "Active"], ["description", "Description"]];
 const HEADER_ALIASES = { name: ["name", "product", "productname", "peptide", "item"], strength: ["size", "strength", "mg", "dose", "amount", "vialsize"],
-  category: ["category", "cat", "type"], sku: ["sku", "code", "productcode", "itemcode", "sample", "samplename"], showCode: ["showcode", "displaycode", "usecode"], price: ["price", "cost", "retail", "priceusd", "price$"],
+  category: ["category", "cat", "type"], manufacturer: ["manufacturer", "mfr", "mfg", "maker", "brand", "supplier", "lab"], sku: ["sku", "code", "productcode", "itemcode", "sample", "samplename"], showCode: ["showcode", "displaycode", "usecode"], price: ["price", "cost", "retail", "priceusd", "price$"],
   stock: ["stock", "qty", "quantity", "onhand", "inventory"], maxPerOrder: ["maxperorder", "max", "limit", "maxorder", "max/order"],
   sort: ["sort", "order", "position"], active: ["active", "show", "visible", "enabled"], description: ["description", "desc", "notes", "details"] };
 const normH = (h) => String(h || "").toLowerCase().replace(/[^a-z0-9$/]/g, "");
@@ -419,15 +424,15 @@ function loadSheetJS() {
 function downloadTemplate(list) {
   const cell = (v) => { const x = String(v ?? ""); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
   const lines = [IMPORT_COLS.map(([, l]) => l).join(",")];
-  list.forEach((p) => lines.push([p.name, p.strength, p.category, p.sku, p.show_code ? "Yes" : "No", p.price_cents === null ? "" : (p.price_cents / 100).toFixed(2), p.stock ?? "", p.max_per_order ?? "", p.sort, p.active ? "Yes" : "No", p.description].map(cell).join(",")));
-  if (!list.length) lines.push("BPC-157,10 mg,Tissue repair research,BPC10,No,45.00,25,,0,Yes,");
+  list.forEach((p) => lines.push([p.name, p.strength, p.category, p.manufacturer, p.sku, p.show_code ? "Yes" : "No", p.price_cents === null ? "" : (p.price_cents / 100).toFixed(2), p.stock ?? "", p.max_per_order ?? "", p.sort, p.active ? "Yes" : "No", p.description].map(cell).join(",")));
+  if (!list.length) lines.push("BPC-157,10 mg,Tissue repair research,XINT,BPC10,No,45.00,25,,0,Yes,");
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" })); a.download = "products.csv"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 function importBox(list) {
   const box = document.getElementById("impBox");
   if (box.innerHTML) { box.innerHTML = ""; return; }
   box.innerHTML = `<div class="panel"><h2>Import products from a file</h2>
-    <p class="muted">Upload an Excel (.xlsx, .xls) or CSV file with a header row. Columns: <strong>Name</strong>, <strong>Size</strong>, Category, Code (e.g. RT30), Price, Stock, Max per order, Sort, Active (Yes/No), Description. Only Name is required. A row whose Name and Size match an existing product updates it; anything else is added as a new product. Blank cells keep the current value.</p>
+    <p class="muted">Upload an Excel (.xlsx, .xls) or CSV file with a header row. Columns: <strong>Name</strong>, <strong>Size</strong>, Category, Manufacturer, Code (e.g. RT30), Price, Stock, Max per order, Sort, Active (Yes/No), Description. Only Name is required. A row whose Name, Size and Manufacturer match an existing product updates it; anything else is added as a new product, so the same peptide from two manufacturers becomes two products with their own prices. Blank cells keep the current value.</p>
     <div class="row2"><button class="btn" type="button" id="tpl">Download current products as a template</button>
       <label class="btn solid" style="display:inline-grid;place-items:center;cursor:pointer">Choose file<input type="file" id="impFile" accept=".xlsx,.xls,.csv,text/csv" hidden></label></div>
     <div id="impPrev"></div></div>`;
@@ -446,7 +451,8 @@ function importBox(list) {
       if (!map.name) { prev.innerHTML = `<div class="err">Couldn't find a Name column. The columns found were: ${heads.map(esc).join(", ")}</div>`; return; }
       const rows = raw.map((r) => Object.fromEntries(Object.entries(map).map(([k, h]) => [k, String(r[h] ?? "").trim()]))).filter((r) => r.name);
       const sk = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/mg$/, "");
-      const isUpd = (r) => list.some((p) => p.name.toLowerCase() === r.name.toLowerCase() && sk(p.strength) === sk(r.strength));
+      const same = (r) => list.filter((p) => p.name.toLowerCase() === r.name.toLowerCase() && sk(p.strength) === sk(r.strength));
+      const isUpd = (r) => r.manufacturer ? same(r).some((p) => nrm(p.manufacturer) === nrm(r.manufacturer)) : same(r).length === 1;
       const nNew = rows.filter((r) => !isUpd(r)).length, nUpd = rows.length - nNew;
       const used = IMPORT_COLS.filter(([k]) => map[k]);
       prev.innerHTML = `<p><strong>${rows.length} rows:</strong> ${nNew} new, ${nUpd} update existing. Columns used: ${used.map(([, l]) => l).join(", ")}.${heads.length > used.length ? ` <span class="muted">Ignored: ${heads.filter((h) => !Object.values(map).includes(h)).map(esc).join(", ")}</span>` : ""}</p>
@@ -522,7 +528,7 @@ async function reports() {
   if (pendingReport) {
     const pr = pendingReport; pendingReport = null;
     if (pr.id) { const r = list.find((x) => x.id === pr.id); if (r) form(r); }
-    else form({ results: [[pr.product, ""], ["Purity", ""]], lab: "Janoshik", active: true, product: pr.product, strength: pr.strength, sample: pr.sample });
+    else form({ results: [[pr.product, ""], ["Purity", ""]], lab: "Janoshik", active: true, product: pr.product, strength: pr.strength, sample: pr.sample, manufacturer: pr.manufacturer });
   }
   pane().querySelector(".tbl").onclick = (e) => { const tr = e.target.closest("[data-rid]"); if (tr) { form(list.find((x) => String(x.id) === tr.dataset.rid)); window.scrollTo(0, 0); } };
 }

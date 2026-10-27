@@ -59,10 +59,12 @@ function vialSVG(name, size) {
   </svg>`;
 }
 // A product's lab report matches by name + size, or by its code (e.g. RT30) against the report's Sample line.
-const reportFor = (p) => REPORTS.find((r) => norm(r.product) === norm(p.name) && sizeKey(r.strength) === sizeKey(p.strength))
-  || (p.sku ? REPORTS.find((r) => norm(r.sample) === norm(p.sku)) : undefined);
+const mfrOk = (p, r) => { const a = norm(p.manufacturer), b = norm(r.manufacturer); return !a || !b || a.includes(b) || b.includes(a); };
+const reportFor = (p) => REPORTS.find((r) => mfrOk(p, r) && norm(r.product) === norm(p.name) && sizeKey(r.strength) === sizeKey(p.strength))
+  || (p.sku ? REPORTS.find((r) => mfrOk(p, r) && norm(r.sample) === norm(p.sku)) : undefined);
 // How a product is named on the store: "name" (Retatrutide 30 mg), "code" (RT30) or "both" (Retatrutide 30 mg · RT30)
 const codeMode = (p) => !!p.sku && (p.show_code || S.productLabel === "code");
+const withMfr = (p, t) => (p.manufacturer ? `${t} · ${p.manufacturer}` : t);
 const labelOf = (p) => {
   const nm = `${p.name} ${p.strength}`.trim(), mode = p.show_code && p.sku ? "code" : S.productLabel || "name";
   if (!p.sku || mode === "name") return nm;
@@ -79,7 +81,7 @@ function drawChips() {
 function drawProducts() {
   drawChips();
   const words = norm($("hq").value) ? $("hq").value.toLowerCase().split(/\s+/).map(norm).filter(Boolean) : [];
-  const list = PRODUCTS.filter((p) => (!coaOnly || reportFor(p)) && (!cat || (p.category || "Research peptide") === cat) && words.every((w) => norm([p.name, p.strength, p.sku, p.category, (reportFor(p) || {}).sample].join(" ")).includes(w)));
+  const list = PRODUCTS.filter((p) => (!coaOnly || reportFor(p)) && (!cat || (p.category || "Research peptide") === cat) && words.every((w) => norm([p.name, p.strength, p.sku, p.manufacturer, p.category, (reportFor(p) || {}).sample].join(" ")).includes(w)));
   $("pgrid").innerHTML = list.length ? list.map((p) => {
     const r = reportFor(p);
     const purity = r ? ((r.results || []).find(([n]) => isPurity(n)) || [])[1] : "";
@@ -91,7 +93,7 @@ function drawProducts() {
     return `<article class="pcard">
       <div class="thumb">${vialSVG(codeMode(p) ? p.sku : p.name, p.strength)}</div>
       <div class="pbody">
-        <span class="pcat">${esc(p.category || "Research peptide")}</span>
+        <span class="pcat">${esc(p.category || "Research peptide")}${p.manufacturer ? ` · ${esc(p.manufacturer)}` : ""}</span>
         <h3 class="pname">${esc(codeMode(p) ? p.sku : p.name)}</h3>
         <span class="pmeta">${[codeMode(p) ? `${p.name} ${p.strength}`.trim() : p.strength, !codeMode(p) && S.productLabel === "both" && p.sku ? p.sku : "", purity ? `${purity} purity` : ""].filter(Boolean).map(esc).join(" · ")}</span>
         ${p.description ? `<p class="stockline">${esc(p.description)}</p>` : ""}
@@ -119,7 +121,7 @@ function drawCart() {
   }
   const sub = lines.reduce((s, l) => s + l.p.price_cents * l.qty, 0);
   $("cartBody").innerHTML = lines.map((l) => `<div class="line">
-    <div class="nm">${esc(labelOf(l.p))}<small>${money(l.p.price_cents)} each</small></div>
+    <div class="nm">${esc(withMfr(l.p, labelOf(l.p)))}<small>${money(l.p.price_cents)} each</small></div>
     <div class="amt">${money(l.p.price_cents * l.qty)}</div>
     <div class="ctl"><span class="qty"><button type="button" data-dec="${l.id}" aria-label="One less">−</button><span>${l.qty}</span><button type="button" data-inc="${l.id}" aria-label="One more">+</button></span>
       <button class="linkbtn" type="button" data-rm="${l.id}">Remove</button></div>
@@ -415,7 +417,7 @@ async function load() {
   S = j.settings; PRODUCTS = j.products; REPORTS = j.reports; SHIP = j.shipping; DOCS = j.documents || [];
   if (first) {
     first = false;
-    const name = S.brand || "Research Peptides";
+    const name = S.brand || "360 Medical Peptides";
     document.title = LAB ? `Lab reports · ${name}` : name;
     if (LAB) $("hq").placeholder = "Search lab reports";
     $("brand").textContent = name; $("footBrand").textContent = name;
