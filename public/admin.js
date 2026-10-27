@@ -243,7 +243,7 @@ async function customers() {
     ${isRep() ? `<p class="muted">Customers assigned to you. Orders they place (or you place for them) earn your commission. Ask the office to give them a PIN or special pricing.</p>` : `<p class="muted">Give a customer their own PIN to let them into the site. Their PIN works only for them: it unlocks the store and signs them into their account. Changing or revoking it, or turning the account off, ends their access right away. Turn the lock on under Site settings → Site PIN.</p>
     <p class="muted"><strong>Pricing:</strong> a customer with a markup pays our cost plus that percent on every product that has a cost (products without a cost stay at the store price). They see their prices as soon as they sign in; sales reps see them when they place that customer's order. "Store prices" = the normal Products &amp; prices list.</p>`}
     <div id="cNew"></div><div id="pinShow"></div>
-    <div class="filters"><input id="cq" type="search" placeholder="Name or email"></div>
+    <div class="filters"><input id="cq" type="search" placeholder="Search customers"></div>
     <div class="tblwrap" id="ct"><p class="muted">Loading…</p></div>`;
   let term = "";
   const { reps: repList } = isRep() ? { reps: [] } : await api("/reps").catch(() => ({ reps: [] }));
@@ -268,7 +268,7 @@ async function customers() {
   const load = async () => {
     const { customers: list } = await api("/customers?q=" + encodeURIComponent(term));
     document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Pricing</th><th>Sales rep</th><th>Site PIN</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th>${isOwner() || isRep() ? "<th></th>" : ""}</tr>
-      ${list.map((c) => `<tr data-cid="${c.id}" data-cname="${esc(c.name || c.email)}"><td>${esc(c.name)}</td><td><a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a></td><td>${esc(c.phone)}</td>
+      ${list.map((c) => `<tr data-cid="${c.id}" data-cname="${esc(c.name || c.email)}"><td>${esc(c.name)}</td><td>${c.email ? `<a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a>` : `<a href="#" data-cust-orders="${esc(c.name)}" class="muted">no email</a>`}</td><td>${esc(c.phone)}</td>
         <td>${markupCell(c)}</td><td>${repCell(c)}</td><td>${pinCell(c)}</td><td>${when(c.created_at)}</td>
         <td class="num">${c.orders}</td><td class="num">${money(c.spent_cents)}</td><td>${c.last_order ? when(c.last_order) : ""}</td>
         <td><input type="checkbox" data-cact${c.active ? " checked" : ""}${ro()}></td>
@@ -279,7 +279,7 @@ async function customers() {
   const editForm = (c) => {
     const a = c.address || {};
     const f = (id, label, val = "", type = "text") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}" value="${esc(val)}"></div>`;
-    document.getElementById("cNew").innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Edit customer</h2><div class="grid2">${f("ec-n", "Name", c.name)}${f("ec-e", "Email", c.email, "email")}${f("ec-p", "Phone", c.phone, "tel")}</div>
+    document.getElementById("cNew").innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Edit customer</h2><div class="grid2">${f("ec-n", "Name", c.name)}${f("ec-e", "Email (optional)", c.email || "", "email")}${f("ec-p", "Phone", c.phone, "tel")}</div>
       <div class="grid2">${f("ec-1", "Street address", a.line1)}${f("ec-2", "Apt, suite", a.line2)}${f("ec-c", "City", a.city)}${f("ec-s", "State", a.state)}${f("ec-z", "ZIP", a.zip)}</div>
       <div class="row2"><button class="btn solid" type="button" id="ecSave">Save changes</button><button class="btn" type="button" id="ecCancel">Cancel</button></div></div>`;
     window.scrollTo(0, 0);
@@ -317,7 +317,8 @@ async function customers() {
     const box = document.getElementById("cNew");
     if (box.innerHTML) { box.innerHTML = ""; return; }
     const f = (id, label, type = "text") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}"></div>`;
-    box.innerHTML = `<div class="panel"><h2>Add customer</h2><div class="grid2">${f("nc-n", "Name")}${f("nc-e", "Email", "email")}${f("nc-p", "Phone", "tel")}</div>
+    box.innerHTML = `<div class="panel"><h2>Add customer</h2><div class="grid2">${f("nc-n", "Name")}${f("nc-e", "Email (optional)", "email")}${f("nc-p", "Phone", "tel")}</div>
+      <p class="muted" style="margin:-.3rem 0 0">Email is only needed for order confirmations and password sign-in; a PIN works without one.</p>
       <div class="grid2">${f("nc-1", "Street address")}${f("nc-2", "Apt, suite")}${f("nc-c", "City")}${f("nc-s", "State")}${f("nc-z", "ZIP")}</div>
       <div class="grid2"${isRep() ? " hidden" : ""}><div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-rep">Sales rep (for commission)</label><select id="nc-rep"><option value="">— none —</option>${activeReps.map((r) => `<option value="${r.id}">${esc(r.name)} · ${r.commission_rate}%</option>`).join("")}</select></div>
       <div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-mk">Pricing (markup over our cost)</label><div class="row2" style="flex-wrap:nowrap"><select id="nc-mk" style="flex:1"><option value="">Store prices</option>${MK.map((m) => `<option value="${m}">+${m}%</option>`).join("")}<option value="custom">Custom…</option></select><input id="nc-mkc" inputmode="decimal" placeholder="%" style="width:5rem" hidden></div></div></div>

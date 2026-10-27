@@ -192,6 +192,8 @@ alter table orders add column if not exists stripe_session text;
 alter table orders add column if not exists stripe_pi text;
 alter table orders add column if not exists paid_cents int;
 alter table orders add column if not exists discount_code text not null default '';
+-- a customer may have no email (phone-only clinic contact): it is only needed for emails and password sign-in
+alter table customers alter column email drop not null;
 -- customer pricing: a markup % over our cost that replaces the store price for that customer (null = store prices)
 alter table customers add column if not exists markup numeric(6,2);
 alter table orders add column if not exists price_markup numeric(6,2);

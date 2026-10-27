@@ -92,7 +92,7 @@ async function customers(editId) {
     const t = ($("cq").value || "").toLowerCase();
     const rows = list.filter((c) => !t || [c.name, c.email, c.phone].join(" ").toLowerCase().includes(t));
     $("cList").innerHTML = rows.length ? rows.map((c) => `<div class="item" data-cid="${c.id}"><div class="top2"><span>${esc(c.name)}</span><span>${c.orders ? money(c.sales_cents) : ""}</span></div>
-      <small>${esc(c.email)}${c.phone ? " · " + esc(c.phone) : ""}${c.markup !== null && c.markup !== undefined ? ` · pricing cost +${Number(c.markup)}%` : ""}</small><small>${[a(c).city, a(c).state].filter(Boolean).join(", ")}${c.orders ? ` · ${c.orders} order${c.orders === 1 ? "" : "s"} · last ${when(c.last_order)}` : " · no orders yet"}${c.active ? "" : " · account off"}</small></div>`).join("")
+      <small>${esc(c.email || "no email")}${c.phone ? " · " + esc(c.phone) : ""}${c.markup !== null && c.markup !== undefined ? ` · pricing cost +${Number(c.markup)}%` : ""}</small><small>${[a(c).city, a(c).state].filter(Boolean).join(", ")}${c.orders ? ` · ${c.orders} order${c.orders === 1 ? "" : "s"} · last ${when(c.last_order)}` : " · no orders yet"}${c.active ? "" : " · account off"}</small></div>`).join("")
       : `<p class="muted">${list.length ? "No customer matches." : "No customers yet. Add your first one."}</p>`;
   };
   draw(); $("cq").oninput = draw;
@@ -100,7 +100,7 @@ async function customers(editId) {
     const ad = c ? a(c) : {};
     const f = (id, label, val = "", type = "text", ac = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}" value="${esc(val)}" autocomplete="${ac}"></div>`;
     $("cForm").innerHTML = `<div class="panel"><h2>${c ? "Edit customer" : "New customer"}</h2>
-      <div class="grid2">${f("c-n", "Full name", c?.name, "text", "name")}${c ? `<div class="field"><label class="eyebrow">Email</label><input value="${esc(c.email)}" disabled></div>` : f("c-e", "Email", "", "email", "email")}${f("c-p", "Phone", c?.phone, "tel", "tel")}</div>
+      <div class="grid2">${f("c-n", "Full name", c?.name, "text", "name")}${c ? `<div class="field"><label class="eyebrow">Email</label><input value="${esc(c.email || "")}" placeholder="none" disabled></div>` : f("c-e", "Email (optional)", "", "email", "email")}${f("c-p", "Phone", c?.phone, "tel", "tel")}</div>
       <div class="grid2"><div class="field" style="grid-column:1/-1">${""}<label class="eyebrow" for="c-1">Street address</label><input id="c-1" value="${esc(ad.line1)}" autocomplete="address-line1"></div>
         ${f("c-2", "Apt, suite (optional)", ad.line2)}${f("c-c", "City", ad.city)}${f("c-s", "State", ad.state)}${f("c-z", "ZIP", ad.zip)}</div>
       <div class="err" id="cErr" hidden></div>
@@ -132,7 +132,7 @@ async function neworder() {
   pane().innerHTML = `<header><h1>New order</h1></header>
     ${!list.length ? `<div class="panel"><p>You need a customer first.</p><div><button class="btn solid rep" data-nav="customers">Add a customer</button></div></div>` : `
     <div class="panel"><h2>1. Customer</h2>
-      <div class="field"><label class="eyebrow" for="oCust">Who is this order for?</label><select id="oCust"><option value="">Choose a customer…</option>${list.filter((c) => c.active).map((c) => `<option value="${c.id}"${pick === c.id ? " selected" : ""}>${esc(c.name)} — ${esc(c.email)}</option>`).join("")}</select></div>
+      <div class="field"><label class="eyebrow" for="oCust">Who is this order for?</label><select id="oCust"><option value="">Choose a customer…</option>${list.filter((c) => c.active).map((c) => `<option value="${c.id}"${pick === c.id ? " selected" : ""}>${esc(c.name)}${c.email ? " — " + esc(c.email) : c.phone ? " — " + esc(c.phone) : ""}</option>`).join("")}</select></div>
       <p class="muted" id="oAddr"></p></div>
     <div class="panel"><h2>2. Products</h2>
       <div class="filters"><input id="oq" type="search" placeholder="Filter products"></div>

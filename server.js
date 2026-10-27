@@ -604,6 +604,7 @@ app.post("/api/account/register", jsonOnly, limit("register", 8, 60 * 60 * 1000)
 }));
 app.post("/api/account/login", jsonOnly, limit("clogin", 12, 15 * 60 * 1000), wrap(async (req, res) => {
   const email = str(req.body?.email, 160).toLowerCase();
+  if (!email) return bad(res, "Email or password is wrong.", 401);
   const { rows: [c] } = await q("select id, pass_hash from customers where lower(email) = $1 and active", [email]);
   if (!c || !(await bcrypt.compare(String(req.body?.password || ""), c.pass_hash))) return bad(res, "Email or password is wrong.", 401);
   await startCustomerSession(res, c.id);
@@ -843,15 +844,15 @@ admin.get("/customers", wrap(async (req, res) => {
 }));
 admin.post("/customers", (req, res, next) => (isRep(req) ? next() : owner(req, res, next)), wrap(async (req, res) => {
   const b = req.body || {}, email = str(b.email, 160).toLowerCase();
-  if (!str(b.name, 120) || !isEmail(email)) return bad(res, "Enter a name and a valid email.");
-  const { rows: [ex] } = await q("select id from customers where lower(email) = $1", [email]);
-  if (ex) return bad(res, "A customer with that email already exists.");
+  if (!str(b.name, 120)) return bad(res, "Enter the customer's name.");
+  if (email && !isEmail(email)) return bad(res, "That email doesn't look right. Leave it blank if they don't have one.");
+  if (email) { const { rows: [ex] } = await q("select id from customers where lower(email) = $1", [email]); if (ex) return bad(res, "A customer with that email already exists."); }
   // they sign in with the PIN you give them; this random password is never shown to anyone
   if (isRep(req)) { b.repId = req.user.id; b.markup = ""; } // a rep's new customer is theirs; pricing is set by the owner
   const repId = intOrNull(b.repId) && (await q("select 1 from users where id = $1 and role = 'rep'", [intOrNull(b.repId)])).rows.length ? intOrNull(b.repId) : null;
   const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash, rep_id, markup) values ($1,$2,$3,$4,$5,$6,$7) returning id",
-    [email, str(b.name, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId, b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup)]);
-  await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
+    [email || null, str(b.name, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId, b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup)]);
+  if (email) await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
   res.json({ ok: true, id: c.id });
 }));
 admin.post("/customers/:id/pin", owner, wrap(async (req, res) => {
@@ -886,10 +887,10 @@ admin.patch("/customers/:id", (req, res, next) => (isRep(req) ? next() : owner(r
   }
   if (req.body?.edit) {
     const b = req.body, email = str(b.email, 160).toLowerCase();
-    if (!str(b.name, 120) || !isEmail(email)) return bad(res, "Enter a name and a valid email.");
-    const { rows: [dup] } = await q("select 1 from customers where lower(email) = $1 and id <> $2", [email, id]);
-    if (dup) return bad(res, "Another customer already uses that email.");
-    await q("update customers set name = $1, email = $2, phone = $3, address = $4 where id = $5", [str(b.name, 120), email, str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), id]);
+    if (!str(b.name, 120)) return bad(res, "Enter the customer's name.");
+    if (email && !isEmail(email)) return bad(res, "That email doesn't look right. Leave it blank if they don't have one.");
+    if (email) { const { rows: [dup] } = await q("select 1 from customers where lower(email) = $1 and id <> $2", [email, id]); if (dup) return bad(res, "Another customer already uses that email."); }
+    await q("update customers set name = $1, email = $2, phone = $3, address = $4 where id = $5", [str(b.name, 120), email || null, str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), id]);
     return res.json({ ok: true });
   }
   if (req.body?.repId !== undefined) {
@@ -1470,14 +1471,14 @@ rep.get("/customers", wrap(async (req, res) => {
 }));
 rep.post("/customers", wrap(async (req, res) => {
   const b = req.body || {}, email = str(b.email, 160).toLowerCase();
-  if (!str(b.name, 120) || !isEmail(email)) return bad(res, "Enter the customer's name and a valid email.");
+  if (!str(b.name, 120)) return bad(res, "Enter the customer's name.");
+  if (email && !isEmail(email)) return bad(res, "That email doesn't look right. Leave it blank if they don't have one.");
   const addr = cleanAddress(b.address);
   if (!addr.line1 || !addr.city || !addr.state || !addr.zip) return bad(res, "Enter the customer's full shipping address.");
-  const { rows: [ex] } = await q("select id, rep_id from customers where lower(email) = $1", [email]);
-  if (ex) return bad(res, ex.rep_id === req.user.id ? "That customer is already on your list." : "A customer with that email already exists. Ask the office to assign them to you.");
+  if (email) { const { rows: [ex] } = await q("select id, rep_id from customers where lower(email) = $1", [email]); if (ex) return bad(res, ex.rep_id === req.user.id ? "That customer is already on your list." : "A customer with that email already exists. Ask the office to assign them to you."); }
   const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash, rep_id) values ($1,$2,$3,$4,$5,$6) returning id",
-    [email, str(b.name, 120), str(b.phone, 40), JSON.stringify(addr), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), req.user.id]);
-  await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
+    [email || null, str(b.name, 120), str(b.phone, 40), JSON.stringify(addr), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), req.user.id]);
+  if (email) await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
   res.json({ ok: true, id: c.id });
 }));
 rep.patch("/customers/:id", wrap(async (req, res) => {
@@ -1507,7 +1508,7 @@ rep.post("/orders", wrap(async (req, res) => {
   const a = c.address || {};
   if (!a.line1 || !a.city || !a.state || !a.zip) return bad(res, "This customer has no full shipping address yet. Edit the customer first.");
   try {
-    const r = await createOrder({ name: c.name, email: c.email, phone: c.phone, address: a, items, fulfillment: b.fulfillment, discountCode: b.discountCode, markup: c.markup !== null ? Number(c.markup) : null, note: b.note, customerId: c.id, repId: req.user.id,
+    const r = await createOrder({ name: c.name, email: c.email || "", phone: c.phone, address: a, items, fulfillment: b.fulfillment, discountCode: b.discountCode, markup: c.markup !== null ? Number(c.markup) : null, note: b.note, customerId: c.id, repId: req.user.id,
       placedBy: `Rep: ${req.user.name || req.user.email}`, event: `Order placed by sales rep ${req.user.name || req.user.email}`, settings: await getSettings() });
     notifyOrder(r.id, "new").catch((e) => console.error("Order email failed:", e.message));
     // with card payments on, the rep gets a payment link to text or email to the customer
