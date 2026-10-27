@@ -1005,6 +1005,8 @@ async function settings() {
   const t = (k, label, help = "") => `<div class="field"><label class="eyebrow" for="s-${k}">${label}</label><input id="s-${k}" value="${esc(s[k])}"${ro()}>${help ? `<span class="muted">${help}</span>` : ""}</div>`;
   const ta = (k, label, help = "") => `<div class="field"><label class="eyebrow" for="s-${k}">${label}</label><textarea id="s-${k}"${ro()}>${esc(s[k])}</textarea>${help ? `<span class="muted">${help}</span>` : ""}</div>`;
   const site = baseUrl || location.origin;
+  // which sending account is picked: what's saved, else Microsoft 365 (so the login boxes show right away), unless the host already has settings
+  const prov0 = s.mailMode === "resend" ? "resend" : s.mailMode === "smtp" ? (/office365|outlook/i.test(s.mailHost || "") ? "microsoft" : /gmail|google/i.test(s.mailHost || "") ? "google" : "smtp") : (ml && ml.ready && ml.source === "host" ? "" : "microsoft");
   pane().innerHTML = `<header><h1>Site settings</h1></header>
     <div class="panel"><h2>Store</h2>
       <label class="chk"><input type="checkbox" id="s-storeOpen"${s.storeOpen ? " checked" : ""}${ro()}> Taking orders (untick to pause checkout)</label>
@@ -1044,11 +1046,11 @@ async function settings() {
       <p class="muted">The mailbox the store sends from. On Microsoft 365 use a real mailbox's email and password (its <em>Authenticated SMTP</em> must be on in the Microsoft 365 admin center: Users → the user → Mail → Manage email apps). Emails come from that address unless you set a different From address it is allowed to send as.</p>
       <div class="grid2">
         <div class="field"><label class="eyebrow" for="s-mailProvider">Mail provider</label><select id="s-mailProvider"${ro()}>
-          <option value="microsoft"${s.mailMode === "smtp" && /office365|outlook/i.test(s.mailHost || "") ? " selected" : ""}>Microsoft 365 / Outlook</option>
-          <option value="google"${s.mailMode === "smtp" && /gmail|google/i.test(s.mailHost || "") ? " selected" : ""}>Google Workspace / Gmail</option>
-          <option value="smtp"${s.mailMode === "smtp" && !/office365|outlook|gmail|google/i.test(s.mailHost || "") ? " selected" : ""}>Other mail server (SMTP)</option>
-          <option value="resend"${s.mailMode === "resend" ? " selected" : ""}>Resend (API key)</option>
-          <option value=""${!s.mailMode ? " selected" : ""}>Not set here (use the host's settings)</option></select></div>
+          <option value="microsoft"${prov0 === "microsoft" ? " selected" : ""}>Microsoft 365 / Outlook</option>
+          <option value="google"${prov0 === "google" ? " selected" : ""}>Google Workspace / Gmail</option>
+          <option value="smtp"${prov0 === "smtp" ? " selected" : ""}>Other mail server (SMTP)</option>
+          <option value="resend"${prov0 === "resend" ? " selected" : ""}>Resend (API key)</option>
+          <option value=""${prov0 === "" ? " selected" : ""}>Not set here (use the host's settings)</option></select></div>
         <div class="field mail-smtp"><label class="eyebrow" for="s-mailUser">Login email</label><input id="s-mailUser" value="${esc(s.mailUser)}" autocomplete="off" placeholder="name@360medical.net"${ro()}></div>
         <div class="field mail-smtp"><label class="eyebrow" for="s-mailPass">Password</label><input id="s-mailPass" type="password" autocomplete="new-password" placeholder="${s.mailPassSet ? "•••••••• saved — type to change" : "Mailbox password"}"${ro()}></div>
         <div class="field mail-resend"><label class="eyebrow" for="s-resendKey">Resend API key</label><input id="s-resendKey" type="password" autocomplete="new-password" placeholder="${s.resendKeySet ? "•••••••• saved — type to change" : "re_…"}"${ro()}></div>
@@ -1137,9 +1139,11 @@ async function settings() {
   };
   if (document.getElementById("mailTest")) document.getElementById("mailTest").onclick = async () => {
     const b = document.getElementById("mailTest"), out = document.getElementById("mailTestOut");
+    const body = mailBody();
+    if (body.mailMode === "smtp" && (!body.mailUser || (!body.mailPass && !s.mailPassSet))) { out.textContent = "Enter the login email and password first, then test."; return; }
+    if (body.mailMode === "resend" && !body.resendKey && !s.resendKeySet) { out.textContent = "Paste the Resend API key first, then test."; return; }
     b.disabled = true; out.textContent = "Saving and sending…";
     try {
-      const body = mailBody();
       if (body.mailMode) await api("/settings", { method: "PUT", body }); // test what's on screen
       const r = await api("/mail/test", { method: "POST", body: { to: document.getElementById("s-orderEmail").value } });
       out.textContent = `Sent to ${r.to}. Check the inbox (and spam).`;
