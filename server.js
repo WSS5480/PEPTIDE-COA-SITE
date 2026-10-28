@@ -1074,6 +1074,28 @@ admin.post("/costs/apply", owner, wrap(async (req, res) => {
   console.log(`Cost sheet applied by ${req.user.email}: ${updated} products updated; unmatched: ${unmatched.join("; ") || "none"}`);
   res.json({ ok: true, updated, unmatched });
 }));
+// Make the product list match the sheet: add rows that have no product (cost + price at +100%, the sheet's own column),
+// or remove products the sheet doesn't list (past orders keep their own copy of what was bought).
+admin.post("/costs/add-missing", owner, wrap(async (req, res) => {
+  const { rows } = await costSheetMatches();
+  const file = path.join(__dirname, "seed", `catalog-${COST_SHEET}.json`);
+  const cats = Object.fromEntries(JSON.parse(require("fs").readFileSync(file, "utf8")).map((r) => [normName(r.name) + "|" + normSize(r.strength), r.category || "Research peptide"]));
+  const { rows: [{ m }] } = await q("select coalesce(max(sort),0)::int m from products");
+  let sort = m, added = [];
+  for (const r of rows.filter((x) => !x.matches.length)) {
+    await q("insert into products(name, strength, category, cost_cents, price_cents, sort) values ($1,$2,$3,$4,$5,$6)", [r.name, r.strength, cats[normName(r.name) + "|" + normSize(r.strength)] || "Research peptide", r.costCents, r.costCents === null ? null : r.costCents * 2, ++sort]);
+    added.push(`${r.name} ${r.strength}`);
+  }
+  console.log(`Cost sheet: ${req.user.email} added ${added.length} missing products${added.length ? ": " + added.join("; ") : ""}`);
+  res.json({ ok: true, added });
+}));
+admin.post("/costs/prune", owner, wrap(async (req, res) => {
+  if (req.body?.confirm !== "REMOVE") return bad(res, "Confirm first.");
+  const { notInSheet } = await costSheetMatches();
+  for (const p of notInSheet) await q("delete from products where id = $1", [p.id]);
+  console.log(`Cost sheet: ${req.user.email} removed ${notInSheet.length} products not on the sheet${notInSheet.length ? ": " + notInSheet.map((p) => `${p.name} ${p.strength}${p.manufacturer ? " · " + p.manufacturer : ""}`).join("; ") : ""}`);
+  res.json({ ok: true, removed: notInSheet.map((p) => `${p.name} ${p.strength}${p.manufacturer ? " · " + p.manufacturer : ""}`) });
+}));
 // Bulk import from a spreadsheet. Matches existing products by name + size; blank cells keep current values.
 admin.post("/products/import", owner, wrap(async (req, res) => {
   const rows = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, 1000) : [];

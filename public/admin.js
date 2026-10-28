@@ -709,9 +709,19 @@ async function products() {
     box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Cost sheet · Internal pricing Q4 2026</h2>
       <p class="muted">${withCost.length} products on the sheet with a cost. <strong>${matched.length}</strong> match a product here by name and size (${matched.reduce((n, r) => n + r.matches.length, 0)} products, counting each manufacturer). <strong>${differ.length}</strong> of those currently have a different or missing cost.${unmatched.length ? ` <strong>${unmatched.length}</strong> rows match nothing — their name or size differs from the product list, so fix the product name (or type the cost by hand) for: ${unmatched.map((r) => esc(`${r.name} ${r.strength} ($${(r.costCents / 100).toFixed(2)})`)).join("; ")}.` : " Every row matches."}</p>
       ${differ.length ? `<div class="tblwrap" style="max-height:20rem"><table class="tbl compact"><tr><th>Product</th><th>Maker</th><th class="num">Cost now</th><th class="num">Sheet cost</th></tr>${matched.flatMap((r) => r.matches.filter((m) => !m.same).map((m) => `<tr><td class="namecol">${esc(m.name)} ${esc(m.strength)}</td><td>${esc(m.manufacturer || "")}</td><td class="num">${m.costCents === null ? "—" : money(m.costCents)}</td><td class="num"><strong>${money(r.costCents)}</strong></td></tr>`)).join("")}</table></div>` : `<p class="muted">All matched products already have the sheet's cost.</p>`}
-      ${d.notInSheet.filter((p) => p.active).length ? `<p class="muted">Not on the sheet (no cost from it): ${d.notInSheet.filter((p) => p.active).map((p) => esc(`${p.name} ${p.strength}${p.manufacturer ? " · " + p.manufacturer : ""}`)).join("; ")}.</p>` : ""}
-      <div class="row2" style="align-items:center"><button class="btn solid" id="costApply"${differ.length ? "" : " disabled"}>Set ${differ.length} cost${differ.length === 1 ? "" : "s"} from the sheet</button><button class="btn" id="costClose">Close</button></div></div>`;
+      ${d.notInSheet.length ? `<p class="muted"><strong>${d.notInSheet.length} product${d.notInSheet.length === 1 ? "" : "s"} not on the sheet:</strong> ${d.notInSheet.map((p) => esc(`${p.name} ${p.strength}${p.manufacturer ? " · " + p.manufacturer : ""}`)).join("; ")}.</p>` : `<p class="muted">Every product is on the sheet.</p>`}
+      <div class="row2" style="align-items:center"><button class="btn solid" id="costApply"${differ.length ? "" : " disabled"}>Set ${differ.length} cost${differ.length === 1 ? "" : "s"} from the sheet</button>
+        ${unmatched.length ? `<button class="btn" id="costAdd">Add the ${unmatched.length} missing product${unmatched.length === 1 ? "" : "s"}</button>` : ""}
+        ${d.notInSheet.length ? `<button class="btn danger" id="costPrune">Remove the ${d.notInSheet.length} not on the sheet</button>` : ""}
+        <button class="btn" id="costClose">Close</button></div>
+      <p class="muted" style="margin:0">"Add" creates each missing row with its cost and a price at cost +100% (the sheet's own column) — change it with the markup buttons. "Remove" deletes the products the sheet doesn't list; past orders keep their copies.</p></div>`;
     document.getElementById("costClose").onclick = () => { box.innerHTML = ""; };
+    if (document.getElementById("costAdd")) document.getElementById("costAdd").onclick = async () => { const r = await api("/costs/add-missing", { method: "POST" }); toast(`Added ${r.added.length} product${r.added.length === 1 ? "" : "s"}`); unsaved = false; products(); };
+    if (document.getElementById("costPrune")) document.getElementById("costPrune").onclick = async () => {
+      const names = d.notInSheet.map((p) => `${p.name} ${p.strength}${p.manufacturer ? " · " + p.manufacturer : ""}`).join("\n");
+      if (!confirm(`Remove these ${d.notInSheet.length} products so the list matches the sheet?\n\n${names}\n\nPast orders keep their line items.`)) return;
+      const r = await api("/costs/prune", { method: "POST", body: { confirm: "REMOVE" } }); toast(`Removed ${r.removed.length}`); unsaved = false; products();
+    };
     document.getElementById("costApply").onclick = async () => {
       const r = await api("/costs/apply", { method: "POST", body: { overwrite: true } });
       toast(`${r.updated} cost${r.updated === 1 ? "" : "s"} updated`); unsaved = false; products();
