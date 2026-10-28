@@ -2057,7 +2057,7 @@ app.get(["/admin/tracker", "/rep/tracker"], wrap(async (req, res) => {
   res.type("html").send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>360 Medical · Case tracker</title>
 <link rel="manifest" href="${isRep ? "/rep.webmanifest" : "/admin.webmanifest"}"><meta name="theme-color" content="#0f1b33">
 <style>html,body{margin:0;height:100%;background:#0f1b33}iframe{position:fixed;inset:0;width:100%;height:100%;border:0}</style></head>
-<body><iframe src="${escHtml(src)}" title="Case tracker" allow="clipboard-write; geolocation; camera"></iframe></body></html>`);
+<body><iframe src="${escHtml(src)}" title="Case tracker" allow="geolocation; camera"></iframe></body></html>`);
 }));
 // admins / managers opening the rep app: the reps they can view it as
 app.get("/api/rep-list", wrap(auth), wrap(async (req, res) => { if (req.user.role === "rep") return res.json({ reps: [] }); const { rows } = await q("select id, name from users where role = 'rep' and active order by name"); res.json({ reps: rows }); }));

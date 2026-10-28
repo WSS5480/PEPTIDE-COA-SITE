@@ -1650,7 +1650,7 @@ async function settings(part = "site") {
     toast(on ? "Store locked with PIN" : "PIN turned off");
   };
   document.getElementById("sSave").onclick = async () => {
-    const v = (k) => document.getElementById("s-" + k);
+    const v = (k) => document.getElementById("s-" + k) || { value: Array.isArray(s[k]) ? s[k].join("\n") : (s[k] ?? ""), checked: !!s[k] }; // email fields live on the Email & approvals page: keep what's saved
     const body = {};
     ["brand", "tagline", "contact", "distributorOf", "brandUrl", "paymentInstructions", "priceNote", "shippingLabel", "shippingNote", "fedexAccount", "deliveryLabel", "deliveryNote", "orderEmail", "cooEmail"].forEach((k) => { body[k] = v(k).value; });
     ["storeOpen", "pricesRequireLogin", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn"].forEach((k) => { body[k] = v(k).checked; });
