@@ -111,9 +111,9 @@ function drawProducts() {
         <h3 class="pname">${esc(p.name)}</h3>
         <span class="pmeta">${[p.strength, purity ? `${purity} purity` : ""].filter(Boolean).map(esc).join(" · ")}</span>
         ${descHtml(p.description)}
-        ${price}${stock}
+        <div class="pbuy">${price}${stock}
         <p class="research">For laboratory research use only.</p>
-        <div class="pact">${buy}${r ? `<a class="btn" href="/lab-reports#${esc(rid(r))}" data-report="${r.id}" data-pid="${p.id}">Lab report</a>` : `<span class="stockline">No report yet</span>`}${docsFor(p).length ? `<button class="btn" type="button" data-docs="${p.id}">Documents (${docsFor(p).length})</button>` : ""}</div>
+        <div class="pact">${buy}${r ? `<a class="btn" href="/lab-reports#${esc(rid(r))}" data-report="${r.id}" data-pid="${p.id}">Lab report</a>` : `<span class="stockline">No report yet</span>`}${docsFor(p).length ? `<button class="btn" type="button" data-docs="${p.id}">Documents (${docsFor(p).length})</button>` : ""}</div></div>
       </div>
     </article>`;
   }).join("") : `<div class="card empty"><p><strong>No product matches.</strong> ${coaOnly ? "You're showing only products with a lab report. Untick it to see everything." : "Try another name or size."}</p></div>`;

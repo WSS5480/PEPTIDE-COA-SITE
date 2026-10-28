@@ -2118,13 +2118,13 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
   }
   // One-time: give every product with a blank description the standard research description (seed/descriptions.json).
   // v2 (makeup line + benefit bullets) replaces the v1 text on every product that has standard text on file.
-  const { rows: [descDone] } = await q("select 1 from settings where key = 'descriptionsV2'");
+  const { rows: [descDone] } = await q("select 1 from settings where key = 'descriptionsV3'");
   if (!descDone) {
     const { rows: all } = await q("select id, name, strength from products");
     let n = 0;
     for (const p of all) { const d = descriptionFor(p.name, p.strength); if (d) { await q("update products set description = $1 where id = $2", [d, p.id]); n++; } }
-    console.log(`Descriptions v2: set ${n} of ${all.length} products`);
-    await q("insert into settings(key, value) values ('descriptionsV2', 'true') on conflict (key) do nothing");
+    console.log(`Descriptions v3: set ${n} of ${all.length} products`);
+    await q("insert into settings(key, value) values ('descriptionsV3', 'true') on conflict (key) do nothing");
   }
   // SITE_PIN on the host sets the shared store PIN. It's applied once per new value, so a PIN
   // changed later in admin isn't overwritten on restart. It doesn't turn the lock on or off.
