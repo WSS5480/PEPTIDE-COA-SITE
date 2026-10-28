@@ -127,8 +127,10 @@ async function dashboard() {
       <div class="kpi" data-go="orders:paid"><dt>Paid, to ship</dt><dd>${b.paid || 0}</dd></div>
       <div class="kpi" data-go="orders:shipped"><dt>Shipped</dt><dd>${b.shipped || 0}</dd></div>
       <div class="kpi"><dt>Paid this month</dt><dd>${money(s.month.paid_cents)}</dd></div>
+      ${s.stockValue ? `<div class="kpi" data-nav="inventory"><dt>Inventory at cost</dt><dd>${money(s.stockValue.cents)}</dd></div>` : ""}
     </dl>
     <div id="linkCheck"></div>
+    ${s.count && countDue(s.count.lastAt, s.count.dueDays) ? `<div class="panel"><strong>Weekly inventory count is due.</strong><span class="muted">${s.count.lastAt ? `Last count ${when(s.count.lastAt)}, ${agoText(s.count.lastAt)}.` : "No physical count has been posted yet."} Count the shelf, type the numbers in, post — differences are corrected and logged.</span><div><button class="btn" data-nav="inventory:count">Open count sheet</button></div></div>` : ""}
     ${s.unpriced ? `<div class="panel"><strong>${s.unpriced} product${s.unpriced === 1 ? " has" : "s have"} no price.</strong><span class="muted">They show "Ask for price" and can't be added to the cart.</span><div><button class="btn" data-nav="products">Set prices</button></div></div>` : ""}
     ${s.lowStock.length ? `<div class="panel"><h2>Low stock</h2><div class="tblwrap"><table class="tbl"><tr><th>Product</th><th class="num">Left</th><th class="num">Reorder at</th></tr>${s.lowStock.map((p) => `<tr><td>${esc(p.name)} ${esc(p.strength)}${p.manufacturer ? ` · ${esc(p.manufacturer)}` : ""}</td><td class="num">${p.stock}</td><td class="num">${p.reorder_at}</td></tr>`).join("")}</table></div><div><button class="btn" data-nav="inventory">Open inventory</button></div></div>` : ""}
     <div class="panel"><h2>How orders flow</h2><p class="muted">New → Confirmed (you've sent the total and payment info) → Paid → Shipped (add carrier and tracking) or Delivered. Orders paid by card through Stripe arrive already <em>paid</em>. Cancelling puts the stock back. Every order is also emailed to the address under Site settings → Order emails.</p></div>`;
@@ -338,7 +340,7 @@ async function neworder() {
 async function customers() {
   pane().innerHTML = `<header><h1>${isRep() ? "My customers" : "Customers"}</h1>${isOwner() || isRep() ? `<button class="btn solid" id="addC">Add customer</button>` : ""}</header>
     ${isRep() ? `<p class="muted">Customers assigned to you. Orders they place (or you place for them) earn your commission. Ask the office to give them a PIN or special pricing.</p>` : `<p class="muted">Give a customer their own PIN to let them into the site. Their PIN works only for them: it unlocks the store and signs them into their account. Changing or revoking it, or turning the account off, ends their access right away. Turn the lock on under Site settings → Site PIN.</p>
-    <p class="muted"><strong>Pricing:</strong> a customer with a markup pays our cost plus that percent on every product that has a cost (products without a cost stay at the store price). They see their prices as soon as they sign in; sales reps see them when they place that customer's order. "Store prices" = the normal Products &amp; prices list.</p>`}
+    <p class="muted"><strong>Markup:</strong> a customer with a markup pays our cost plus that percent on every product that has a cost (products without a cost stay at the store price). They see their prices as soon as they sign in; sales reps see them when they place that customer's order. "Store prices" = the normal Products &amp; prices list.</p>`}
     <div id="cNew"></div><div id="pinShow"></div><div id="pinReq"></div>
     <div class="filters"><input id="cq" type="search" placeholder="Search customers"></div>
     <div class="tblwrap" id="ct"><p class="muted">Loading…</p></div>`;
@@ -364,7 +366,7 @@ async function customers() {
   };
   const load = async () => {
     const { customers: list } = await api("/customers?q=" + encodeURIComponent(term));
-    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Pricing</th><th>Sales rep</th><th>Site PIN</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th><th></th></tr>
+    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Markup</th><th>Sales rep</th><th>Site PIN</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th><th></th></tr>
       ${list.map((c) => `<tr data-cid="${c.id}" data-cname="${esc(c.name || c.email)}"><td>${esc(c.name)}</td><td>${c.email ? `<a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a>` : `<a href="#" data-cust-orders="${esc(c.name)}" class="muted">no email</a>`}</td><td>${esc(c.phone)}</td>
         <td>${markupCell(c)}</td><td>${repCell(c)}</td><td>${pinCell(c)}</td><td>${when(c.created_at)}</td>
         <td class="num">${c.orders}</td><td class="num">${money(c.spent_cents)}</td><td>${c.last_order ? when(c.last_order) : ""}</td>
@@ -421,7 +423,7 @@ async function customers() {
       ${open.map((r) => `<tr data-rq="${r.id}"><td>${when(r.created_at)}</td><td>${esc(r.name)}</td><td>${esc(r.company)}</td><td>${r.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : ""}</td><td>${r.phone ? `<a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>` : ""}</td><td class="muted">${esc(r.note)}</td>
         ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn solid" data-rq-ok>Approve &amp; give PIN</button><button class="btn" data-rq-no>Dismiss</button></td>` : ""}</tr>`).join("")}</table></div>
       ${isOwner() ? `<div class="row2" style="align-items:end"><div class="field" style="max-width:16rem"><label class="eyebrow" for="rq-rep">Sales rep for approved requests</label><select id="rq-rep"><option value="">— none —</option>${activeReps.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join("")}</select></div>
-        <div class="field" style="max-width:14rem"><label class="eyebrow" for="rq-mk">Pricing</label><select id="rq-mk"><option value="">Store prices</option>${MK.map((m) => `<option value="${m}">+${m}%</option>`).join("")}</select></div></div>` : ""}</div>` : "";
+        <div class="field" style="max-width:14rem"><label class="eyebrow" for="rq-mk">Markup</label><select id="rq-mk"><option value="">Store prices</option>${MK.map((m) => `<option value="${m}">+${m}%</option>`).join("")}</select></div></div>` : ""}</div>` : "";
     document.getElementById("pinReq").onclick = async (e) => {
       const tr = e.target.closest("tr[data-rq]"); if (!tr) return;
       const r = open.find((x) => String(x.id) === tr.dataset.rq);
@@ -442,7 +444,7 @@ async function customers() {
       <p class="muted" style="margin:-.3rem 0 0">Email is only needed for order confirmations and password sign-in; a PIN works without one.</p>
       <div class="grid2">${f("nc-1", "Street address")}${f("nc-2", "Apt, suite")}${f("nc-c", "City")}${f("nc-s", "State")}${f("nc-z", "ZIP")}</div>
       <div class="grid2"${isRep() ? " hidden" : ""}><div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-rep">Sales rep (for commission)</label><select id="nc-rep"><option value="">— none —</option>${activeReps.map((r) => `<option value="${r.id}">${esc(r.name)} · ${r.commission_rate}%</option>`).join("")}</select></div>
-      <div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-mk">Pricing (markup over our cost)</label><div class="row2" style="flex-wrap:nowrap"><select id="nc-mk" style="flex:1"><option value="">Store prices</option>${MK.map((m) => `<option value="${m}">+${m}%</option>`).join("")}<option value="custom">Custom…</option></select><input id="nc-mkc" inputmode="decimal" placeholder="%" style="width:5rem" hidden></div></div></div>
+      <div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-mk">Markup over our cost</label><div class="row2" style="flex-wrap:nowrap"><select id="nc-mk" style="flex:1"><option value="">Store prices</option>${MK.map((m) => `<option value="${m}">+${m}%</option>`).join("")}<option value="custom">Custom…</option></select><input id="nc-mkc" inputmode="decimal" placeholder="%" style="width:5rem" hidden></div></div></div>
       <label class="chk"${isRep() ? " hidden" : ""}><input type="checkbox" id="nc-pin"${isRep() ? "" : " checked"}> Give them a PIN now</label>
       <div class="row2"><button class="btn solid" type="button" id="ncSave">Add customer</button><button class="btn" type="button" id="ncCancel">Cancel</button></div></div>`;
     document.getElementById("ncCancel").onclick = () => { box.innerHTML = ""; };
@@ -758,7 +760,19 @@ async function products() {
 
 /* ---------- inventory ---------- */
 let invFilter = "all";
+let invTab = "stock"; // stock | count | counts | log
+let openCountId = null; // a reconciliation to open when the Reconciliations tab draws
+const INV_TABS = [["stock", "Stock"], ["count", "Count sheet"], ["counts", "Reconciliations"], ["log", "Activity log"]];
+const invTabs = () => `<div class="seg" style="margin-bottom:1rem">${INV_TABS.map(([k, l]) => `<button type="button" data-invtab="${k}"${invTab === k ? ' class="on"' : ""}>${l}</button>`).join("")}</div>`;
+const daysAgo = (iso) => Math.floor((Date.now() - new Date(iso)) / 864e5);
+const agoText = (iso) => { const d = daysAgo(iso); return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`; };
+const countDue = (lastAt, dueDays) => !lastAt || daysAgo(lastAt) >= (dueDays || 7);
+const signedMoney = (c) => (c === null || c === undefined ? "" : (c < 0 ? "−" : c > 0 ? "+" : "") + money(Math.abs(c)));
+const refCell = (m) => !m.ref ? "" : m.reason.startsWith("Order") ? `<a href="#" data-orderq="${esc(m.ref)}">${esc(m.ref)}</a>` : m.count_id ? `<a href="#" data-cntopen="${m.count_id}">${esc(m.ref)}</a>` : esc(m.ref);
 async function inventory() {
+  if (invTab === "count") return invCountSheet();
+  if (invTab === "counts") return invCounts();
+  if (invTab === "log") return invLog();
   const { items } = await api("/inventory");
   const own = isOwner();
   const label = (p) => `${p.name} ${p.strength}`.trim();
@@ -767,14 +781,18 @@ async function inventory() {
   const status = (p) => p.stock === null ? "untracked" : p.stock <= 0 ? "out" : p.stock <= (p.reorder_point ?? 5) ? "low" : "ok";
   const pillFor = { ok: '<span class="pill st-shipped">In stock</span>', low: '<span class="pill st-new">Low</span>', out: '<span class="pill st-cancelled">Out</span>', untracked: '<span class="pill">Not tracked</span>' };
   const tracked = items.filter((p) => p.stock !== null);
-  const value = tracked.reduce((t, p) => t + (p.cost_cents ? p.cost_cents * Math.max(0, p.stock) : 0), 0);
+  const value = tracked.reduce((t, p) => t + (p.cost_cents ? p.cost_cents * Math.max(0, p.stock + p.committed) : 0), 0);
   const counts = { low: items.filter((p) => status(p) === "low").length, out: items.filter((p) => status(p) === "out").length, untracked: items.filter((p) => p.stock === null).length, expiring: items.filter((p) => soon(p.next_expiry)).length };
   const weeksLeft = (p) => (p.stock > 0 && p.sold_30d > 0 ? Math.round((p.stock / p.sold_30d) * 30 / 7) : null);
-  pane().innerHTML = `<header><h1>Inventory</h1><div class="row2"><button class="btn solid" id="rcvBtn">Receive shipment</button><a class="btn" href="/api/admin/inventory.csv" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></div></header>
+  const lastAt = stats && stats.count ? stats.count.lastAt : null, dueDays = stats && stats.count ? stats.count.dueDays : 7;
+  pane().innerHTML = `<header><h1>Inventory</h1><div class="row2"><button class="btn solid" id="rcvBtn">Receive shipment</button><button class="btn" type="button" data-invtab="count">Count sheet</button><a class="btn" href="/api/admin/inventory.csv" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></div></header>
+    ${invTabs()}
+    ${countDue(lastAt, dueDays) ? `<div class="panel" style="border-color:var(--blue)"><strong>Weekly count is due.</strong><span class="muted">${lastAt ? `Last count ${when(lastAt)}, ${agoText(lastAt)}.` : "No physical count has been posted yet — do the first one to set what's on the shelf."}</span><div><button class="btn solid" type="button" data-invtab="count">Open count sheet</button></div></div>` : ""}
     <dl class="kpis">
       <div class="kpi"><dt>Products tracked</dt><dd>${tracked.length}</dd></div>
-      <div class="kpi"><dt>Units available</dt><dd>${tracked.reduce((t, p) => t + Math.max(0, p.stock), 0)}</dd></div>
-      ${own ? `<div class="kpi"><dt>Stock value at cost</dt><dd>${money(value)}</dd></div>` : ""}
+      <div class="kpi"><dt>Units on shelf</dt><dd>${tracked.reduce((t, p) => t + Math.max(0, p.stock + p.committed), 0)}</dd></div>
+      ${own ? `<div class="kpi"><dt>On-shelf value at cost</dt><dd>${money(value)}</dd></div>` : ""}
+      <div class="kpi" data-invtab="counts"><dt>Last count</dt><dd style="font-size:1rem">${lastAt ? `${agoText(lastAt)}` : "never"}</dd></div>
       <div class="kpi" data-invf="low"><dt>Low stock</dt><dd>${counts.low}</dd></div>
       <div class="kpi" data-invf="out"><dt>Out of stock</dt><dd>${counts.out}</dd></div>
       <div class="kpi" data-invf="expiring"><dt>Lots expiring ≤ 60 days</dt><dd>${counts.expiring}</dd></div>
@@ -782,7 +800,7 @@ async function inventory() {
     <div id="invPanel"></div>
     <div class="filters"><input id="invQ" type="search" placeholder="Search name, maker or code">
       ${[["all", "All"], ["low", "Low"], ["out", "Out"], ["expiring", "Expiring"], ["untracked", "Not tracked"]].map(([k, l]) => `<button class="chip${invFilter === k ? " on" : ""}" type="button" data-invf="${k}">${l}${counts[k] ? ` (${counts[k]})` : ""}</button>`).join("")}</div>
-    <p class="muted">Available is what customers can still buy. Stock comes off when an order is placed and goes back if it's cancelled; "In orders" is stock held by orders not yet shipped, so On shelf = Available + In orders. Every change is kept in each product's History.</p>
+    <p class="muted">Available is what customers can still buy. Stock comes off when an order is placed and goes back if it's cancelled; "In orders" is stock held by orders not yet shipped, so On shelf = Available + In orders. Value = on shelf × cost each. Every change is kept in each product's History and in the Activity log; the weekly count goes on the Count sheet.</p>
     <div class="tblwrap"><table class="tbl compact" id="invT"><thead><tr><th>Product</th><th class="num">Available</th><th class="num">In orders</th><th class="num">On shelf</th><th class="num">Sold 30d</th><th class="num">Reorder at</th>${own ? '<th class="num">Cost each</th><th class="num">Value</th>' : ""}<th>Next expiry</th><th>Status</th><th></th></tr></thead><tbody id="invB"></tbody></table></div>`;
   const draw = () => {
     const term = (document.getElementById("invQ").value || "").toLowerCase();
@@ -790,10 +808,10 @@ async function inventory() {
       && (!term || [p.name, p.strength, p.manufacturer].join(" ").toLowerCase().includes(term)));
     document.getElementById("invB").innerHTML = list.length ? list.map((p) => `<tr data-iid="${p.id}">
       <td class="namecol" title="${esc(label(p))}"><strong>${esc(label(p))}</strong>${sub(p) ? `<div class="muted" style="font-size:.78rem">${esc(sub(p))}</div>` : ""}</td>
-      <td class="num"><strong>${p.stock ?? "—"}</strong></td><td class="num">${p.committed || ""}</td><td class="num">${p.stock === null ? "" : p.stock + p.committed}</td>
+      <td class="num"><strong>${p.stock ?? "—"}</strong>${p.stock < 0 ? '<div class="muted" style="font-size:.72rem" title="Open orders need more than what\'s on the shelf">short for orders</div>' : ""}</td><td class="num">${p.committed || ""}</td><td class="num">${p.stock === null ? "" : p.stock + p.committed}</td>
       <td class="num">${p.sold_30d || ""}${weeksLeft(p) !== null ? `<div class="muted" style="font-size:.72rem">~${weeksLeft(p)} wk left</div>` : ""}</td>
       <td class="num">${own ? `<input data-reorder value="${p.reorder_point ?? ""}" placeholder="5" inputmode="numeric" style="width:4.2rem;text-align:right">` : (p.reorder_point ?? 5)}</td>
-      ${own ? `<td class="num"><input data-cost value="${dollars(p.cost_cents)}" placeholder="—" inputmode="decimal" style="width:5.5rem;text-align:right"></td><td class="num">${p.cost_cents !== null && p.stock !== null ? money(p.cost_cents * Math.max(0, p.stock)) : ""}</td>` : ""}
+      ${own ? `<td class="num"><input data-cost value="${dollars(p.cost_cents)}" placeholder="—" inputmode="decimal" style="width:5.5rem;text-align:right"></td><td class="num">${p.cost_cents !== null && p.stock !== null ? money(p.cost_cents * Math.max(0, p.stock + p.committed)) : ""}</td>` : ""}
       <td>${p.next_expiry ? `<span${soon(p.next_expiry) ? ' class="pill st-new"' : ""}>${esc(String(p.next_expiry).slice(0, 10))}</span>` : ""}</td>
       <td>${pillFor[status(p)]}</td>
       <td><div class="acts"><button class="btn" data-act="receive">Receive</button>${p.stock === null ? (own ? '<button class="btn" data-act="track">Track</button>' : "") : '<button class="btn" data-act="adjust">Adjust</button>'}<button class="btn" data-act="history">History</button></div></td></tr>`).join("")
@@ -842,7 +860,7 @@ async function inventory() {
     panel.innerHTML = `<div class="panel"><div class="row2" style="justify-content:space-between;align-items:center"><h2>History: ${esc(label(p))}</h2><button class="btn" type="button" data-pclose>Close</button></div>
       ${moves.length ? `<div class="tblwrap" style="max-height:26rem;overflow:auto"><table class="tbl"><tr><th>When</th><th>What</th><th class="num">Change</th><th class="num">Balance</th><th>Lot</th><th>Expires</th>${own ? '<th class="num">Cost each</th>' : ""}<th>Ref</th><th>By</th><th>Note</th></tr>
       ${moves.map((m) => `<tr><td>${when(m.at)}</td><td>${esc(m.reason)}${m.supplier ? `<div class="muted" style="font-size:.75rem">${esc(m.supplier)}</div>` : ""}</td><td class="num" style="color:${m.change > 0 ? "var(--pass)" : m.change < 0 ? "#9b1c1c" : "inherit"}">${m.change > 0 ? "+" : ""}${m.change}</td><td class="num">${m.balance ?? ""}</td>
-        <td class="mono">${esc(m.lot)}</td><td>${m.expires ? esc(String(m.expires).slice(0, 10)) : ""}</td>${own ? `<td class="num">${m.cost_cents !== null ? money(m.cost_cents) : ""}</td>` : ""}<td class="mono">${m.ref ? (m.reason.startsWith("Order") ? `<a href="#" data-orderq="${esc(m.ref)}">${esc(m.ref)}</a>` : esc(m.ref)) : ""}</td><td>${esc(m.who)}</td><td>${esc(m.note)}</td></tr>`).join("")}</table></div>`
+        <td class="mono">${esc(m.lot)}</td><td>${m.expires ? esc(String(m.expires).slice(0, 10)) : ""}</td>${own ? `<td class="num">${m.cost_cents !== null ? money(m.cost_cents) : ""}</td>` : ""}<td class="mono">${refCell(m)}</td><td>${esc(m.who)}</td><td>${esc(m.note)}</td></tr>`).join("")}</table></div>`
       : `<p class="muted">No stock changes recorded yet.</p>`}</div>`;
     panel.querySelectorAll("[data-orderq]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); oFilter = { status: "", q: a.dataset.orderq }; go("orders"); }));
     panel.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -868,6 +886,124 @@ async function inventory() {
     if (e.target.matches("[data-reorder]")) p.reorder_point = e.target.value.trim() === "" ? null : +e.target.value;
     if (e.target.matches("[data-cost]")) p.cost_cents = e.target.value.trim() === "" ? null : Math.round(parseFloat(e.target.value) * 100);
   });
+}
+
+/* ---------- inventory: the weekly count sheet, reconciliations and the activity log ---------- */
+async function invCountSheet() {
+  const { items, lastCount, dueDays, showCost } = await api("/inventory/count-sheet");
+  const label = (p) => `${p.name} ${p.strength}`.trim();
+  const lastAt = lastCount ? lastCount.at : null;
+  pane().innerHTML = `<header><h1>Inventory</h1></header>${invTabs()}
+    <div class="panel" style="border-color:var(--blue)">
+      <h2>Count sheet</h2>
+      <p class="muted">Count what's physically on the shelf and type it in; leave a row blank to skip it. <strong>On shelf</strong> is what the system expects (available + units held in unshipped orders). Posting corrects every product to what you counted, logs each difference, and files the count under Reconciliations. Do this weekly.
+        ${lastAt ? ` Last count ${when(lastAt)} (${agoText(lastAt)}) by ${esc(lastCount.who)}: ${lastCount.lines} products, ${lastCount.varied} difference${lastCount.varied === 1 ? "" : "s"}.` : " No count has been posted yet, so this first one sets the on-shelf amounts."}
+        ${countDue(lastAt, dueDays) ? " <strong>A count is due.</strong>" : ""}</p>
+      <div class="row2" style="align-items:center"><input id="csQ" type="search" placeholder="Filter products" style="height:2.4rem;padding:0 .8rem;border:1px solid var(--line-strong);border-radius:8px;max-width:18rem"><button class="btn" type="button" id="csFill" title="Puts the expected on-shelf number in every blank row so you only change what's different">Prefill with on shelf</button><button class="btn" type="button" id="csClear">Clear</button><span class="muted" id="csSum"></span></div>
+      <div class="tblwrap" style="max-height:62vh"><table class="tbl compact" id="csT"><thead><tr><th>Product</th><th class="num">Available</th><th class="num">In orders</th><th class="num">On shelf</th><th>Counted</th><th class="num">Difference</th>${showCost ? '<th class="num">Cost each</th><th class="num">Difference at cost</th>' : ""}<th>Last counted</th></tr></thead><tbody>
+      ${items.map((p) => `<tr data-cid="${p.id}" data-exp="${p.on_shelf ?? ""}" data-cost="${p.cost_cents ?? ""}" data-txt="${esc([p.name, p.strength, p.manufacturer].join(" ").toLowerCase())}">
+        <td class="namecol" title="${esc(label(p))}"><strong>${esc(label(p))}</strong>${p.manufacturer || !p.active ? `<div class="muted" style="font-size:.78rem">${esc([p.manufacturer, p.active ? "" : "hidden on store"].filter(Boolean).join(" · "))}</div>` : ""}</td>
+        <td class="num">${p.stock ?? '<span class="muted">not tracked</span>'}${p.stock < 0 ? '<div class="muted" style="font-size:.72rem">short for orders</div>' : ""}</td><td class="num">${p.committed || ""}</td><td class="num"><strong>${p.on_shelf ?? "—"}</strong></td>
+        <td><input data-counted inputmode="numeric" autocomplete="off" style="width:5.5rem;text-align:right" aria-label="Counted: ${esc(label(p))}"></td><td class="num" data-diff></td>
+        ${showCost ? `<td class="num">${money(p.cost_cents)}</td><td class="num" data-diffval></td>` : ""}<td class="muted" style="font-size:.8rem;white-space:nowrap">${p.last_counted ? when(p.last_counted) : "never"}</td></tr>`).join("")}</tbody></table></div>
+      <div class="grid2" style="margin-top:1rem"><div class="field"><label class="eyebrow" for="csNote">Note (optional)</label><input id="csNote" placeholder="e.g. weekly count"></div></div>
+      <div class="row2" style="align-items:center"><button class="btn solid" type="button" id="csPost">Post count</button><span class="muted">Only rows with a number are counted. Blank rows are left as they are.</span></div>
+    </div>`;
+  const rows = () => [...document.querySelectorAll("#csT tr[data-cid]")];
+  const lineOf = (tr) => { const v = tr.querySelector("[data-counted]").value.trim(); if (!/^\d+$/.test(v)) return null; const counted = +v, exp = tr.dataset.exp === "" ? null : +tr.dataset.exp, cost = tr.dataset.cost === "" ? null : +tr.dataset.cost; const diff = exp === null ? null : counted - exp; return { id: +tr.dataset.cid, counted, exp, diff, val: diff !== null && cost !== null ? diff * cost : null }; };
+  const paint = () => {
+    let n = 0, varied = 0, over = 0, short = 0, val = 0;
+    rows().forEach((tr) => {
+      const l = lineOf(tr), d = tr.querySelector("[data-diff]"), dv = tr.querySelector("[data-diffval]");
+      tr.classList.toggle("dirty", !!l && !!l.diff);
+      if (!l) { d.textContent = ""; if (dv) dv.textContent = ""; return; }
+      n++;
+      if (l.diff === null) { d.innerHTML = '<span class="muted">sets on shelf</span>'; if (dv) dv.textContent = ""; return; }
+      d.innerHTML = l.diff === 0 ? '<span class="muted">0</span>' : `<strong style="color:${l.diff > 0 ? "var(--pass)" : "#9b1c1c"}">${l.diff > 0 ? "+" : "−"}${Math.abs(l.diff)}</strong>`;
+      if (dv) dv.textContent = l.val === null || !l.diff ? "" : signedMoney(l.val);
+      if (l.diff) { varied++; if (l.diff > 0) over += l.diff; else short -= l.diff; val += l.val || 0; }
+    });
+    document.getElementById("csSum").textContent = n ? `${n} of ${rows().length} counted · ${varied} difference${varied === 1 ? "" : "s"}${varied ? ` (+${over} / −${short} units${showCost ? `, ${signedMoney(val)} at cost` : ""})` : ""}` : `${rows().length} products on the sheet`;
+  };
+  paint();
+  const tbl = document.getElementById("csT");
+  tbl.addEventListener("input", (e) => { if (e.target.matches("[data-counted]")) paint(); });
+  tbl.addEventListener("keydown", (e) => { // Enter moves down the sheet like a spreadsheet
+    if (e.key !== "Enter" || !e.target.matches("[data-counted]")) return;
+    e.preventDefault();
+    const inputs = rows().filter((tr) => !tr.hidden).map((tr) => tr.querySelector("[data-counted]")); const i = inputs.indexOf(e.target);
+    if (i >= 0 && inputs[i + 1]) { inputs[i + 1].focus(); inputs[i + 1].select(); }
+  });
+  document.getElementById("csQ").oninput = (e) => { const t = e.target.value.toLowerCase(); rows().forEach((tr) => { tr.hidden = t && !tr.dataset.txt.includes(t); }); };
+  document.getElementById("csFill").onclick = () => { rows().forEach((tr) => { const i = tr.querySelector("[data-counted]"); if (!i.value.trim() && tr.dataset.exp !== "") i.value = tr.dataset.exp; }); paneDirty = true; paint(); };
+  document.getElementById("csClear").onclick = () => { if (rows().some((tr) => tr.querySelector("[data-counted]").value.trim()) && !confirm("Clear everything you typed on the sheet?")) return; rows().forEach((tr) => { tr.querySelector("[data-counted]").value = ""; }); paint(); };
+  document.getElementById("csPost").onclick = async () => {
+    const bad = rows().find((tr) => { const v = tr.querySelector("[data-counted]").value.trim(); return v && !/^\d+$/.test(v); });
+    if (bad) { bad.querySelector("[data-counted]").focus(); return toast("Counts must be whole numbers (0 or more)"); }
+    const lines = rows().map(lineOf).filter(Boolean);
+    if (!lines.length) return toast("Type a count for at least one product");
+    const varied = lines.filter((l) => l.diff).length, opening = lines.filter((l) => l.diff === null).length;
+    if (!confirm(`Post this count? ${lines.length} product${lines.length === 1 ? "" : "s"} counted, ${varied} difference${varied === 1 ? "" : "s"}${opening ? `, ${opening} newly tracked` : ""}. Stock will be corrected to match what you counted.`)) return;
+    const r = await api("/inventory/counts", { method: "POST", body: { note: document.getElementById("csNote").value, lines: lines.map((l) => ({ productId: l.id, counted: l.counted })) } });
+    toast(`Count #${r.id} posted: ${r.varied} difference${r.varied === 1 ? "" : "s"}`);
+    paneDirty = false; invTab = "counts"; openCountId = r.id; go("inventory", null, { silent: true }); drawNav();
+  };
+}
+
+async function invCounts() {
+  const { counts, showCost, dueDays } = await api("/inventory/counts");
+  const lastAt = counts[0] ? counts[0].at : null;
+  pane().innerHTML = `<header><h1>Inventory</h1></header>${invTabs()}
+    <p class="muted">Every posted count sheet is a reconciliation: what the system expected on the shelf, what was counted, and the difference${showCost ? " with its value at cost" : ""}. ${lastAt ? `Last count ${when(lastAt)} (${agoText(lastAt)}).` : "No count posted yet."}${countDue(lastAt, dueDays) ? ' <strong>A weekly count is due.</strong>' : ""} <button class="btn" type="button" data-invtab="count" style="margin-left:.5rem">Open count sheet</button></p>
+    <div id="cntDetail"></div>
+    ${counts.length ? `<div class="tblwrap"><table class="tbl compact" id="cntT"><thead><tr><th>When</th><th>By</th><th class="num">Products counted</th><th class="num">Differences</th><th class="num">Units over</th><th class="num">Units short</th>${showCost ? '<th class="num">Net at cost</th>' : ""}<th>Note</th><th></th></tr></thead><tbody>
+      ${counts.map((c) => `<tr data-cnt="${c.id}"><td style="white-space:nowrap"><strong>Count #${c.id}</strong><div class="muted" style="font-size:.78rem">${when(c.at)}</div></td><td>${esc(c.who)}</td><td class="num">${c.lines}</td><td class="num">${c.varied ? `<strong>${c.varied}</strong>` : '<span class="muted">0</span>'}</td>
+        <td class="num" style="color:var(--pass)">${c.units_over ? "+" + c.units_over : ""}</td><td class="num" style="color:#9b1c1c">${c.units_short ? "−" + c.units_short : ""}</td>${showCost ? `<td class="num">${c.varied ? signedMoney(c.value_cents) : ""}</td>` : ""}<td>${esc(c.note)}</td>
+        <td><div class="acts"><button class="btn" type="button" data-cntview="${c.id}">View</button><a class="btn" href="/api/admin/inventory/counts/${c.id}.csv" style="display:inline-grid;place-items:center;text-decoration:none">CSV</a></div></td></tr>`).join("")}</tbody></table></div>`
+    : `<p class="muted">No counts yet. Open the count sheet, type what's on the shelf and post it — that becomes the first reconciliation.</p>`}`;
+  const detail = async (id) => {
+    const c = await api(`/inventory/counts/${id}`);
+    const varied = c.items.filter((l) => l.variance), same = c.items.filter((l) => l.variance === 0), opening = c.items.filter((l) => l.variance === null);
+    const line = (l) => `<tr><td class="namecol"><strong>${esc(l.name)} ${esc(l.strength)}</strong>${l.manufacturer ? `<div class="muted" style="font-size:.78rem">${esc(l.manufacturer)}</div>` : ""}</td><td class="num">${l.expected ?? '<span class="muted">not tracked</span>'}</td><td class="num"><strong>${l.counted}</strong></td>
+      <td class="num">${l.variance === null ? '<span class="muted">set</span>' : l.variance === 0 ? '<span class="muted">0</span>' : `<strong style="color:${l.variance > 0 ? "var(--pass)" : "#9b1c1c"}">${l.variance > 0 ? "+" : "−"}${Math.abs(l.variance)}</strong>`}</td>
+      ${c.showCost ? `<td class="num">${money(l.cost_cents)}</td><td class="num">${l.variance && l.cost_cents !== null ? signedMoney(l.variance * l.cost_cents) : ""}</td>` : ""}</tr>`;
+    document.getElementById("cntDetail").innerHTML = `<div class="panel" style="border-color:var(--blue)"><div class="row2" style="justify-content:space-between;align-items:center"><h2>Count #${c.id} · ${when(c.at)} · ${esc(c.who)}</h2><button class="btn" type="button" data-pclose>Close</button></div>
+      ${c.note ? `<p class="muted">${esc(c.note)}</p>` : ""}
+      <dl class="kpis"><div class="kpi"><dt>Products counted</dt><dd>${c.lines}</dd></div><div class="kpi"><dt>Differences</dt><dd>${c.varied}</dd></div><div class="kpi"><dt>Units over</dt><dd>${c.units_over ? "+" + c.units_over : 0}</dd></div><div class="kpi"><dt>Units short</dt><dd>${c.units_short ? "−" + c.units_short : 0}</dd></div>${c.showCost ? `<div class="kpi"><dt>Net at cost</dt><dd>${c.varied ? signedMoney(c.value_cents) : "$0.00"}</dd></div>` : ""}</dl>
+      <div class="tblwrap" style="max-height:50vh"><table class="tbl compact"><thead><tr><th>Product</th><th class="num">Expected on shelf</th><th class="num">Counted</th><th class="num">Difference</th>${c.showCost ? '<th class="num">Cost each</th><th class="num">Difference at cost</th>' : ""}</tr></thead><tbody>
+        ${varied.map(line).join("")}${opening.map(line).join("")}
+        ${same.length ? `<tr class="cntSameHead"><td colspan="${c.showCost ? 6 : 4}" class="muted">${same.length} product${same.length === 1 ? "" : "s"} matched exactly <button class="btn" type="button" id="cntSameBtn" style="margin-left:.5rem">Show</button></td></tr>${same.map((l) => line(l).replace("<tr>", '<tr class="cntSame" hidden>')).join("")}` : ""}
+        ${!c.items.length ? '<tr><td colspan="6" class="muted">Nothing on this count.</td></tr>' : ""}</tbody></table></div>
+      <div class="row2"><a class="btn" href="/api/admin/inventory/counts/${c.id}.csv" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></div></div>`;
+    const sb = document.getElementById("cntSameBtn"); if (sb) sb.onclick = () => { const hid = sb.textContent === "Show"; document.querySelectorAll("#cntDetail .cntSame").forEach((tr) => { tr.hidden = !hid; }); sb.textContent = hid ? "Hide" : "Show"; };
+    document.getElementById("cntDetail").scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  if (openCountId) { const id = openCountId; openCountId = null; detail(id); }
+  pane().onclick = (e) => {
+    const v = e.target.closest("[data-cntview]"); if (v) { detail(v.dataset.cntview); return; }
+    if (e.target.closest("[data-pclose]")) document.getElementById("cntDetail").innerHTML = "";
+  };
+}
+
+let logF = { reason: "", q: "", from: "", to: "" };
+async function invLog() {
+  const qs = new URLSearchParams(Object.entries(logF).filter(([, v]) => v)).toString();
+  const { moves, reasons, more, showCost } = await api("/inventory/log" + (qs ? "?" + qs : ""));
+  pane().innerHTML = `<header><h1>Inventory</h1><div class="row2"><a class="btn" href="/api/admin/inventory/log.csv${qs ? "?" + qs : ""}" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></div></header>${invTabs()}
+    <p class="muted">Every stock change on every product, newest first: orders taking stock, cancellations putting it back, shipments received, physical counts and adjustments. Balance = available after the change.</p>
+    <div class="filters" style="align-items:center"><input id="lgQ" type="search" placeholder="Product, order #, lot or person" value="${esc(logF.q)}"><select id="lgR"><option value="">All reasons</option>${reasons.map((r) => `<option${logF.reason === r ? " selected" : ""}>${esc(r)}</option>`).join("")}</select>
+      <label class="muted">From <input id="lgFrom" type="date" value="${esc(logF.from)}"></label><label class="muted">To <input id="lgTo" type="date" value="${esc(logF.to)}"></label><button class="btn" type="button" id="lgGo">Apply</button><button class="btn" type="button" id="lgReset">Reset</button></div>
+    ${moves.length ? `<div class="tblwrap"><table class="tbl compact"><thead><tr><th>When</th><th>Product</th><th>What</th><th class="num">Change</th><th class="num">Balance</th><th>Ref</th><th>Lot</th>${showCost ? '<th class="num">Cost each</th>' : ""}<th>By</th><th>Note</th></tr></thead><tbody>
+      ${moves.map((m) => `<tr><td style="white-space:nowrap">${when(m.at)}</td><td class="namecol"><strong>${esc(m.name)} ${esc(m.strength)}</strong>${m.manufacturer ? `<div class="muted" style="font-size:.78rem">${esc(m.manufacturer)}</div>` : ""}</td><td>${esc(m.reason)}${m.supplier ? `<div class="muted" style="font-size:.75rem">${esc(m.supplier)}</div>` : ""}</td>
+        <td class="num" style="color:${m.change > 0 ? "var(--pass)" : m.change < 0 ? "#9b1c1c" : "inherit"}"><strong>${m.change > 0 ? "+" : ""}${m.change}</strong></td><td class="num">${m.balance ?? ""}</td><td class="mono">${refCell(m)}</td><td class="mono">${esc(m.lot)}${m.expires ? `<div class="muted" style="font-size:.75rem">exp ${esc(String(m.expires).slice(0, 10))}</div>` : ""}</td>
+        ${showCost ? `<td class="num">${money(m.cost_cents)}</td>` : ""}<td>${esc(m.who)}</td><td>${esc(m.note)}</td></tr>`).join("")}</tbody></table></div>${more ? `<p class="muted">Showing the latest ${moves.length}. Narrow the dates or export the CSV for the rest.</p>` : ""}`
+    : `<p class="muted">No stock changes match.</p>`}`;
+  const apply = () => { logF = { reason: document.getElementById("lgR").value, q: document.getElementById("lgQ").value.trim(), from: document.getElementById("lgFrom").value, to: document.getElementById("lgTo").value }; invLog(); };
+  document.getElementById("lgGo").onclick = apply;
+  document.getElementById("lgQ").onkeydown = (e) => { if (e.key === "Enter") apply(); };
+  document.getElementById("lgR").onchange = apply;
+  document.getElementById("lgReset").onclick = () => { logF = { reason: "", q: "", from: "", to: "" }; invLog(); };
+  pane().querySelectorAll("[data-orderq]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); oFilter = { status: "", q: a.dataset.orderq }; go("orders"); }));
 }
 
 /* ---------- one peptide: its lab reports (COAs) and other documents ---------- */
@@ -1419,7 +1555,12 @@ function account() {
 
 /* ---------- clicks ---------- */
 document.addEventListener("click", (e) => {
-  const n = e.target.closest("[data-nav]"); if (n) { go(n.dataset.nav); return; }
+  const n = e.target.closest("[data-nav]"); if (n) { const [v, sub] = n.dataset.nav.split(":"); if (v === "inventory") invTab = sub || "stock"; go(v); return; }
+  const t = e.target.closest("[data-invtab]"); if (t) {
+    if (invTab === "count" && t.dataset.invtab !== "count" && paneDirty && !confirm("Leave the count sheet? The counts you typed won't be saved.")) return;
+    invTab = t.dataset.invtab; go("inventory", null, { silent: true }); return;
+  }
+  const co = e.target.closest("[data-cntopen]"); if (co) { e.preventDefault(); invTab = "counts"; openCountId = +co.dataset.cntopen; go("inventory", null, { silent: true }); return; }
   const k = e.target.closest("[data-go]"); if (k) { const [v, st] = k.dataset.go.split(":"); if (st) oFilter = { status: st, q: "" }; go(v); return; }
   const o = e.target.closest("[data-order]"); if (o) { go("orders", o.dataset.order); }
 });

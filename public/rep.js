@@ -92,7 +92,7 @@ async function customers(editId) {
     const t = ($("cq").value || "").toLowerCase();
     const rows = list.filter((c) => !t || [c.name, c.email, c.phone].join(" ").toLowerCase().includes(t));
     $("cList").innerHTML = rows.length ? rows.map((c) => `<div class="item" data-cid="${c.id}"><div class="top2"><span>${esc(c.name)}</span><span>${c.orders ? money(c.sales_cents) : ""}</span></div>
-      <small>${esc(c.email || "no email")}${c.phone ? " · " + esc(c.phone) : ""}${c.markup !== null && c.markup !== undefined ? ` · pricing cost +${Number(c.markup)}%` : ""}</small><small>${[a(c).city, a(c).state].filter(Boolean).join(", ")}${c.orders ? ` · ${c.orders} order${c.orders === 1 ? "" : "s"} · last ${when(c.last_order)}` : " · no orders yet"}${c.active ? "" : " · account off"}</small></div>`).join("")
+      <small>${esc(c.email || "no email")}${c.phone ? " · " + esc(c.phone) : ""}${c.markup !== null && c.markup !== undefined ? ` · markup +${Number(c.markup)}% over cost` : ""}</small><small>${[a(c).city, a(c).state].filter(Boolean).join(", ")}${c.orders ? ` · ${c.orders} order${c.orders === 1 ? "" : "s"} · last ${when(c.last_order)}` : " · no orders yet"}${c.active ? "" : " · account off"}</small></div>`).join("")
       : `<p class="muted">${list.length ? "No customer matches." : "No customers yet. Add your first one."}</p>`;
   };
   draw(); $("cq").oninput = draw;

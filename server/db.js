@@ -178,6 +178,29 @@ create table if not exists stock_moves (
 );
 create index if not exists stock_moves_product_idx on stock_moves(product_id, at desc);
 create index if not exists stock_moves_expiry_idx on stock_moves(expires) where expires is not null;
+-- physical counts (the weekly reconciliation): one row per posted count sheet, one line per product counted
+create table if not exists stock_counts (
+  id serial primary key,
+  at timestamptz not null default now(),
+  who text not null default '',
+  note text not null default '',
+  lines int not null default 0,
+  varied int not null default 0,
+  units_over int not null default 0,
+  units_short int not null default 0,
+  value_cents int not null default 0
+);
+create table if not exists stock_count_lines (
+  id serial primary key,
+  count_id int not null references stock_counts(id) on delete cascade,
+  product_id int not null references products(id) on delete cascade,
+  expected int,
+  counted int not null,
+  variance int,
+  cost_cents int
+);
+create index if not exists stock_count_lines_idx on stock_count_lines(count_id);
+alter table stock_moves add column if not exists count_id int;
 alter table products add column if not exists manufacturer text not null default '';
 alter table products add column if not exists show_code boolean not null default false;
 alter table orders add column if not exists customer_id int references customers(id) on delete set null;
@@ -241,6 +264,7 @@ drop trigger if exists t_bump on reports; create trigger t_bump after insert or 
 drop trigger if exists t_bump on documents; create trigger t_bump after insert or update or delete on documents for each statement execute function bump_app_version();
 drop trigger if exists t_bump on shipping_methods; create trigger t_bump after insert or update or delete on shipping_methods for each statement execute function bump_app_version();
 drop trigger if exists t_bump on stock_moves; create trigger t_bump after insert or update or delete on stock_moves for each statement execute function bump_app_version();
+drop trigger if exists t_bump on stock_counts; create trigger t_bump after insert or update or delete on stock_counts for each statement execute function bump_app_version();
 drop trigger if exists t_bump on commission_payouts; create trigger t_bump after insert or update or delete on commission_payouts for each statement execute function bump_app_version();
 drop trigger if exists t_bump on users; create trigger t_bump after insert or update or delete on users for each statement execute function bump_app_version();
 drop trigger if exists t_bump on settings; create trigger t_bump after insert or update or delete on settings for each statement execute function bump_app_version();
