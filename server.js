@@ -610,7 +610,8 @@ async function notifyOrder(orderId, kind, extra = {}) {
 // it signs the office in without a customer account — store prices, cart open, name and email asked at checkout.
 const HOUSE_COOKIE = (v, age) => `hpin=${v}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${SECURE ? "; Secure" : ""}`;
 async function houseFrom(req) {
-  const t = parseCookies(req.headers.cookie).hpin;
+  const ck = parseCookies(req.headers.cookie), t = ck.hpin;
+  if (!t && ck.sid) { const { rows } = await q("select 1 from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [ck.sid]); if (rows.length) return true; } // signed in to the admin / rep app = the office
   if (!t) return false;
   const st = await pinState();
   return !!st.hash && sameStr(t, pinToken(st));
@@ -2058,6 +2059,8 @@ app.get(["/admin/tracker", "/rep/tracker"], wrap(async (req, res) => {
 <style>html,body{margin:0;height:100%;background:#0f1b33}iframe{position:fixed;inset:0;width:100%;height:100%;border:0}</style></head>
 <body><iframe src="${escHtml(src)}" title="Case tracker" allow="clipboard-write; geolocation; camera"></iframe></body></html>`);
 }));
+// admins / managers opening the rep app: the reps they can view it as
+app.get("/api/rep-list", wrap(auth), wrap(async (req, res) => { if (req.user.role === "rep") return res.json({ reps: [] }); const { rows } = await q("select id, name from users where role = 'rep' and active order by name"); res.json({ reps: rows }); }));
 app.get("/api/admin/hub", wrap(auth), (req, res) => res.json({ linked: !!(HUB_SECRET && TRACKER_URL), trackerUrl: TRACKER_URL, apps: appsOf(req.user) }));
 // combined commissions: the store's rows plus the tracker's month estimates
 admin.get("/hub/commissions", wrap(async (req, res) => {
@@ -2095,12 +2098,20 @@ app.use("/api/admin", admin);
 /* ---------- sales rep app (/rep): a rep sees and works only their own customers and orders ---------- */
 const rep = express.Router();
 rep.use(wrap(auth));
-rep.use((req, res, next) => (req.user.role === "rep" ? next() : bad(res, "This page is for sales reps. Use /admin.", 403)));
+// a rep works as themselves; an admin / manager can open the rep app "as" one of the reps (?as=<id>) to see and do exactly what that rep would
+rep.use(wrap(async (req, res, next) => {
+  if (req.user.role === "rep") { req.repId = req.user.id; return next(); }
+  const as = intOrNull(req.query.as);
+  const { rows: [r] } = as ? await q("select id, name, email, phone, commission_rate, role, apps from users where id = $1 and role = 'rep' and active", [as]) : { rows: [] };
+  if (!r) return bad(res, "Pick which rep to view as.", 403, { pick: true });
+  req.repId = r.id; req.asRep = r; next();
+}));
 rep.get("/me", wrap(async (req, res) => {
-  const { rows: [u] } = await q("select id, name, email, phone, commission_rate from users where id = $1", [req.user.id]);
-  const rows = await commissionRows({ repId: req.user.id });
+  const { rows: [u] } = await q("select id, name, email, phone, commission_rate from users where id = $1", [req.repId]);
+  if (req.asRep) u.viewing_as = true;
+  const rows = await commissionRows({ repId: req.repId });
   const month = rows.filter((r) => r.comm_status !== "void" && new Date(r.created_at) >= new Date(new Date().getFullYear(), new Date().getMonth(), 1));
-  const { rows: [c] } = await q("select count(*)::int n from customers where rep_id = $1", [req.user.id]);
+  const { rows: [c] } = await q("select count(*)::int n from customers where rep_id = $1", [req.repId]);
   const s = await getSettings();
   res.json({ rep: u, customers: c.n, totals: commTotals(rows), month: { orders: month.length, sales: month.reduce((t, r) => t + r.subtotal_cents - r.discount_cents, 0), commission: month.reduce((t, r) => t + r.commission_cents, 0) }, brand: s.brand });
 }));
@@ -2109,7 +2120,7 @@ rep.get("/customers", wrap(async (req, res) => {
       (select count(*)::int from orders o where o.customer_id = c.id and o.status <> 'cancelled') orders,
       coalesce((select sum(o.subtotal_cents - o.discount_cents) from orders o where o.customer_id = c.id and o.status <> 'cancelled'), 0)::int sales_cents,
       (select max(created_at) from orders o where o.customer_id = c.id) last_order
-    from customers c where c.rep_id = $1 order by c.name`, [req.user.id]);
+    from customers c where c.rep_id = $1 order by c.name`, [req.repId]);
   res.json({ customers: rows });
 }));
 rep.post("/customers", wrap(async (req, res) => {
@@ -2118,15 +2129,15 @@ rep.post("/customers", wrap(async (req, res) => {
   if (email && !isEmail(email)) return bad(res, "That email doesn't look right. Leave it blank if they don't have one.");
   const addr = cleanAddress(b.address);
   if (!addr.line1 || !addr.city || !addr.state || !addr.zip) return bad(res, "Enter the customer's full shipping address.");
-  if (email) { const { rows: [ex] } = await q("select id, rep_id from customers where lower(email) = $1", [email]); if (ex) return bad(res, ex.rep_id === req.user.id ? "That customer is already on your list." : "A customer with that email already exists. Ask the office to assign them to you."); }
+  if (email) { const { rows: [ex] } = await q("select id, rep_id from customers where lower(email) = $1", [email]); if (ex) return bad(res, ex.rep_id === req.repId ? "That customer is already on your list." : "A customer with that email already exists. Ask the office to assign them to you."); }
   const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash, rep_id) values ($1,$2,$3,$4,$5,$6) returning id",
-    [email || null, str(b.name, 120), str(b.phone, 40), JSON.stringify(addr), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), req.user.id]);
+    [email || null, str(b.name, 120), str(b.phone, 40), JSON.stringify(addr), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), req.repId]);
   if (email) await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
   res.json({ ok: true, id: c.id });
 }));
 rep.patch("/customers/:id", wrap(async (req, res) => {
   const b = req.body || {}, id = intOrNull(req.params.id);
-  const { rows: [c] } = await q("select id from customers where id = $1 and rep_id = $2", [id, req.user.id]);
+  const { rows: [c] } = await q("select id from customers where id = $1 and rep_id = $2", [id, req.repId]);
   if (!c) return bad(res, "Customer not found", 404);
   const addr = cleanAddress(b.address);
   await q("update customers set name = coalesce(nullif($1,''), name), phone = $2, address = $3 where id = $4", [str(b.name, 120), str(b.phone, 40), JSON.stringify(addr), id]);
@@ -2139,19 +2150,19 @@ rep.get("/catalog", wrap(async (req, res) => {
   ]);
   // priced for one of the rep's customers when asked (their markup); our cost never leaves the server
   let markup = null;
-  if (intOrNull(req.query.customerId)) { const { rows: [c] } = await q("select markup from customers where id = $1 and rep_id = $2", [intOrNull(req.query.customerId), req.user.id]); if (c && c.markup !== null) markup = Number(c.markup); }
+  if (intOrNull(req.query.customerId)) { const { rows: [c] } = await q("select markup from customers where id = $1 and rep_id = $2", [intOrNull(req.query.customerId), req.repId]); if (c && c.markup !== null) markup = Number(c.markup); }
   res.json({ products: products.map(({ cost_cents, ...p }) => ({ ...p, price_cents: priceFor({ ...p, cost_cents }, markup) })), fulfillment: fulfillmentOptions(s), cardPayments: !!(s.cardPayments && stripe), markup });
 }));
 rep.post("/orders", wrap(async (req, res) => {
   const b = req.body || {};
-  const { rows: [c] } = await q("select id, name, email, phone, address, markup from customers where id = $1 and rep_id = $2 and active", [intOrNull(b.customerId), req.user.id]);
+  const { rows: [c] } = await q("select id, name, email, phone, address, markup from customers where id = $1 and rep_id = $2 and active", [intOrNull(b.customerId), req.repId]);
   if (!c) return bad(res, "Pick one of your customers.");
   const items = (Array.isArray(b.items) ? b.items : []).filter((i) => intOrNull(i.qty) > 0).slice(0, 100);
   if (!items.length) return bad(res, "Add at least one product.");
   const a = c.address || {};
   if (!a.line1 || !a.city || !a.state || !a.zip) return bad(res, "This customer has no full shipping address yet. Edit the customer first.");
   try {
-    const r = await createOrder({ name: c.name, email: c.email || "", phone: c.phone, address: a, items, fulfillment: b.fulfillment, discountCode: b.discountCode, markup: c.markup !== null ? Number(c.markup) : null, note: b.note, customerId: c.id, repId: req.user.id,
+    const r = await createOrder({ name: c.name, email: c.email || "", phone: c.phone, address: a, items, fulfillment: b.fulfillment, discountCode: b.discountCode, markup: c.markup !== null ? Number(c.markup) : null, note: b.note, customerId: c.id, repId: req.repId,
       placedBy: `Rep: ${req.user.name || req.user.email}`, event: `Order placed by sales rep ${req.user.name || req.user.email}`, settings: await getSettings() });
     notifyOrder(r.id, "new").catch((e) => console.error("Order email failed:", e.message));
     // with card payments on, the rep gets a payment link to text or email to the customer
@@ -2163,12 +2174,12 @@ rep.post("/orders", wrap(async (req, res) => {
 rep.get("/orders", wrap(async (req, res) => {
   const { rows } = await q(`select o.number, o.status, o.name, o.total_cents, o.subtotal_cents, o.discount_cents, o.discount_code, o.shipping_cents, o.shipping_method, o.fulfillment, o.pay_method, o.paid_at, o.carrier, o.tracking, o.created_at, o.placed_by,
       (select json_agg(json_build_object('name', i.name, 'strength', i.strength, 'qty', i.qty, 'unit', i.unit_cents) order by i.id) from order_items i where i.order_id = o.id) items
-    from orders o where o.rep_id = $1 order by o.created_at desc limit 300`, [req.user.id]);
+    from orders o where o.rep_id = $1 order by o.created_at desc limit 300`, [req.repId]);
   res.json({ orders: rows });
 }));
 rep.get("/commissions", wrap(async (req, res) => {
-  const rows = await commissionRows({ repId: req.user.id, from: req.query.from, to: req.query.to });
-  const { rows: payouts } = await q("select amount_cents, orders, note, paid_at from commission_payouts where rep_id = $1 order by paid_at desc", [req.user.id]);
+  const rows = await commissionRows({ repId: req.repId, from: req.query.from, to: req.query.to });
+  const { rows: payouts } = await q("select amount_cents, orders, note, paid_at from commission_payouts where rep_id = $1 order by paid_at desc", [req.repId]);
   res.json({ rows: rows.map(({ rep_email, ...r }) => r), totals: commTotals(rows), payouts });
 }));
 app.use("/api/rep", rep);

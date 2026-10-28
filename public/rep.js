@@ -7,14 +7,16 @@ const when = (iso) => { if (!iso) return ""; const d = new Date(iso); return d.t
 const STATUS_TEXT = { new: "Received", confirmed: "Awaiting payment", paid: "Paid", shipped: "Shipped", delivered: "Delivered", cancelled: "Cancelled" };
 const pill = (s) => `<span class="pill st-${esc(s)}">${esc(STATUS_TEXT[s] || s)}</span>`;
 function toast(msg) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2000); }
-let me = null, view = "home", pick = null, paneDirty = false, HUB = { linked: false, apps: {} };
+let me = null, view = "home", pick = null, paneDirty = false, HUB = { linked: false, apps: {} }, REP_AS = localStorage.getItem("repAs") || "", REP_LIST = [];
 const FRAMED = (() => { try { return window.top !== window; } catch (e) { return true; } })();
 const HOSTABLE = !/iPhone|iPad|iPod/.test(navigator.userAgent) && /Chrome|Edg|Firefox/.test(navigator.userAgent);
 const $ = (id) => document.getElementById(id);
 
 async function api(path, opts = {}) {
   const method = opts.method || "GET", send = method !== "GET";
-  const res = await fetch("/api/rep" + path, { method, headers: send ? { "Content-Type": "application/json" } : {}, body: send ? JSON.stringify(opts.body || {}) : undefined, credentials: "same-origin" });
+  let url = "/api/rep" + path;
+  if (me && me.role !== "rep" && REP_AS) url += (url.includes("?") ? "&" : "?") + "as=" + encodeURIComponent(REP_AS); // admin viewing the app as a rep
+  const res = await fetch(url, { method, headers: send ? { "Content-Type": "application/json" } : {}, body: send ? JSON.stringify(opts.body || {}) : undefined, credentials: "same-origin" });
   if (res.status === 401) { me = null; drawLogin(); throw new Error("signed out"); }
   const j = await res.json().catch(() => ({}));
   if (!res.ok) { toast(j.error || "That didn't work"); throw new Error(j.error || "error"); }
@@ -48,17 +50,22 @@ function drawLogin(msg) {
     if (!res.ok) return drawLogin(j.error);
     if (pinMode) localStorage.setItem("loginName", $("ln").value);
     if (j.user.role !== "rep") { await fetch("/api/admin/logout", { method: "POST" }); return drawLogin("That login is for the admin, not the rep app. Go to /admin."); }
-    me = j.user; HUB = await api("/hub").catch(() => HUB); shell();
+    me = j.user; HUB = await fetch("/api/admin/hub", { credentials: "same-origin" }).then((r) => r.ok ? r.json() : HUB).catch(() => HUB); if (me.role !== "rep") await loadRepList(); shell();
   };
 }
 
 /* ---------- shell ---------- */
 const NAV = [["home", "Home"], ["customers", "Customers"], ["neworder", "New order"], ["orders", "Orders"], ["commissions", "Commissions"], ["account", "Account"]];
+async function loadRepList() {
+  try { const r = await fetch("/api/rep-list", { credentials: "same-origin" }).then((x) => x.json()); REP_LIST = r.reps || []; } catch (e) { REP_LIST = []; }
+  if (!REP_LIST.some((r) => String(r.id) === String(REP_AS))) REP_AS = REP_LIST.length ? String(REP_LIST[0].id) : "";
+}
 function shell() {
   app.innerHTML = `<div class="rtop"><div style="display:flex;align-items:center;gap:.6rem"><span class="logopill"><img src="/site-logo?v=2" alt="360 Peptides"></span><div class="logo"><span id="rbrand">Sales rep</span><small>${esc(me.name || me.email)} <span id="rver"></span></small></div></div>
-      <div class="tools">${HUB.linked && HUB.apps && HUB.apps.tracker ? `<a href="${FRAMED ? HUB.trackerUrl + "/" : (HOSTABLE ? "/rep/tracker?next=/" : "/rep/go/tracker?next=/")}"${FRAMED ? ' target="_top"' : ""} class="btn" style="display:inline-grid;place-items:center;text-decoration:none;color:inherit;height:2.2rem;padding:0 .7rem;font-size:.82rem" title="Switch to the case tracker with this login">Case tracker ↗</a>` : ""}<button type="button" data-refresh title="Refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button><button type="button" id="lo">Sign out</button></div></div>
+      <div class="tools"><span class="seg appswitch views"><a href="/admin" title="The admin with this login">Admin</a><a href="/" title="The store, signed in as the office">Store</a><span class="on" title="You are in the rep app">Rep</span>${HUB.linked && (me.role !== "rep" || (HUB.apps && HUB.apps.tracker)) ? `<a href="${FRAMED ? HUB.trackerUrl + "/" : (HOSTABLE ? "/rep/tracker?next=/" : "/rep/go/tracker?next=/")}"${FRAMED ? ' target="_top"' : ""} title="The case tracker with this login">Tracker</a>` : ""}</span>${me.role !== "rep" ? `<label class="asrep" title="You're an admin: the app shows what this rep sees">Viewing as <select id="repAs">${REP_LIST.map((r) => `<option value="${r.id}"${String(r.id) === String(REP_AS) ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select></label>` : ""}<button type="button" data-refresh title="Refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button><button type="button" id="lo">Sign out</button></div></div>
     <nav class="rnav" id="rnav"></nav><main class="rpane" id="pane"></main>`;
   $("lo").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };
+  if ($("repAs")) $("repAs").onchange = () => { REP_AS = $("repAs").value; localStorage.setItem("repAs", REP_AS); go(view); };
   fetch("/api/build").then((r) => r.json()).then((b) => { const v = $("rver"); if (v) v.textContent = `· v${b.version}`; }).catch(() => {});
   go(view);
 }
@@ -287,6 +294,6 @@ if (window.AppRefresh) window.AppRefresh.init({
   if (new URLSearchParams(location.search).get("embed") === "1") document.body.classList.add("embed");
   if (/^#(account|customers|orders|commissions)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
   const res = await fetch("/api/admin/me");
-  if (res.ok) { me = (await res.json()).user; HUB = await api("/hub").catch(() => HUB); if (me.role === "rep") shell(); else drawLogin("That login is for the admin, not the rep app. Go to /admin."); } else drawLogin();
+  if (res.ok) { me = (await res.json()).user; HUB = await fetch("/api/admin/hub", { credentials: "same-origin" }).then((r) => r.ok ? r.json() : HUB).catch(() => HUB); if (me.role !== "rep") await loadRepList(); shell(); } else drawLogin();
 })();
 })();
