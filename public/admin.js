@@ -55,7 +55,7 @@ function drawLogin(msg) {
 // [key, label, who]: "all" = owner, staff and sales reps · "team" = owner and staff · "owner" · "ownerrep" = owner and reps. "line" draws the divider:
 // sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
 const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["line"],
-  ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["staff", "Staff logins", "owner"], ["account", "My account", "all"]];
+  ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["staff", "Team logins", "owner"], ["account", "My account", "all"]];
 const canSee = (who) => who === "all" || (who === "owner" && isOwner()) || (who === "team" && !isRep()) || (who === "ownerrep" && (isOwner() || isRep()));
 function shell() {
   app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><span><button type="button" data-refresh title="Refresh"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button> <button type="button" id="mm">Menu</button></span></div>
@@ -163,7 +163,9 @@ async function orderDetail(id) {
   const delivery = o.fulfillment === "delivery";
   const unpaid = !o.paid_at && o.status !== "cancelled";
   const stripeLink = o.stripe_pi ? `https://dashboard.stripe.com/${st && st.mode === "test" ? "test/" : ""}payments/${encodeURIComponent(o.stripe_pi)}` : "";
-  pane().innerHTML = `<header><h1>Order ${esc(o.number)}</h1><button class="btn" data-nav="orders">← All orders</button></header>
+  const canEdit = !isRep() && o.status !== "cancelled";
+  pane().innerHTML = `<header><h1>Order ${esc(o.number)}</h1><div class="row2">${canEdit ? '<button class="btn solid" id="editO">Edit order</button>' : ""}${isOwner() ? '<button class="btn" id="delO" style="color:#9b1c1c;border-color:#e8b4b4">Delete</button>' : ""}<button class="btn" data-nav="orders">← All orders</button></div></header>
+  <div id="editPanel"></div>
   <div class="two">
     <div class="stack">
       <div class="panel"><h2>Items</h2><div class="tblwrap"><table class="tbl"><tr><th>Product</th><th class="num">Qty</th><th class="num">Each</th><th class="num">Line</th></tr>
@@ -195,6 +197,7 @@ async function orderDetail(id) {
         <div class="field"><label class="eyebrow" for="ocar">Carrier</label><input id="ocar" list="carriers" value="${esc(o.carrier || (!delivery && fedexAccount ? "FedEx" : ""))}"><datalist id="carriers"><option>FedEx</option><option>USPS</option><option>UPS</option><option>DHL</option><option>Hand delivered</option></datalist></div>
         <div class="field"><label class="eyebrow" for="otr">Tracking number</label><input id="otr" value="${esc(o.tracking)}"></div>
         <div class="field"><label class="eyebrow" for="oin">Internal note (staff only)</label><textarea id="oin">${esc(o.internal_note)}</textarea></div>
+        <label class="chk"><input type="checkbox" id="oNotify"${o.email ? " checked" : " disabled"}> Email the customer about this update${o.email ? "" : " (no email on the order)"}</label>
         <button class="btn solid" id="saveO">Save</button>
         <p class="muted">${o.paid_at ? "Paid " + when(o.paid_at) + ". " : ""}${o.shipped_at ? "Shipped " + when(o.shipped_at) + "." : ""}</p></div>`}
       <div class="panel"><h2>Sales rep &amp; commission</h2>
@@ -210,8 +213,27 @@ async function orderDetail(id) {
   const $ = (x) => document.getElementById(x);
   if ($("saveO")) $("saveO").onclick = async () => {
     if ($("ost").value === "shipped" && $("oful").value === "ship" && !$("otr").value.trim() && !confirm("Mark shipped without a tracking number?")) return;
-    await api("/orders/" + id, { method: "PATCH", body: { status: $("ost").value, fulfillment: $("oful").value, carrier: $("ocar").value, tracking: $("otr").value, internalNote: $("oin").value } });
-    toast("Saved"); orderDetail(id); drawNav();
+    const r = await api("/orders/" + id, { method: "PATCH", body: { status: $("ost").value, fulfillment: $("oful").value, carrier: $("ocar").value, tracking: $("otr").value, internalNote: $("oin").value, notify: !!($("oNotify") && $("oNotify").checked) } });
+    toast(r.emailed ? (r.emailed.sent ? `Saved · emailed the customer` : `Saved · email not sent: ${r.emailed.error || "emails are off"}`) : "Saved"); orderDetail(id); drawNav();
+  };
+  if ($("editO")) $("editO").onclick = () => editOrder(o, items, id);
+  if ($("delO")) $("delO").onclick = () => {
+    $("editPanel").innerHTML = `<div class="panel" style="border-color:#e8b4b4"><h2>Delete order ${esc(o.number)}?</h2>
+      <p>This removes the order for good${o.status !== "cancelled" ? " and puts its stock back on the shelf" : ""}.${o.paid_at ? ` <strong>It was paid ${money(o.paid_cents ?? o.total_cents)} by card — deleting doesn't refund anything; do that in Stripe.</strong>` : ""} If you just want it out of the way, set its status to cancelled instead.</p>
+      <div class="grid2"><div class="field"><label class="eyebrow" for="delReason">Reason (goes in the email)</label><input id="delReason" placeholder="e.g. duplicate order"></div></div>
+      <label class="chk"><input type="checkbox" id="delNotify"${o.email ? " checked" : " disabled"}> Email the customer and the store that it was cancelled${o.email ? "" : " (no email on the order)"}</label>
+      <div class="row2"><button class="btn" id="delGo" style="background:#9b1c1c;color:#fff;border-color:#9b1c1c">Delete order</button><button class="btn" type="button" id="delNo">Keep it</button></div></div>`;
+    $("delNo").onclick = () => { $("editPanel").innerHTML = ""; };
+    $("delGo").onclick = async () => {
+      if (!confirm(`Delete order ${o.number}? This can't be undone.`)) return;
+      $("delGo").disabled = true;
+      try {
+        const r = await api("/orders/" + id, { method: "DELETE", body: { notify: !!($("delNotify") && $("delNotify").checked), reason: $("delReason").value } });
+        toast(`Order ${r.number} deleted${r.emailed ? (r.emailed.sent ? " · emails sent" : ` · email not sent: ${r.emailed.error || "emails are off"}`) : ""}`);
+        oFilter = { status: "", q: "" }; go("orders"); drawNav();
+      } catch (e) { $("delGo").disabled = false; }
+    };
+    $("editPanel").scrollIntoView({ behavior: "smooth", block: "start" });
   };
   if ($("copyFedex")) $("copyFedex").onclick = () => navigator.clipboard?.writeText(fedexAccount).then(() => toast("FedEx account copied"), () => toast("Copy failed"));
   if ($("payLink")) $("payLink").onclick = async () => {
@@ -238,6 +260,68 @@ async function orderDetail(id) {
   };
 }
 
+
+/* ---------- edit an order: lines, customer, address, note, ship/deliver; emails the customer and store about it ---------- */
+async function editOrder(o, items, id) {
+  const $ = (x) => document.getElementById(x);
+  const a = o.address || {};
+  const cat = await api("/catalog" + (o.customer_id ? "?customerId=" + o.customer_id : ""));
+  const onOrder = new Set(items.map((i) => i.product_id).filter(Boolean));
+  const addable = cat.products.filter((p) => p.price_cents !== null && !onOrder.has(p.id));
+  const plabel = (p) => `${p.name} ${p.strength}`.trim() + (p.manufacturer ? ` · ${p.manufacturer}` : "");
+  const own = isOwner();
+  const fld = (id, label, val, attrs = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" value="${esc(val || "")}" ${attrs}></div>`;
+  $("editPanel").innerHTML = `<div class="panel" style="border-color:var(--blue)"><div class="row2" style="justify-content:space-between;align-items:center"><h2>Edit order ${esc(o.number)}</h2><button class="btn" type="button" id="edClose">Close</button></div>
+    ${o.paid_at ? `<p class="muted"><strong>This order is paid</strong> (${money(o.paid_cents ?? o.total_cents)}). If the total changes, the emails say what's owed or to be refunded; Stripe isn't touched.</p>` : ""}
+    <h3 class="eyebrow" style="margin:.6rem 0 .3rem">Items</h3>
+    <div class="tblwrap"><table class="tbl compact" id="edT"><thead><tr><th>Product</th><th>Qty</th><th class="num">Each</th><th class="num">Line</th><th></th></tr></thead><tbody>
+      ${items.map((i) => `<tr data-line="${i.id}"><td class="namecol"><strong>${esc(i.name)} ${esc(i.strength)}</strong></td><td><input data-qty inputmode="numeric" value="${i.qty}" style="width:4.5rem;text-align:center"></td>
+        <td class="num">${own ? `<input data-unit inputmode="decimal" value="${dollars(i.unit_cents)}" style="width:6rem;text-align:right">` : money(i.unit_cents)}</td><td class="num" data-amt>${money(i.unit_cents * i.qty)}</td><td><button class="btn" type="button" data-rm title="Remove from the order">Remove</button></td></tr>`).join("")}</tbody></table></div>
+    <div class="row2" style="align-items:center;margin-top:.5rem"><select id="edAdd" style="max-width:26rem"><option value="">Add a product…</option>${addable.map((p) => `<option value="${p.id}">${esc(plabel(p))} — ${money(p.price_cents)}${p.stock !== null ? ` (${p.stock} in stock)` : ""}</option>`).join("")}</select><span class="muted">${cat.markup !== null && cat.markup !== undefined ? `Priced at this customer's markup (cost +${esc(cat.markup)}%)` : o.price_markup !== null && o.price_markup !== undefined ? `Priced at the order's markup (cost +${esc(Number(o.price_markup))}%)` : "Store prices"}${own ? "; you can change any price" : ""}.</span></div>
+    <p class="muted" id="edTot" style="margin:.4rem 0 0"></p>
+    <h3 class="eyebrow" style="margin:1rem 0 .3rem">Customer</h3>
+    <div class="grid2">${fld("edName", "Name", o.name)}${fld("edEmail", "Email", o.email, 'type="email"')}${fld("edPhone", "Phone", o.phone)}
+      <div class="field"><label class="eyebrow" for="edFul">Ship or deliver</label><select id="edFul"><option value="ship"${o.fulfillment !== "delivery" ? " selected" : ""}>Ship</option><option value="delivery"${o.fulfillment === "delivery" ? " selected" : ""}>Local delivery</option></select></div></div>
+    <h3 class="eyebrow" style="margin:.8rem 0 .3rem">Address</h3>
+    <div class="grid2">${fld("edL1", "Street", a.line1)}${fld("edL2", "Apt / suite (optional)", a.line2)}${fld("edCity", "City", a.city)}${fld("edState", "State", a.state)}${fld("edZip", "ZIP", a.zip)}</div>
+    <div class="field"><label class="eyebrow" for="edNote">Customer note</label><textarea id="edNote" maxlength="1000">${esc(o.customer_note || "")}</textarea></div>
+    <label class="chk"><input type="checkbox" id="edNotify"${o.email ? " checked" : ""}> Email the customer and the store about these changes${o.email ? "" : " (needs an email address)"}</label>
+    <div class="err" id="edErr" hidden></div>
+    <div class="row2"><button class="btn solid" type="button" id="edSave">Save changes</button><span class="muted">Stock follows the quantities; totals are recalculated${o.discount_code ? ` (code ${esc(o.discount_code)} is re-applied)` : ""}.</span></div></div>`;
+  const rows = () => [...document.querySelectorAll("#edT tbody tr")];
+  const cents = (v) => { const n = parseFloat(String(v).replace(/[$,\s]/g, "")); return Number.isFinite(n) ? Math.round(n * 100) : null; };
+  const unitOf = (tr) => { const u = tr.querySelector("[data-unit]"); return u ? (cents(u.value) ?? +tr.dataset.unit) : +tr.dataset.unit; };
+  rows().forEach((tr) => { const i = items.find((x) => String(x.id) === tr.dataset.line); tr.dataset.unit = i.unit_cents; });
+  const total = () => {
+    let sub = 0, n = 0;
+    rows().forEach((tr) => { const q = parseInt(tr.querySelector("[data-qty]").value) || 0, u = unitOf(tr); tr.querySelector("[data-amt]").textContent = q ? money(u * q) : ""; sub += q * u; n += q; });
+    $("edTot").textContent = `${n} item${n === 1 ? "" : "s"} · products ${money(sub)}${o.discount_cents ? " · discount and shipping are worked out when you save" : " · shipping is worked out when you save"}`;
+  };
+  total();
+  $("edT").addEventListener("input", total);
+  $("edT").addEventListener("click", (e) => { const b = e.target.closest("[data-rm]"); if (!b) return; const tr = b.closest("tr"); if (rows().length === 1) return toast("An order needs at least one product — delete the order instead"); tr.remove(); total(); });
+  $("edAdd").onchange = () => {
+    const p = addable.find((x) => String(x.id) === $("edAdd").value); if (!p) return;
+    $("edT").querySelector("tbody").insertAdjacentHTML("beforeend", `<tr data-new="${p.id}" data-unit="${p.price_cents}"><td class="namecol"><strong>${esc(p.name)}${p.manufacturer ? ` (${esc(p.manufacturer)})` : ""} ${esc(p.strength)}</strong> <span class="pill st-new">new</span></td><td><input data-qty inputmode="numeric" value="1" style="width:4.5rem;text-align:center"></td>
+      <td class="num">${own ? `<input data-unit inputmode="decimal" value="${dollars(p.price_cents)}" style="width:6rem;text-align:right">` : money(p.price_cents)}</td><td class="num" data-amt></td><td><button class="btn" type="button" data-rm>Remove</button></td></tr>`);
+    $("edAdd").querySelector(`option[value="${p.id}"]`).remove(); $("edAdd").value = ""; total();
+  };
+  $("edClose").onclick = () => { $("editPanel").innerHTML = ""; };
+  $("edSave").onclick = async () => {
+    $("edErr").hidden = true;
+    const lines = rows().map((tr) => ({ itemId: tr.dataset.line ? +tr.dataset.line : undefined, productId: tr.dataset.new ? +tr.dataset.new : undefined, qty: parseInt(tr.querySelector("[data-qty]").value) || 0, unitCents: own && tr.querySelector("[data-unit]") ? cents(tr.querySelector("[data-unit]").value) : undefined }));
+    if (lines.some((l) => l.qty < 0 || (own && l.unitCents === null))) { $("edErr").textContent = "Check the quantities and prices."; $("edErr").hidden = false; return; }
+    $("edSave").disabled = true;
+    try {
+      const r = await api(`/orders/${id}/edit`, { method: "POST", body: { items: lines, name: $("edName").value, email: $("edEmail").value, phone: $("edPhone").value, fulfillment: $("edFul").value,
+        address: { line1: $("edL1").value, line2: $("edL2").value, city: $("edCity").value, state: $("edState").value, zip: $("edZip").value }, customerNote: $("edNote").value, notify: $("edNotify").checked } });
+      paneDirty = false;
+      toast(`Saved ${r.changes.length} change${r.changes.length === 1 ? "" : "s"}${r.emailed ? (r.emailed.sent ? ` · ${r.emailed.sent} email${r.emailed.sent === 1 ? "" : "s"} sent` : ` · email not sent: ${r.emailed.error || "emails are off"}`) : ""}`);
+      orderDetail(id); drawNav();
+    } catch (e) { $("edErr").textContent = e.message; $("edErr").hidden = false; $("edSave").disabled = false; }
+  };
+  $("editPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
 
 /* ---------- new order for a customer (phone orders; reps for their customers) ---------- */
 let pickCustomer = null; // set by the Customers screen's "New order" button
@@ -1513,29 +1597,37 @@ async function settings() {
 async function staff() {
   if (!isOwner()) return dashboard();
   const { users } = await api("/users");
-  pane().innerHTML = `<header><h1>Staff logins</h1></header>
-    <p class="muted">Staff can view and work orders (status, tracking, notes). Only owners can change prices, charges, reports, shipping, settings and logins. Sales reps have their own logins under <button class="linkbtn" data-nav="reps">Sales reps</button>.</p>
-    <div class="tblwrap"><table class="tbl" id="ut"><tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th><th>New password</th><th></th></tr>
-    ${users.map((u) => `<tr data-id="${u.id}"><td><input data-k="name" value="${esc(u.name)}"></td><td>${esc(u.email)}</td>
-      <td><select data-k="role"><option${u.role === "staff" ? " selected" : ""}>staff</option><option${u.role === "owner" ? " selected" : ""}>owner</option></select></td>
-      <td><input type="checkbox" data-k="active"${u.active ? " checked" : ""}></td><td><input data-k="password" type="password" placeholder="Leave blank" autocomplete="new-password"></td>
-      <td><button class="btn" data-save>Save</button></td></tr>`).join("")}</table></div>
+  const ROLE = { owner: "Admin", staff: "Manager", rep: "Sales rep" };
+  const roleSel = (cur, id) => `<select ${id ? `id="${id}"` : 'data-k="role" style="min-width:7.5rem"'}>${Object.entries(ROLE).map(([k, l]) => `<option value="${k}"${cur === k ? " selected" : ""}>${l}</option>`).join("")}</select>`;
+  pane().innerHTML = `<header><h1>Team logins</h1></header>
+    <p class="muted"><strong>Admin</strong> can do everything (prices, costs, settings, logins, deleting orders). <strong>Manager</strong> works orders, customers, products, inventory and settings but can't see costs, change prices or manage logins. <strong>Sales rep</strong> signs in to the admin or the <a href="/rep" target="_blank" rel="noopener">rep app</a> and sees only their own customers, orders and commission. Changing someone's role or password signs them out everywhere.</p>
+    <div class="tblwrap"><table class="tbl compact" id="ut"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Phone</th><th class="num">Commission %</th><th class="num">Customers</th><th>Active</th><th>New password</th><th></th></tr></thead><tbody>
+    ${users.map((u) => `<tr data-id="${u.id}" data-role="${u.role}"><td class="namecol"><input data-k="name" value="${esc(u.name)}" style="min-width:9rem">${u.id === me.id ? '<div class="muted" style="font-size:.75rem">you</div>' : u.signed_in ? '<div class="muted" style="font-size:.75rem">signed in</div>' : ""}</td><td>${esc(u.email)}</td>
+      <td>${roleSel(u.role)}</td><td><input data-k="phone" value="${esc(u.phone || "")}" style="width:8rem"></td>
+      <td class="num"><input data-k="rate" inputmode="decimal" value="${u.role === "rep" ? esc(Number(u.commission_rate ?? 0)) : ""}" placeholder="${u.role === "rep" ? "10" : "—"}" style="width:4.5rem;text-align:right"${u.role === "rep" ? "" : " disabled"}></td>
+      <td class="num">${u.role === "rep" ? u.customers : ""}</td><td><input type="checkbox" data-k="active"${u.active ? " checked" : ""}${u.id === me.id ? " disabled" : ""}></td>
+      <td><input data-k="password" type="password" placeholder="Leave blank to keep" autocomplete="new-password" style="min-width:9rem"></td><td><button class="btn" data-save>Save</button></td></tr>`).join("")}</tbody></table></div>
     <div class="panel"><h2>Add a login</h2><div class="grid2">
       <div class="field"><label class="eyebrow" for="nu-n">Name</label><input id="nu-n"></div>
-      <div class="field"><label class="eyebrow" for="nu-e">Email</label><input id="nu-e" type="email"></div>
-      <div class="field"><label class="eyebrow" for="nu-p">Temporary password (10+ characters)</label><input id="nu-p" type="password" autocomplete="new-password"></div>
-      <div class="field"><label class="eyebrow" for="nu-r">Role</label><select id="nu-r"><option>staff</option><option>owner</option></select></div></div>
-      <div><button class="btn solid" id="nuAdd">Add login</button></div></div>`;
+      <div class="field"><label class="eyebrow" for="nu-e">Email (their login)</label><input id="nu-e" type="email"></div>
+      <div class="field"><label class="eyebrow" for="nu-p">Temporary password (8+ characters)</label><input id="nu-p" type="password" autocomplete="new-password"></div>
+      <div class="field"><label class="eyebrow" for="nu-r">Role</label>${roleSel("staff", "nu-r")}</div>
+      <div class="field"><label class="eyebrow" for="nu-ph">Phone (optional)</label><input id="nu-ph"></div>
+      <div class="field" id="nu-rateWrap" hidden><label class="eyebrow" for="nu-rate">Commission %</label><input id="nu-rate" inputmode="decimal" placeholder="10"></div></div>
+      <div class="row2"><button class="btn solid" id="nuAdd">Add login</button><span class="muted">Send them the email and temporary password; they can change it under My account.</span></div></div>`;
+  document.getElementById("nu-r").onchange = () => { document.getElementById("nu-rateWrap").hidden = document.getElementById("nu-r").value !== "rep"; };
+  document.getElementById("ut").onchange = (e) => { if (e.target.matches('[data-k="role"]')) { const tr = e.target.closest("tr"), rate = tr.querySelector('[data-k="rate"]'); rate.disabled = e.target.value !== "rep"; if (e.target.value === "rep" && !rate.value) rate.value = "0"; } };
   document.getElementById("ut").onclick = async (e) => {
     if (!e.target.closest("[data-save]")) return;
     const tr = e.target.closest("tr"), body = {};
-    tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body.active = i.checked; else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
+    tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body.active = i.checked; else if (i.dataset.k === "rate") { if (!i.disabled && i.value.trim() !== "") body.rate = i.value.trim(); } else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
+    if (body.role && body.role !== tr.dataset.role && !confirm(`Change this login to ${ROLE[body.role]}? They'll be signed out.`)) return;
     await api("/users/" + tr.dataset.id, { method: "PATCH", body }); toast("Saved"); staff();
   };
   document.getElementById("nuAdd").onclick = async () => {
     const g = (x) => document.getElementById(x).value;
-    await api("/users", { method: "POST", body: { name: g("nu-n"), email: g("nu-e"), password: g("nu-p"), role: g("nu-r") } });
-    toast("Login added"); staff();
+    const r = await api("/users", { method: "POST", body: { name: g("nu-n"), email: g("nu-e"), password: g("nu-p"), role: g("nu-r"), phone: g("nu-ph"), rate: g("nu-rate") } });
+    toast(`${ROLE[g("nu-r")]} login added`); staff();
   };
 }
 

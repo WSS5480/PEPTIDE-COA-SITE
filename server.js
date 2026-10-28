@@ -500,8 +500,10 @@ function emailHtml(s, p) {
 </td></tr></table></body></html>`;
 }
 
+const trackingUrl = (carrier, num) => { const n = encodeURIComponent(String(num || "").trim()); if (!n) return ""; const c = String(carrier || "").toLowerCase(); return /fedex/.test(c) ? `https://www.fedex.com/fedextrack/?trknbr=${n}` : /ups/.test(c) ? `https://www.ups.com/track?tracknum=${n}` : /usps/.test(c) ? `https://tools.usps.com/go/TrackConfirmAction?tLabels=${n}` : /dhl/.test(c) ? `https://www.dhl.com/en/express/tracking.html?AWB=${n}` : ""; };
 // kind: "new" (order request placed) · "paid" (card payment received) · "unpaid" (card order never finished)
-async function notifyOrder(orderId, kind) {
+//       "updated" (the office changed the order; extra.changes lists what) · "shipped" (on its way / delivered) · "cancelled" (removed by the office)
+async function notifyOrder(orderId, kind, extra = {}) {
   const s = await getSettings();
   const { rows: [o] } = await q("select * from orders where id = $1", [orderId]);
   if (!o) return;
@@ -522,26 +524,33 @@ async function notifyOrder(orderId, kind) {
   const link = BASE_URL ? `${BASE_URL}/admin#order-${o.id}` : "";
   const legal = `${escHtml(s.brand)}${s.contact ? ` · ${escHtml(s.contact)}` : ""}<br>Products are sold for laboratory research use only.`;
   const results = [];
-  if (s.orderEmailOn && isEmail(s.orderEmail || "")) {
-    const head = kind === "paid" ? "PAID" : kind === "unpaid" ? "UNPAID card" : "New";
+  const changes = Array.isArray(extra.changes) ? extra.changes.filter(Boolean) : [];
+  const by = extra.who || "the office";
+  const paidDiff = paid && (o.paid_cents ?? o.total_cents) !== o.total_cents ? `Paid ${$(o.paid_cents ?? o.total_cents)} by card; the total is now ${$(o.total_cents)} (${o.total_cents > (o.paid_cents ?? 0) ? "balance due " + $(o.total_cents - (o.paid_cents ?? 0)) : "refund " + $((o.paid_cents ?? 0) - o.total_cents)}).` : "";
+  if (s.orderEmailOn && isEmail(s.orderEmail || "") && kind !== "shipped") {
+    const head = kind === "paid" ? "PAID" : kind === "unpaid" ? "UNPAID card" : kind === "updated" ? "UPDATED" : kind === "cancelled" ? "CANCELLED" : "New";
     const subject = `${head} order ${o.number} · ${$(o.total_cents)} · ${o.name} · ${delivery ? "Delivery" : "Ship"}`;
-    const title = kind === "paid" ? `Payment received · order ${o.number}` : kind === "unpaid" ? `Card payment not finished · order ${o.number}` : `New order ${o.number}`;
+    const title = kind === "paid" ? `Payment received · order ${o.number}` : kind === "unpaid" ? `Card payment not finished · order ${o.number}` : kind === "updated" ? `Order ${o.number} updated` : kind === "cancelled" ? `Order ${o.number} cancelled` : `New order ${o.number}`;
     const placedAt = new Date(o.created_at).toLocaleString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) + " CT";
     const text = [
       `${title} — ${s.brand}`, "",
       `Customer: ${o.name}`, `Email: ${o.email}`, o.phone ? `Phone: ${o.phone}` : "", `Placed by: ${o.placed_by || "Customer"}${rep ? ` · Sales rep: ${rep.name}` : ""}`, "",
       `${delivery ? "DELIVER TO" : "SHIP TO"} (${how}):`, ...addrLines, "",
-      "ITEMS:", ...lines, "", ...totalsText, "", `Payment: ${payLine}`, o.customer_note ? `\nCustomer note: ${o.customer_note}` : "",
-      link ? `\nOpen in admin: ${link}` : ""
-    ].filter((x) => x !== null && x !== undefined).join("\n");
+      kind === "updated" || kind === "cancelled" ? `${kind === "updated" ? "CHANGED BY" : "CANCELLED BY"} ${by}:${changes.length ? "\n" + changes.map((c) => "- " + c).join("\n") : ""}\n` : "",
+      "ITEMS:", ...lines, "", ...totalsText, "", `Payment: ${payLine}`, paidDiff, o.customer_note ? `\nCustomer note: ${o.customer_note}` : "",
+      link && kind !== "cancelled" ? `\nOpen in admin: ${link}` : ""
+    ].filter((x) => x !== null && x !== undefined && x !== "").join("\n");
     const html = emailHtml(s, {
-      eyebrow: "Store admin", kicker: kind === "paid" ? "Payment received" : kind === "unpaid" ? "Card payment not finished" : "New order", title: `Order ${o.number}`, preheader: `${o.name} · ${$(o.total_cents)} · ${how}`,
-      badge: kind === "paid" ? { text: "Paid by card", tone: "ok" } : kind === "unpaid" ? { text: "Card payment pending", tone: "warn" } : { text: "Order request", tone: "info" },
-      intro: kind === "paid" ? `${o.name} paid ${$(o.paid_cents ?? o.total_cents)} by card. The order is ready to ${delivery ? "deliver" : "ship"}.` : kind === "unpaid" ? `${o.name} started a card payment 30 minutes ago and hasn't finished. You can send a payment link from the order.` : `${o.name} placed an order request${rep ? ` through sales rep ${rep.name}` : ""}. Confirm the total with them and collect payment.`,
+      eyebrow: "Store admin", kicker: kind === "paid" ? "Payment received" : kind === "unpaid" ? "Card payment not finished" : kind === "updated" ? "Order updated" : kind === "cancelled" ? "Order cancelled" : "New order", title: `Order ${o.number}`, preheader: `${o.name} · ${$(o.total_cents)} · ${how}`,
+      badge: kind === "paid" ? { text: "Paid by card", tone: "ok" } : kind === "unpaid" ? { text: "Card payment pending", tone: "warn" } : kind === "updated" ? { text: "Updated", tone: "warn" } : kind === "cancelled" ? { text: "Cancelled", tone: "bad" } : { text: "Order request", tone: "info" },
+      intro: kind === "paid" ? `${o.name} paid ${$(o.paid_cents ?? o.total_cents)} by card. The order is ready to ${delivery ? "deliver" : "ship"}.` : kind === "unpaid" ? `${o.name} started a card payment 30 minutes ago and hasn't finished. You can send a payment link from the order.`
+        : kind === "updated" ? `${by} updated this order. Here is how it stands now.${paidDiff ? " " + paidDiff : ""}` : kind === "cancelled" ? `${by} cancelled and removed this order.${paid ? ` The customer had paid ${$(o.paid_cents ?? o.total_cents)} by card — refund it in Stripe if you haven't.` : ""}`
+        : `${o.name} placed an order request${rep ? ` through sales rep ${rep.name}` : ""}. Confirm the total with them and collect payment.`,
       facts: [["Customer", `${escHtml(o.name)} · <a href="mailto:${escHtml(o.email)}" style="color:${BLUE}">${escHtml(o.email)}</a>${o.phone ? ` · <a href="tel:${escHtml(o.phone)}" style="color:${BLUE}">${escHtml(o.phone)}</a>` : ""}`], ["Placed", `${escHtml(placedAt)} · ${escHtml(o.placed_by || "Customer")}${rep ? ` · Sales rep ${escHtml(rep.name)}` : ""}`], ["Total", `${$(o.total_cents)} · ${escHtml(items.reduce((n, i) => n + i.qty, 0))} item${items.reduce((n, i) => n + i.qty, 0) === 1 ? "" : "s"}`], ["Get it", escHtml(how) + (o.shipping_cents ? ` · ${$(o.shipping_cents)}` : " · free")], ["Payment", escHtml(payLine)]],
       address: { label: delivery ? "Deliver to" : "Ship to", lines: addrLines }, items, totals: totalRows,
-      note: o.customer_note ? { label: "Customer note", text: o.customer_note } : null,
-      button: link ? { text: "Open the order in admin", url: link } : null,
+      note: changes.length ? { label: kind === "cancelled" ? "Reason" : "What changed", text: changes.join(" · ") } : o.customer_note ? { label: "Customer note", text: o.customer_note } : null,
+      after: changes.length && o.customer_note ? `<span style="color:${INK2};font-size:14px"><strong>Customer note:</strong> ${escHtml(o.customer_note)}</span>` : "",
+      button: link && kind !== "cancelled" ? { text: "Open the order in admin", url: link } : null,
       footer: `Sent by the ${escHtml(s.brand)} store to ${escHtml(s.orderEmail)}. Turn these off under Site settings → Order emails.`
     });
     const r = await mail.send({ to: s.orderEmail, subject, text, html, replyTo: o.email }, s);
@@ -550,24 +559,39 @@ async function notifyOrder(orderId, kind) {
   }
   if (s.customerEmailOn && isEmail(o.email) && kind !== "unpaid") {
     const byRep = /^Rep/.test(o.placed_by || "");
-    const subject = kind === "paid" ? `Payment received · order ${o.number} · ${s.brand}` : `Your order ${o.number} · ${s.brand}`;
+    const delivered = kind === "shipped" && o.status === "delivered";
+    const track = trackingUrl(o.carrier, o.tracking);
+    const subject = kind === "paid" ? `Payment received · order ${o.number} · ${s.brand}` : kind === "updated" ? `Your order ${o.number} was updated · ${s.brand}`
+      : kind === "shipped" ? (delivered ? `Your order ${o.number} was delivered · ${s.brand}` : delivery ? `Your order ${o.number} is on its way · ${s.brand}` : `Your order ${o.number} has shipped · ${s.brand}`)
+      : kind === "cancelled" ? `Your order ${o.number} was cancelled · ${s.brand}` : `Your order ${o.number} · ${s.brand}`;
     const intro = kind === "paid" ? `Thank you! We received your card payment of ${$(o.paid_cents ?? o.total_cents)} and your order is being prepared.`
+      : kind === "updated" ? "We've updated your order. Here is how it stands now."
+      : kind === "shipped" ? (delivered ? "Your order has been delivered." : delivery ? "Your order is on its way to you." : `Your order has shipped${o.carrier ? ` with ${o.carrier}` : ""}.`)
+      : kind === "cancelled" ? "Your order has been cancelled. If you didn't expect this, just reply to this email."
       : byRep ? `Your sales rep${rep ? ` ${rep.name}` : ""} placed this order for you.` : "We received your order request.";
-    const next = kind === "paid" ? (delivery ? "We'll contact you to arrange the delivery." : "You'll get the tracking number when it ships.") : (s.paymentInstructions || "");
+    const next = kind === "paid" ? (delivery ? "We'll contact you to arrange the delivery." : "You'll get the tracking number when it ships.")
+      : kind === "updated" ? (paid ? (paidDiff ? `You paid ${$(o.paid_cents ?? o.total_cents)} by card; the new total is ${$(o.total_cents)}. We'll contact you about the difference.` : `Your payment of ${$(o.paid_cents ?? o.total_cents)} covers this order.`) : (s.paymentInstructions || ""))
+      : kind === "shipped" ? (delivered ? "Thank you for your order." : o.tracking ? `Tracking number: ${`${o.carrier || ""} ${o.tracking}`.trim()}${track ? ` — ${track}` : ""}` : delivery ? "We'll contact you about the delivery time." : "")
+      : kind === "cancelled" ? (paid ? `You paid ${$(o.paid_cents ?? o.total_cents)} by card; we'll contact you about the refund.` : "Nothing is owed on this order.")
+      : (s.paymentInstructions || "");
     const text = [
-      `Hi ${o.name},`, "", intro, "", `Order number: ${o.number}`, `${delivery ? "Delivery" : "Shipping"}: ${how}${o.shipping_cents ? ` (${$(o.shipping_cents)})` : " (free)"}`, "",
+      `Hi ${o.name},`, "", intro, "", `Order number: ${o.number}`, `${delivery ? "Delivery" : "Shipping"}: ${how}${o.shipping_cents ? ` (${$(o.shipping_cents)})` : " (free)"}`,
+      changes.length && kind === "updated" ? `\nWHAT CHANGED:\n${changes.map((c) => "- " + c).join("\n")}` : changes.length && kind === "cancelled" ? `\nReason: ${changes.join("; ")}` : "", "",
       "ITEMS:", ...lines, "", ...totalsText, "", next, "",
-      `You can check this order any time under "Check an order"${BASE_URL ? ` at ${BASE_URL}` : ""} with this email and your order number.`,
+      kind === "cancelled" ? "" : `You can check this order any time under "Check an order"${BASE_URL ? ` at ${BASE_URL}` : ""} with this email and your order number.`,
       s.contact ? `\nQuestions? ${s.contact}` : "", "", `— ${s.brand}`
     ].join("\n");
     const html = emailHtml(s, {
-      eyebrow: kind === "paid" ? "Receipt" : "Order confirmation", kicker: kind === "paid" ? "Payment received" : "Thanks for your order", title: `Order ${o.number}`, preheader: `Order ${o.number} · ${$(o.total_cents)}`,
-      badge: { text: kind === "paid" ? "Paid" : "Received", tone: kind === "paid" ? "ok" : "info" },
+      eyebrow: kind === "paid" ? "Receipt" : kind === "updated" ? "Order update" : kind === "shipped" ? (delivered ? "Delivered" : "Shipping update") : kind === "cancelled" ? "Order cancelled" : "Order confirmation",
+      kicker: kind === "paid" ? "Payment received" : kind === "updated" ? "Order updated" : kind === "shipped" ? (delivered ? "Delivered" : delivery ? "On its way" : "Shipped") : kind === "cancelled" ? "Cancelled" : "Thanks for your order",
+      title: `Order ${o.number}`, preheader: `Order ${o.number} · ${$(o.total_cents)}`,
+      badge: kind === "paid" ? { text: "Paid", tone: "ok" } : kind === "updated" ? { text: "Updated", tone: "warn" } : kind === "shipped" ? { text: delivered ? "Delivered" : "Shipped", tone: "ok" } : kind === "cancelled" ? { text: "Cancelled", tone: "bad" } : { text: "Received", tone: "info" },
       intro: `Hi ${o.name}, ${intro.charAt(0).toLowerCase() + intro.slice(1)}`,
-      facts: [[delivery ? "Delivery" : "Shipping", escHtml(how) + (o.shipping_cents ? ` · ${$(o.shipping_cents)}` : " · free")], ...(o.tracking ? [["Tracking", escHtml(`${o.carrier || ""} ${o.tracking}`.trim())]] : [])],
+      facts: [[delivery ? "Delivery" : "Shipping", escHtml(how) + (o.shipping_cents ? ` · ${$(o.shipping_cents)}` : " · free")], ...(o.tracking ? [["Tracking", track ? `<a href="${escHtml(track)}" style="color:${BLUE}">${escHtml(`${o.carrier || ""} ${o.tracking}`.trim())}</a>` : escHtml(`${o.carrier || ""} ${o.tracking}`.trim())]] : [])],
       address: { label: delivery ? "Delivering to" : "Shipping to", lines: addrLines }, items, totals: totalRows,
-      after: `${escHtml(next)}${BASE_URL ? `<br><br><span style="color:${INK2};font-size:13px">You can check this order any time under "Check an order" on our site with this email address and your order number.</span>` : ""}`,
-      button: BASE_URL ? { text: "Check my order", url: `${BASE_URL}/#track` } : null,
+      note: changes.length && kind === "updated" ? { label: "What changed", text: changes.join(" · ") } : changes.length && kind === "cancelled" ? { label: "Reason", text: changes.join(" · ") } : null,
+      after: `${escHtml(next)}${BASE_URL && kind !== "cancelled" ? `<br><br><span style="color:${INK2};font-size:13px">You can check this order any time under "Check an order" on our site with this email address and your order number.</span>` : ""}`,
+      button: kind === "shipped" && track ? { text: "Track my package", url: track } : BASE_URL && kind !== "cancelled" ? { text: "Check my order", url: `${BASE_URL}/#track` } : null,
       footer: legal
     });
     const r = await mail.send({ to: o.email, subject, text, html, replyTo: isEmail(s.orderEmail || "") ? s.orderEmail : undefined }, s);
@@ -866,7 +890,153 @@ admin.patch("/orders/:id", wrap(async (req, res) => {
     await q(`update orders set ${sets.join(", ")} where id = $${args.length}`, args);
     for (const t of log) await q("insert into order_events(order_id, who, text) values ($1,$2,$3)", [id, req.user.name || req.user.email, t]);
   }
-  res.json({ ok: true });
+  // "Email the customer about this update": shipped/delivered get the shipping email, anything else the "order updated" one
+  const visible = log.filter((t) => t !== "Internal note updated");
+  let emailed = null;
+  if (b.notify && visible.length) {
+    const kind = b.status && ["shipped", "delivered"].includes(b.status) && b.status !== o.status ? "shipped" : "updated";
+    const results = await notifyOrder(id, kind, { changes: visible, who: req.user.name || req.user.email });
+    emailed = { sent: (results || []).filter((r) => r.ok).length, error: ((results || []).find((r) => !r.ok) || {}).error || "" };
+    await q("insert into order_events(order_id, who, text) values ($1,$2,$3)", [id, req.user.name || req.user.email, emailed.sent ? `${kind === "shipped" ? "Shipping" : "Update"} email sent` : `Email not sent: ${emailed.error || "no address or emails are off"}`]);
+  }
+  res.json({ ok: true, changes: visible, emailed });
+}));
+// Edit an order: lines (quantities, add/remove, owner can change a unit price), customer details, address, note, ship/deliver.
+// Stock follows the change, totals are recalculated, every change is logged, and (optionally) the customer and store are emailed.
+admin.post("/orders/:id/edit", wrap(async (req, res) => {
+  const id = intOrNull(req.params.id), b = req.body || {}, who = req.user.name || req.user.email, own = req.user.role === "owner";
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const { rows: [o] } = await client.query("select * from orders where id = $1 for update", [id]);
+    if (!o) throw Object.assign(new Error("Not found"), { code: 404 });
+    if (o.status === "cancelled") throw new Error("This order is cancelled. Set its status back first if you want to change it.");
+    const { rows: old } = await client.query("select * from order_items where order_id = $1 order by id", [id]);
+    const changes = [];
+    const $ = (c) => "$" + ((c || 0) / 100).toFixed(2);
+    // --- lines ---
+    const sent = Array.isArray(b.items) ? b.items : null;
+    let lines = old.map((i) => ({ item: i, product_id: i.product_id, name: i.name, strength: i.strength, unit_cents: i.unit_cents, qty: i.qty }));
+    if (sent) {
+      lines = [];
+      for (const l of sent) {
+        const qty = Math.max(0, Math.min(999, intOrNull(l.qty) ?? 0));
+        if (!qty) continue;
+        const existing = l.itemId ? old.find((i) => i.id === intOrNull(l.itemId)) : null;
+        if (existing) {
+          let unit = existing.unit_cents;
+          if (own && l.unitCents !== undefined && l.unitCents !== null && l.unitCents !== "") { const u = Math.max(0, intOrNull(l.unitCents) ?? existing.unit_cents); if (u !== existing.unit_cents) { changes.push(`${`${existing.name} ${existing.strength}`.trim()}: price ${$(existing.unit_cents)} → ${$(u)}`); unit = u; } }
+          if (qty !== existing.qty) changes.push(`${`${existing.name} ${existing.strength}`.trim()}: ${existing.qty} → ${qty}`);
+          lines.push({ item: existing, product_id: existing.product_id, name: existing.name, strength: existing.strength, unit_cents: unit, qty });
+        } else {
+          const { rows: [p] } = await client.query("select id, name, strength, manufacturer, price_cents, cost_cents, stock, max_per_order from products where id = $1 and active", [intOrNull(l.productId)]);
+          if (!p) throw new Error("A product you added isn't available any more. Reload and try again.");
+          if (lines.some((x) => x.product_id === p.id)) throw new Error(`${p.name} ${p.strength} is already on the order — change its quantity instead.`);
+          let unit = priceFor(p, o.price_markup !== null && o.price_markup !== undefined ? Number(o.price_markup) : null);
+          if (own && l.unitCents !== undefined && l.unitCents !== null && l.unitCents !== "") unit = Math.max(0, intOrNull(l.unitCents) ?? unit ?? 0);
+          if (unit === null || unit === undefined) throw new Error(`${p.name} ${p.strength} has no price yet. Set a price first.`);
+          if (p.max_per_order && qty > p.max_per_order) throw new Error(`${p.name} ${p.strength} is limited to ${p.max_per_order} per order.`);
+          const name = p.manufacturer ? `${p.name} (${p.manufacturer})` : p.name;
+          changes.push(`Added ${qty} × ${`${name} ${p.strength}`.trim()} @ ${$(unit)}`);
+          lines.push({ item: null, product_id: p.id, name, strength: p.strength, unit_cents: unit, qty });
+        }
+      }
+      for (const i of old) if (!lines.some((x) => x.item && x.item.id === i.id)) changes.push(`Removed ${i.qty} × ${`${i.name} ${i.strength}`.trim()}`);
+      if (!lines.length) throw new Error("An order needs at least one product. Cancel or delete the order instead.");
+      // stock follows the lines: more units come off the shelf, fewer go back
+      const was = {}, now = {};
+      for (const i of old) if (i.product_id) was[i.product_id] = (was[i.product_id] || 0) + i.qty;
+      for (const l of lines) if (l.product_id) now[l.product_id] = (now[l.product_id] || 0) + l.qty;
+      for (const pid of new Set([...Object.keys(was), ...Object.keys(now)])) {
+        const delta = (now[pid] || 0) - (was[pid] || 0); if (!delta) continue;
+        const { rows: [p] } = await client.query("select name, strength, stock from products where id = $1 for update", [+pid]);
+        if (!p || p.stock === null) continue;
+        if (delta > 0 && delta > p.stock) throw new Error(p.stock > 0 ? `Only ${p.stock} more of ${p.name} ${p.strength} available.` : `${p.name} ${p.strength} is sold out.`);
+        await moveStock(client, +pid, -delta, { reason: "Order edited", ref: o.number, who });
+      }
+      await client.query("delete from order_items where order_id = $1", [id]);
+      for (const l of lines) await client.query("insert into order_items(order_id, product_id, name, strength, unit_cents, qty) values ($1,$2,$3,$4,$5,$6)", [id, l.product_id, l.name, l.strength, l.unit_cents, l.qty]);
+    }
+    // --- customer, address, note, ship/deliver ---
+    const sets = {}, s = await getSettings();
+    const has = (k) => b[k] !== undefined && b[k] !== null;
+    if (has("name")) { const v = str(b.name, 120); if (!v) throw new Error("The customer's name can't be blank."); if (v !== o.name) { sets.name = v; changes.push(`Name: ${o.name} → ${v}`); } }
+    if (has("email")) { const v = str(b.email, 160).toLowerCase(); if (v && !isEmail(v)) throw new Error("That email address doesn't look right."); if (v !== o.email) { sets.email = v; changes.push(`Email: ${o.email || "(none)"} → ${v || "(none)"}`); } }
+    if (has("phone")) { const v = str(b.phone, 40); if (v !== (o.phone || "")) { sets.phone = v; changes.push(`Phone: ${o.phone || "(none)"} → ${v || "(none)"}`); } }
+    if (b.address && typeof b.address === "object") {
+      const a = {}; for (const k of ["line1", "line2", "city", "state", "zip"]) a[k] = str(b.address[k], 120);
+      if (!a.line1 || !a.city || !a.state || !a.zip) throw new Error("The address needs a street, city, state and ZIP.");
+      const oa = o.address || {};
+      if (["line1", "line2", "city", "state", "zip"].some((k) => (oa[k] || "") !== a[k])) { sets.address = JSON.stringify(a); changes.push(`Address: ${[a.line1, a.line2, a.city, a.state, a.zip].filter(Boolean).join(", ")}`); }
+    }
+    if (has("customerNote")) { const v = str(b.customerNote, 1000); if (v !== (o.customer_note || "")) { sets.customer_note = v; changes.push(v ? `Note: ${v}` : "Customer note removed"); } }
+    let fulfil = o.fulfillment, shipName = o.shipping_method, shipCents = o.shipping_cents;
+    const opts = fulfillmentOptions(s);
+    const optFor = (key) => opts.find((x) => x.key === key) || null;
+    const shipFor = (opt, sub) => (!opt ? 0 : opt.freeOverCents > 0 && sub >= opt.freeOverCents ? 0 : opt.cents);
+    const subtotal = lines.reduce((t, l) => t + l.unit_cents * l.qty, 0);
+    if (has("fulfillment") && ["ship", "delivery"].includes(b.fulfillment) && b.fulfillment !== o.fulfillment) {
+      const opt = optFor(b.fulfillment) || { label: b.fulfillment === "delivery" ? "Local delivery" : "Shipping", cents: 0, freeOverCents: 0 };
+      fulfil = b.fulfillment; shipName = opt.label; changes.push(`Changed to ${opt.label}`);
+      if (!o.paid_at) shipCents = shipFor(opt, subtotal);
+    } else if (!o.paid_at && subtotal !== o.subtotal_cents) {
+      // the shipping charge follows Site settings (free over a threshold) unless it was set by hand
+      const opt = optFor(o.fulfillment);
+      if (opt && shipFor(opt, o.subtotal_cents) === o.shipping_cents) shipCents = shipFor(opt, subtotal);
+    }
+    // a discount code is recalculated on the new subtotal; a hand-set discount just can't exceed the products
+    let discount = o.discount_cents;
+    if (subtotal !== o.subtotal_cents) {
+      if (o.discount_code) { const { rows: [dc] } = await client.query("select kind, value from discount_codes where code = $1", [o.discount_code]); discount = dc ? Math.max(0, Math.min(subtotal, dc.kind === "percent" ? Math.round(subtotal * dc.value / 100) : dc.value)) : Math.min(discount, subtotal); }
+      else discount = Math.min(discount, subtotal);
+    }
+    const total = subtotal - discount + shipCents;
+    if (subtotal !== o.subtotal_cents) sets.subtotal_cents = subtotal;
+    if (discount !== o.discount_cents) { sets.discount_cents = discount; changes.push(`Discount: ${$(o.discount_cents)} → ${$(discount)}`); }
+    if (shipCents !== o.shipping_cents) { sets.shipping_cents = shipCents; changes.push(`${shipName || "Shipping"}: ${$(o.shipping_cents)} → ${$(shipCents)}`); }
+    if (fulfil !== o.fulfillment) { sets.fulfillment = fulfil; sets.shipping_method = shipName; }
+    if (total !== o.total_cents) { sets.total_cents = total; changes.push(`Total: ${$(o.total_cents)} → ${$(total)}`); }
+    if (!changes.length) throw new Error("Nothing changed.");
+    const cols = Object.keys(sets), args = cols.map((k) => sets[k]);
+    args.push(id);
+    await client.query(`update orders set ${cols.map((k, i) => `${k} = $${i + 1}`).concat(["updated_at = now()"]).join(", ")} where id = $${args.length}`, args);
+    await client.query("insert into order_events(order_id, who, text) values ($1,$2,$3)", [id, who, ("Order edited: " + changes.join("; ")).slice(0, 2000)]);
+    await client.query("commit");
+    let emailed = null;
+    if (b.notify) {
+      const results = await notifyOrder(id, "updated", { changes, who });
+      emailed = { sent: (results || []).filter((r) => r.ok).length, error: ((results || []).find((r) => !r.ok) || {}).error || "" };
+      await q("insert into order_events(order_id, who, text) values ($1,$2,$3)", [id, who, emailed.sent ? "Update email sent" : `Email not sent: ${emailed.error || "no address or emails are off"}`]);
+    }
+    res.json({ ok: true, changes, emailed, totalCents: total });
+  } catch (e) { await client.query("rollback").catch(() => {}); bad(res, e.message || "Couldn't save the order.", e.code === 404 ? 404 : 400); }
+  finally { client.release(); }
+}));
+// Delete an order for good (owner). Stock goes back, a limited discount code gets its use back; optionally the customer and store are told first.
+admin.delete("/orders/:id", owner, wrap(async (req, res) => {
+  const id = intOrNull(req.params.id), who = req.user.name || req.user.email;
+  const { rows: [o] } = await q("select * from orders where id = $1", [id]);
+  if (!o) return bad(res, "Not found", 404);
+  if (o.payout_id) return bad(res, "The commission on this order is already paid out. Undo that payout first.");
+  let emailed = null;
+  if (req.query.notify === "1" || (req.body && req.body.notify)) {
+    const results = await notifyOrder(id, "cancelled", { who, changes: [str((req.body || {}).reason, 300) || "Removed by the office"] });
+    emailed = { sent: (results || []).filter((r) => r.ok).length, error: ((results || []).find((r) => !r.ok) || {}).error || "" };
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    if (o.status !== "cancelled") {
+      const { rows: its } = await client.query("select i.product_id, i.qty from order_items i join products p on p.id = i.product_id where i.order_id = $1 and p.stock is not null", [id]);
+      for (const it of its) await moveStock(client, it.product_id, it.qty, { reason: "Order deleted", ref: o.number, who });
+      if (o.discount_code) await client.query("update discount_codes set used = greatest(0, used - 1) where code = $1", [o.discount_code]);
+    }
+    await client.query("delete from orders where id = $1", [id]);
+    await client.query("commit");
+    console.log(`Order ${o.number} deleted by ${who}`);
+    res.json({ ok: true, number: o.number, emailed });
+  } catch (e) { await client.query("rollback").catch(() => {}); bad(res, e.message || "Couldn't delete the order."); }
+  finally { client.release(); }
 }));
 admin.post("/orders/:id/note", wrap(async (req, res) => {
   const t = str(req.body?.text, 1000); if (!t) return bad(res, "Write a note first");
@@ -1683,28 +1853,42 @@ admin.put("/pin", owner, wrap(async (req, res) => {
 }));
 
 /* ---------- admin: users (owner only) ---------- */
+const ROLES = ["owner", "staff", "rep"]; // shown as Admin · Manager · Sales rep
 admin.get("/users", owner, wrap(async (req, res) => {
-  const { rows } = await q("select id,email,name,role,active,created_at from users where role <> 'rep' order by role, name");
+  const { rows } = await q(`select u.id, u.email, u.name, u.role, u.phone, u.commission_rate, u.active, u.created_at,
+      (select count(*)::int from customers c where c.rep_id = u.id) customers,
+      exists(select 1 from sessions se where se.user_id = u.id and se.expires > now()) signed_in
+    from users u order by case u.role when 'owner' then 0 when 'staff' then 1 else 2 end, u.active desc, u.name, u.email`);
   res.json({ users: rows });
 }));
 admin.post("/users", owner, wrap(async (req, res) => {
-  const b = req.body || {}, email = str(b.email, 160).toLowerCase(), pass = String(b.password || "");
+  const b = req.body || {}, email = str(b.email, 160).toLowerCase(), pass = String(b.password || ""), role = ROLES.includes(b.role) ? b.role : "staff";
+  if (!str(b.name, 80)) return bad(res, "Enter their name.");
   if (!isEmail(email)) return bad(res, "Enter a valid email");
-  if (pass.length < 10) return bad(res, "Password needs at least 10 characters");
-  const role = b.role === "owner" ? "owner" : "staff";
+  if (pass.length < 8) return bad(res, "Password needs at least 8 characters");
+  const rate = role === "rep" ? rateOf(b.rate === undefined || b.rate === "" ? "0" : b.rate) : 0;
+  if (role === "rep" && rate === null) return bad(res, "Enter the rep's commission as a percent, e.g. 10.");
   try {
-    await q("insert into users(email,name,role,pass_hash) values ($1,$2,$3,$4)", [email, str(b.name, 80), role, await bcrypt.hash(pass, 11)]);
+    const { rows: [u] } = await q("insert into users(email,name,role,pass_hash,phone,commission_rate) values ($1,$2,$3,$4,$5,$6) returning id", [email, str(b.name, 80), role, await bcrypt.hash(pass, 11), str(b.phone, 40), rate]);
+    res.json({ ok: true, id: u.id });
   } catch (e) { return bad(res, "That email already has a login"); }
-  res.json({ ok: true });
 }));
 admin.patch("/users/:id", owner, wrap(async (req, res) => {
   const id = intOrNull(req.params.id), b = req.body || {};
-  if (id === req.user.id && (b.active === false || b.role === "staff")) return bad(res, "You can't remove your own owner access");
+  const { rows: [u] } = await q("select id, role, commission_rate from users where id = $1", [id]);
+  if (!u) return bad(res, "Login not found", 404);
+  if (id === req.user.id && (b.active === false || (b.role && b.role !== "owner"))) return bad(res, "You can't remove your own admin access");
+  if (b.role && ROLES.includes(b.role) && b.role !== u.role) {
+    if (b.role !== "rep" && u.role === "rep" && (await q("select count(*)::int n from orders where rep_id = $1 and payout_id is null and status in ('paid','shipped','delivered')", [id])).rows[0].n) return bad(res, "This rep has commission earned and not paid out yet. Pay it out (or void it) before changing their role.");
+    await q("update users set role = $1, commission_rate = $2 where id = $3", [b.role, b.role === "rep" ? (u.commission_rate ?? 0) : 0, id]);
+    await q("delete from sessions where user_id = $1", [id]);
+  }
   if (b.active !== undefined) { await q("update users set active = $1 where id = $2", [!!b.active, id]); if (!b.active) await q("delete from sessions where user_id = $1", [id]); }
-  if (b.role) await q("update users set role = $1 where id = $2", [b.role === "owner" ? "owner" : "staff", id]);
   if (b.name !== undefined) await q("update users set name = $1 where id = $2", [str(b.name, 80), id]);
+  if (b.phone !== undefined) await q("update users set phone = $1 where id = $2", [str(b.phone, 40), id]);
+  if (b.rate !== undefined && b.rate !== "" && (b.role === "rep" || u.role === "rep")) { const r = rateOf(b.rate); if (r === null) return bad(res, "Enter the commission as a percent."); await q("update users set commission_rate = $1 where id = $2", [r, id]); }
   if (b.password) {
-    if (String(b.password).length < 10) return bad(res, "Password needs at least 10 characters");
+    if (String(b.password).length < 8) return bad(res, "Password needs at least 8 characters");
     await q("update users set pass_hash = $1 where id = $2", [await bcrypt.hash(String(b.password), 11), id]);
     await q("delete from sessions where user_id = $1", [id]);
   }
