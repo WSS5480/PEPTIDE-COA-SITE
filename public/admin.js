@@ -709,8 +709,8 @@ async function products() {
         <label class="chk"><input type="checkbox" id="mkRound"${localStorage.getItem("markupRound") === "1" ? " checked" : ""}> Round to whole dollars</label>
         <button class="btn solid" id="mkApply">Set all prices from cost</button><span class="muted" id="mkNote"></span></div>
       <span class="muted">Pick a markup, then Set all prices: price = cost + markup (a $20 cost at +100% is $40). Only products with a cost change; the new prices show in the table until you click Save all changes. Costs come from the cost sheet, the Cost column or Inventory → Receive.</span></div>` : "";
-  pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="costP">Cost sheet</button><button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>${list.length ? `<button class="btn danger" id="clrP">Remove all products</button>` : ""}` : ""}</div></header>
-    <div id="costBox"></div><div id="impBox"></div><div id="manageBox"></div>
+  pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="descP">Descriptions</button><button class="btn" id="costP">Cost sheet</button><button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>${list.length ? `<button class="btn danger" id="clrP">Remove all products</button>` : ""}` : ""}</div></header>
+    <div id="descBox"></div><div id="costBox"></div><div id="impBox"></div><div id="manageBox"></div>
     <p class="muted">Click a column name to sort. Cost = what you pay per vial (never shown on the store). Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). Untick Active to hide a product. <strong>Description:</strong> the first line is what's in the vial (e.g. "BPC-157 5 mg + TB-500 5 mg in one 10 mg vial") and each line that starts with "-" is a benefit bullet on the store card. A lab report attaches to a product when the peptide name, size and manufacturer match.</p>
     ${(() => { const n = list.filter((p) => p.active && !repFor(p).length).length; return n ? `<p class="muted"><strong>${n} active product${n === 1 ? " has" : "s have"} no lab report.</strong> Sort by the Lab report column to see them.</p>` : ""; })()}
     ${markupBar}
@@ -784,6 +784,27 @@ async function products() {
     };
   }
   if (document.getElementById("impP")) document.getElementById("impP").onclick = () => importBox(list);
+  if (document.getElementById("descP")) document.getElementById("descP").onclick = () => {
+    const box = document.getElementById("descBox");
+    box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><div class="row2" style="justify-content:space-between;align-items:center"><h2>Descriptions</h2><button class="btn" type="button" id="descClose">Close</button></div>
+      <p class="muted">Line 1 shows under the name on the store: just the peptides and mg in the vial (e.g. "BPC-157 5 mg + TB-500 5 mg"). Every line that starts with "-" is a benefit bullet — keep them short (about 25 characters) so each stays on one line.</p>
+      <input id="descQ" type="search" placeholder="Filter products" style="height:2.4rem;padding:0 .8rem;border:1px solid var(--line-strong);border-radius:8px;max-width:18rem">
+      <div class="tblwrap" style="max-height:60vh"><table class="tbl compact" id="descT"><thead><tr><th>Product</th><th>Description</th><th>Preview</th></tr></thead><tbody>
+      ${list.map((p) => `<tr data-did="${p.id}" data-txt="${esc(`${p.name} ${p.strength} ${p.manufacturer || ""}`.toLowerCase())}"><td class="namecol"><strong>${esc(p.name)}</strong><div class="muted" style="font-size:.78rem">${esc(p.strength)}${p.manufacturer ? " · " + esc(p.manufacturer) : ""}</div></td>
+        <td><textarea data-desc rows="5" style="width:100%;min-width:22rem;font:inherit;font-size:.85rem;line-height:1.3;resize:vertical">${esc(p.description || "")}</textarea></td><td data-prev style="min-width:14rem;font-size:.8rem"></td></tr>`).join("")}</tbody></table></div>
+      <div class="row2" style="align-items:center"><button class="btn solid" type="button" id="descSave">Save descriptions</button><span class="muted" id="descMsg">Only changed rows are saved.</span></div></div>`;
+    const preview = (tr) => { const lines = tr.querySelector("[data-desc]").value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean); const b = lines.filter((l) => /^[-•*]/.test(l)).map((l) => l.replace(/^[-•*]\s*/, "")); const t = lines.filter((l) => !/^[-•*]/.test(l)); tr.querySelector("[data-prev]").innerHTML = `${t.length ? `<div class="muted">${t.map(esc).join("<br>")}</div>` : ""}${b.length ? `<ul style="margin:.25rem 0 0;padding-left:1.1rem">${b.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}`; };
+    box.querySelectorAll("tr[data-did]").forEach(preview);
+    box.addEventListener("input", (e) => { if (e.target.matches("[data-desc]")) preview(e.target.closest("tr")); });
+    document.getElementById("descQ").oninput = (e) => { const t = e.target.value.toLowerCase(); box.querySelectorAll("tr[data-did]").forEach((tr) => { tr.hidden = t && !tr.dataset.txt.includes(t); }); };
+    document.getElementById("descClose").onclick = () => { box.innerHTML = ""; };
+    document.getElementById("descSave").onclick = async () => {
+      const items = [...box.querySelectorAll("tr[data-did]")].map((tr) => ({ id: +tr.dataset.did, description: tr.querySelector("[data-desc]").value })).filter((i) => (list.find((p) => p.id === i.id) || {}).description !== i.description);
+      if (!items.length) return toast("Nothing changed");
+      const r = await api("/products/descriptions", { method: "POST", body: { items } }); toast(`Saved ${r.saved} description${r.saved === 1 ? "" : "s"}`); paneDirty = false; unsaved = false; products();
+    };
+    box.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   if (document.getElementById("costP")) document.getElementById("costP").onclick = async () => {
     const box = document.getElementById("costBox");
     if (box.innerHTML) { box.innerHTML = ""; return; }

@@ -1286,6 +1286,13 @@ async function fillDescriptions(who) {
   return { filled: done, missing };
 }
 admin.post("/costs/descriptions", owner, wrap(async (req, res) => res.json({ ok: true, ...(await fillDescriptions(req.user.email)) })));
+// Save descriptions for many products at once (the Descriptions panel in Products)
+admin.post("/products/descriptions", owner, wrap(async (req, res) => {
+  const items = (Array.isArray(req.body?.items) ? req.body.items : []).map((i) => ({ id: intOrNull(i.id), description: str(i.description, 2000) })).filter((i) => i.id);
+  let n = 0;
+  for (const i of items) n += (await q("update products set description = $1 where id = $2 and description is distinct from $1", [i.description, i.id])).rowCount;
+  res.json({ ok: true, saved: n });
+}));
 admin.post("/costs/prune", owner, wrap(async (req, res) => {
   if (req.body?.confirm !== "REMOVE") return bad(res, "Confirm first.");
   const { notInSheet } = await costSheetMatches();
