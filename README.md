@@ -30,3 +30,6 @@ A new peptide name in `product` creates its own section on the page automaticall
 
 `index.html` carries `<meta name="robots" content="noindex">` near the top, so search engines
 do not list the site. Delete that line when you want it to be found.
+
+## Case tracker link (one login for both apps)
+Set `HUB_SECRET` (any long random string, the same value on the tracker) and `TRACKER_URL` (the tracker's address). Then Team logins has Peptide store / Case tracker checkboxes and a PIN per person, the admin and rep app get a Peptide store | Case tracker switch at the top, Commissions has Combined / Peptide store / Case tracker views, and the COO email under Site settings is used by the tracker's approval emails along with the Microsoft 365 app saved here.
