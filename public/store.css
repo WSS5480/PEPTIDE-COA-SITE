@@ -364,3 +364,21 @@ body { overscroll-behavior-y: contain; }
 /* real vial photo fills the card's picture area */
 .thumb.photo { background: #efefef; }
 .thumb.photo svg { width: 100%; height: 100%; }
+
+/* top bar in the admin's navy, logo in a white box like the admin sidebar */
+.top { background: var(--navy); border-bottom: 0; color: var(--on-navy); }
+.top .logo { color: var(--on-navy); }
+.top .logo .brandimg { padding: .3rem .6rem; background: #fff; border-radius: 10px; height: 2.9rem; box-sizing: border-box; }
+.top .eyebrow { color: rgba(255, 255, 255, .72); }
+.top .coaonly, .top .acctbtn, .top .stoggle { background: transparent; border-color: rgba(255, 255, 255, .35); color: var(--on-navy); }
+.top .coaonly:hover, .top .acctbtn:hover, .top .stoggle:hover { border-color: #fff; color: #fff; background: rgba(255, 255, 255, .08); }
+.top .coaonly:has(input:checked) { background: #fff; color: var(--navy); border-color: #fff; }
+.top .coaonly input { accent-color: var(--navy); }
+.top .hsearch input { background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .25); color: #fff; }
+.top .hsearch input::placeholder { color: rgba(255, 255, 255, .65); }
+.top .hsearch input:focus { background: #fff; color: var(--ink); border-color: #fff; }
+.top .hsearch svg { color: rgba(255, 255, 255, .75); }
+.top .hsearch input:focus + svg, .top .hsearch:focus-within svg { color: var(--ink-2); }
+.top .cartbtn { background: #fff; color: var(--navy); }
+.top .cartbtn:hover { background: var(--blue-wash); }
+.top .cartbtn .n { background: var(--navy); color: #fff; }
