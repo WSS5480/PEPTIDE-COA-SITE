@@ -2025,6 +2025,20 @@ app.get("/go/tracker", wrap(async (req, res) => {
   const t = hubSign({ exp: Date.now() + 120000, sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate });
   res.redirect(`${TRACKER_URL}/sso?t=${encodeURIComponent(t)}&next=${encodeURIComponent(next)}`);
 }));
+// the other direction: a tracker login lands here with a signed token and gets a store session (matched by email)
+app.get("/sso", wrap(async (req, res) => {
+  const t = hubVerify(String(req.query.t || ""));
+  const next = /^\/[A-Za-z0-9/_#?=&%.-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : "/admin";
+  const land = (to) => res.type("html").send(`<!doctype html><meta charset="utf-8"><title>Signing in…</title><meta http-equiv="refresh" content="0;url=${escHtml(to)}"><script>location.replace(${JSON.stringify(to)})</script>`);
+  if (!t || !t.sso) return land("/admin?sso=expired");
+  const email = String(t.email || "").toLowerCase();
+  const { rows: [u] } = email ? await q("select * from users where lower(email) = $1 and active", [email]) : { rows: [] };
+  if (!u) return land("/admin?sso=nouser&name=" + encodeURIComponent(t.name || ""));
+  const token = crypto.randomBytes(32).toString("hex");
+  await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '14 days')", [token, u.id]);
+  res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${14 * 86400}${SECURE ? "; Secure" : ""}`);
+  land(u.role === "rep" && next.startsWith("/admin") ? next.replace("/admin", "/rep") : next);
+}));
 app.get("/api/admin/hub", wrap(auth), (req, res) => res.json({ linked: !!(HUB_SECRET && TRACKER_URL), trackerUrl: TRACKER_URL, apps: appsOf(req.user) }));
 // combined commissions: the store's rows plus the tracker's month estimates
 admin.get("/hub/commissions", wrap(async (req, res) => {
@@ -2035,6 +2049,25 @@ admin.get("/hub/commissions", wrap(async (req, res) => {
     res.json({ ok: true, month, ...j });
   } catch (e) { res.json({ ok: false, month, error: e.message, reps: [] }); }
 }));
+// Setup page: the tracker's approval-email switch, a test send, and signed preview links
+admin.get("/hub/settings", owner, wrap(async (req, res) => { try { res.json({ ok: true, ...(await trackerGet("/api/hub/settings")) }); } catch (e) { res.json({ ok: false, error: e.message }); } }));
+admin.put("/hub/settings", owner, wrap(async (req, res) => {
+  try {
+    const r = await fetch(`${TRACKER_URL}/api/hub/settings`, { method: "PUT", headers: { Authorization: "Hub " + hubSign({ exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify({ mailOn: !!req.body?.mailOn }), signal: AbortSignal.timeout(12000) });
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `The case tracker answered ${r.status}`); res.json({ ok: true, ...j });
+  } catch (e) { bad(res, e.message); }
+}));
+admin.post("/hub/mail-test", owner, wrap(async (req, res) => {
+  try {
+    const r = await fetch(`${TRACKER_URL}/api/hub/mail-test`, { method: "POST", headers: { Authorization: "Hub " + hubSign({ exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify({ by: req.user.name }), signal: AbortSignal.timeout(20000) });
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `The case tracker answered ${r.status}`); res.json({ ok: true, ...j });
+  } catch (e) { bad(res, e.message); }
+}));
+admin.get("/hub/preview-url", owner, (req, res) => {
+  if (!HUB_SECRET || !TRACKER_URL) return bad(res, "The case tracker isn't linked.");
+  const kind = req.query.kind === "surgeon" ? "surgeon" : "facility";
+  res.json({ url: `${TRACKER_URL}/hub/mail-preview?kind=${kind}&t=${encodeURIComponent(hubSign({ preview: true, exp: Date.now() + 10 * 60000 }))}` });
+});
 admin.get("/hub/tracker-reps", owner, wrap(async (req, res) => {
   try { res.json({ ok: true, ...(await trackerGet("/api/hub/reps")) }); } catch (e) { res.json({ ok: false, error: e.message, reps: [] }); }
 }));

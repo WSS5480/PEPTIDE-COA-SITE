@@ -282,6 +282,7 @@ if (window.AppRefresh) window.AppRefresh.init({
 });
 
 (async () => {
+  if (/^#(account|customers|orders|commissions)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
   const res = await fetch("/api/admin/me");
   if (res.ok) { me = (await res.json()).user; HUB = await api("/hub").catch(() => HUB); if (me.role === "rep") shell(); else drawLogin("That login is for the admin, not the rep app. Go to /admin."); } else drawLogin();
 })();

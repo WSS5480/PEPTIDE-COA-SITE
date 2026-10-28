@@ -35,6 +35,7 @@ const isRep = () => me && me.role === "rep";
 /* ---------- login ---------- */
 let loginMode = localStorage.getItem("loginMode") || "email";
 function drawLogin(msg) {
+  if (!msg && window.__ssoMsg) { msg = window.__ssoMsg; window.__ssoMsg = ""; }
   const pinMode = loginMode === "pin";
   app.innerHTML = `<div class="login"><form id="lf">
     <img src="/site-logo?v=2" alt="360 Peptides" style="height:3.2rem;width:auto;max-width:16rem;object-fit:contain;justify-self:start">
@@ -65,7 +66,9 @@ function drawLogin(msg) {
 // [key, label, who]: "all" = owner, staff and sales reps · "team" = owner and staff · "owner" · "ownerrep" = owner and reps. "line" draws the divider:
 // sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
 const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["line"],
-  ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["staff", "Team logins", "owner"], ["account", "My account", "all"]];
+  ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["line2"],
+  // below the second line: the things you reach from either app (the case tracker links here too)
+  ["staff", "Team logins", "owner"], ["setup", "Email & approvals", "owner"], ["apps", "Apps & downloads", "all"], ["account", "My account", "all"]];
 const canSee = (who) => who === "all" || (who === "owner" && isOwner()) || (who === "team" && !isRep()) || (who === "ownerrep" && (isOwner() || isRep()));
 function shell() {
   app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><span><button type="button" data-refresh title="Refresh"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button> <button type="button" id="mm">Menu</button></span></div>
@@ -83,7 +86,7 @@ function shell() {
 async function drawNav() {
   try { stats = await api("/stats"); } catch (e) { return; }
   const n = stats.byStatus.new || 0;
-  document.getElementById("nav").innerHTML = NAV.map(([k, label, who]) => k === "line" ? (isRep() ? "" : '<hr class="navline">') : !canSee(who) ? "" : `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}${k === "customers" && stats.pinRequests ? `<span class="badge" title="PIN requests">${stats.pinRequests}</span>` : ""}</button>`).join("");
+  document.getElementById("nav").innerHTML = NAV.map(([k, label, who]) => k === "line" ? (isRep() ? "" : '<hr class="navline">') : k === "line2" ? '<hr class="navline">' : !canSee(who) ? "" : `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}${k === "customers" && stats.pinRequests ? `<span class="badge" title="PIN requests">${stats.pinRequests}</span>` : ""}</button>`).join("");
 }
 let paneDirty = false; // something typed on this screen and not saved yet
 document.addEventListener("input", (e) => { if (e.target.closest("#pane")) paneDirty = true; });
@@ -95,7 +98,7 @@ async function go(v, id, opts = {}) {
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  await ({ dashboard, orders, neworder, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account }[v] || dashboard)();
+  await ({ dashboard, orders, neworder, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps }[v] || dashboard)();
   if (v === "dashboard" && document.getElementById("hubKpi")) fillHubKpi();
   if (!opts.keepScroll) window.scrollTo(0, 0);
 }
@@ -1522,45 +1525,14 @@ async function page() {
 }
 
 /* ---------- settings ---------- */
-async function settings() {
+async function settings(part = "site") {
   const { settings: s, stripe: st, mail: ml, baseUrl } = await api("/settings");
   const t = (k, label, help = "") => `<div class="field"><label class="eyebrow" for="s-${k}">${label}</label><input id="s-${k}" value="${esc(s[k])}"${ro()}>${help ? `<span class="muted">${help}</span>` : ""}</div>`;
   const ta = (k, label, help = "") => `<div class="field"><label class="eyebrow" for="s-${k}">${label}</label><textarea id="s-${k}"${ro()}>${esc(s[k])}</textarea>${help ? `<span class="muted">${help}</span>` : ""}</div>`;
   const site = baseUrl || location.origin;
   // which sending account is picked: what's saved, else Microsoft 365 (so the login boxes show right away), unless the host already has settings
   const prov0 = s.mailMode === "resend" ? "resend" : s.mailMode === "graph" ? "graph" : s.mailMode === "smtp" ? (/office365|outlook/i.test(s.mailHost || "") ? "microsoft" : /gmail|google/i.test(s.mailHost || "") ? "google" : "smtp") : (ml && ml.ready && ml.source === "host" ? "" : "graph");
-  pane().innerHTML = `<header><h1>Site settings</h1></header>
-    <div class="panel"><h2>Store</h2>
-      <label class="chk"><input type="checkbox" id="s-storeOpen"${s.storeOpen ? " checked" : ""}${ro()}> Taking orders (untick to pause checkout)</label>
-      <label class="chk"><input type="checkbox" id="s-pricesRequireLogin"${s.pricesRequireLogin ? " checked" : ""}${ro()}> Show prices and the cart only after a customer signs in with their PIN (each customer sees their own pricing)</label>
-      <div class="grid2">${t("brand", "Store name", "Shown top left and in the footer")}${t("tagline", "Tagline (optional)")}${t("contact", "Contact for customers", "Phone, text or email")}
-      ${t("distributorOf", "Brand you distribute", 'Shows "Authorized ___ distributor"')}${t("brandUrl", "Brand's website (https)")}</div>
-      <div class="grid2">${t("priceNote", "Note under products")}
-        <div class="field"><label class="eyebrow" for="s-minOrder">Minimum order $</label><input id="s-minOrder" value="${usd(s.minOrderCents) || ""}" placeholder="None" inputmode="decimal"${ro()}></div></div></div>
-    <div class="panel"><h2>Shipping &amp; local delivery</h2>
-      <p class="muted">Customers (and sales reps) choose one at checkout. Shipping is charged; local delivery is free. Orders show which one was picked.</p>
-      <div class="grid2">
-        <div class="stack"><label class="chk"><input type="checkbox" id="s-shippingOn"${s.shippingOn ? " checked" : ""}${ro()}> Offer shipping</label>
-          ${t("shippingLabel", "Shipping name shown", "e.g. FedEx shipping")}
-          <div class="field"><label class="eyebrow" for="s-shippingAmt">Shipping charge $</label><input id="s-shippingAmt" value="${usd(s.shippingCents)}" inputmode="decimal"${ro()}></div>
-          <div class="field"><label class="eyebrow" for="s-shippingFree">Free shipping on orders over $ (optional)</label><input id="s-shippingFree" value="${s.shippingFreeOverCents ? usd(s.shippingFreeOverCents) : ""}" placeholder="Never free" inputmode="decimal"${ro()}></div>
-          ${t("shippingNote", "Note under it", "e.g. Ships in 1 to 3 business days")}
-          ${t("fedexAccount", "FedEx account number", "Shown to staff on orders to ship, with a copy button. Customers never see it.")}</div>
-        <div class="stack"><label class="chk"><input type="checkbox" id="s-deliveryOn"${s.deliveryOn ? " checked" : ""}${ro()}> Offer local delivery (free)</label>
-          ${t("deliveryLabel", "Delivery name shown", "e.g. Local delivery")}
-          ${t("deliveryNote", "Note under it", "e.g. Free in the McAllen area. We'll call to set a time.")}</div></div></div>
-    <div class="panel"><h2>Payments</h2>
-      <p>${st && st.ready ? `<span class="pill st-shipped">Stripe connected</span> ${st.mode === "live" ? "Live key: real cards are charged." : "Test key: only Stripe test cards work (4242 4242 4242 4242)."} ${st.webhook ? "Webhook secret set." : "No webhook secret yet (payments still record when the customer returns to the site; the webhook is the backup)."}` : `<span class="pill st-cancelled">Stripe not connected</span> Checkout takes order requests until the Stripe key is on the host.`}</p>
-      <label class="chk"><input type="checkbox" id="s-cardPayments"${s.cardPayments ? " checked" : ""}${ro()}${st && st.ready ? "" : " disabled"}> Take card payments at checkout (Stripe)${st && st.ready ? "" : " — connect Stripe first"}</label>
-      <p class="muted">With this on, the Checkout button becomes <strong>Pay with card</strong>: the customer pays on Stripe's secure page and the order marks itself <em>paid</em>. Off, customers submit order requests and you collect payment yourself; you can still send any unpaid order a card payment link from the order page.</p>
-      ${ta("paymentInstructions", "What customers see after an order request", "Explain how you'll confirm and how they pay (shown when card payments are off)")}
-      <details><summary style="cursor:pointer;font-weight:600">How to connect Stripe (one time)</summary><ol class="muted" style="margin:.6rem 0 0 1.2rem;display:grid;gap:.35rem">
-        <li>Create the account at <a href="https://dashboard.stripe.com/register" target="_blank" rel="noopener">dashboard.stripe.com/register</a> with your business details and bank account. Stripe reviews what you sell; research peptides can be declined, so wait for the account to be approved before turning this on.</li>
-        <li>In Stripe go to <strong>Developers → API keys</strong> and copy the <strong>Secret key</strong> (starts with <span class="mono">sk_live_</span>; use <span class="mono">sk_test_</span> to try it first).</li>
-        <li>In Render open the <strong>peptide-store</strong> service → <strong>Environment</strong> → add <span class="mono">STRIPE_SECRET_KEY</span> = that key → Save. The service restarts by itself.</li>
-        <li>Back in Stripe: <strong>Developers → Webhooks → Add endpoint</strong>, URL <span class="mono">${esc(site)}/api/stripe/webhook</span>, event <span class="mono">checkout.session.completed</span>. Copy its <strong>Signing secret</strong> (<span class="mono">whsec_…</span>) into Render as <span class="mono">STRIPE_WEBHOOK_SECRET</span>.</li>
-        <li>Reload this page: it should say <em>Stripe connected</em>. Tick the box above and Save.</li></ol></details></div>
-    <div class="panel"><h2>Order emails</h2>
+  const emailPanel = `    <div class="panel"><h2>Order emails</h2>
       <p>${ml && ml.ready ? `<span class="pill st-shipped">Email connected</span> Sending through ${esc(ml.detail)} as ${esc(ml.from)}${ml.source === "host" ? " (from the settings on the host)" : ""}.` : `<span class="pill st-cancelled">Email not connected</span> Orders are saved here, but no emails go out until a sending account is saved below.`}</p>
       <div class="grid2">${t("orderEmail", "Send every order to", "You get a message for each new order and each card payment")}${t("cooEmail", "COO approval emails (case tracker) to", "Where the case tracker sends its facility / surgeon approvals; it uses the sending account below")}</div>
       <label class="chk"><input type="checkbox" id="s-orderEmailOn"${s.orderEmailOn ? " checked" : ""}${ro()}> Email me every order</label>
@@ -1595,7 +1567,46 @@ async function settings() {
         <p class="muted" style="margin-top:.4rem">Optional, for IT: limit the app to that one mailbox with an application access policy (New-ApplicationAccessPolicy in Exchange Online PowerShell).</p>
         <p class="muted" style="margin-top:.6rem"><strong>Microsoft 365 mailbox login (SMTP):</strong> pick Microsoft 365, enter a real mailbox's email and password. Shared mailboxes have no password: either use a real user that has <em>Send as</em> on the shared address (put the shared address in From), or send as the user's own address. If the test says the login was rejected, the tenant blocks app sign-ins (Security defaults / MFA) — ask your Microsoft admin to allow this mailbox, or use Resend.</p>
         <p class="muted" style="margin-top:.6rem"><strong>Google Workspace / Gmail:</strong> turn on 2-Step Verification, create an app password at myaccount.google.com/apppasswords and use it as the password.</p>
-        <p class="muted" style="margin-top:.6rem"><strong>Resend</strong> (no mailbox password needed): sign up at resend.com, add and verify the domain 360medical.net with the DNS records they show, create an API key and paste it here with a From address on that domain.</p></details></div>
+        <p class="muted" style="margin-top:.6rem"><strong>Resend</strong> (no mailbox password needed): sign up at resend.com, add and verify the domain 360medical.net with the DNS records they show, create an API key and paste it here with a From address on that domain.</p></details></div>`;
+  if (part === "email") {
+    pane().innerHTML = `<header><h1>Email &amp; approvals</h1></header>
+      <p class="muted">One place for both apps' email. The <strong>Peptide store</strong> sends order emails with the account below; the <strong>Case tracker</strong> sends its facility / surgeon approval emails to the COO with the same account.</p>
+      <h2 class="eyebrow" style="margin:.2rem 0 -.4rem">Peptide store</h2>${emailPanel}
+      <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">Case tracker</h2><div id="trackerMail" class="panel"><h2>Approval emails</h2><p class="muted">Loading…</p></div>`;
+    trackerMailPanel();
+  } else
+  pane().innerHTML = `<header><h1>Site settings</h1></header>
+    <div class="panel"><h2>Store</h2>
+      <label class="chk"><input type="checkbox" id="s-storeOpen"${s.storeOpen ? " checked" : ""}${ro()}> Taking orders (untick to pause checkout)</label>
+      <label class="chk"><input type="checkbox" id="s-pricesRequireLogin"${s.pricesRequireLogin ? " checked" : ""}${ro()}> Show prices and the cart only after a customer signs in with their PIN (each customer sees their own pricing)</label>
+      <div class="grid2">${t("brand", "Store name", "Shown top left and in the footer")}${t("tagline", "Tagline (optional)")}${t("contact", "Contact for customers", "Phone, text or email")}
+      ${t("distributorOf", "Brand you distribute", 'Shows "Authorized ___ distributor"')}${t("brandUrl", "Brand's website (https)")}</div>
+      <div class="grid2">${t("priceNote", "Note under products")}
+        <div class="field"><label class="eyebrow" for="s-minOrder">Minimum order $</label><input id="s-minOrder" value="${usd(s.minOrderCents) || ""}" placeholder="None" inputmode="decimal"${ro()}></div></div></div>
+    <div class="panel"><h2>Shipping &amp; local delivery</h2>
+      <p class="muted">Customers (and sales reps) choose one at checkout. Shipping is charged; local delivery is free. Orders show which one was picked.</p>
+      <div class="grid2">
+        <div class="stack"><label class="chk"><input type="checkbox" id="s-shippingOn"${s.shippingOn ? " checked" : ""}${ro()}> Offer shipping</label>
+          ${t("shippingLabel", "Shipping name shown", "e.g. FedEx shipping")}
+          <div class="field"><label class="eyebrow" for="s-shippingAmt">Shipping charge $</label><input id="s-shippingAmt" value="${usd(s.shippingCents)}" inputmode="decimal"${ro()}></div>
+          <div class="field"><label class="eyebrow" for="s-shippingFree">Free shipping on orders over $ (optional)</label><input id="s-shippingFree" value="${s.shippingFreeOverCents ? usd(s.shippingFreeOverCents) : ""}" placeholder="Never free" inputmode="decimal"${ro()}></div>
+          ${t("shippingNote", "Note under it", "e.g. Ships in 1 to 3 business days")}
+          ${t("fedexAccount", "FedEx account number", "Shown to staff on orders to ship, with a copy button. Customers never see it.")}</div>
+        <div class="stack"><label class="chk"><input type="checkbox" id="s-deliveryOn"${s.deliveryOn ? " checked" : ""}${ro()}> Offer local delivery (free)</label>
+          ${t("deliveryLabel", "Delivery name shown", "e.g. Local delivery")}
+          ${t("deliveryNote", "Note under it", "e.g. Free in the McAllen area. We'll call to set a time.")}</div></div></div>
+    <div class="panel"><h2>Payments</h2>
+      <p>${st && st.ready ? `<span class="pill st-shipped">Stripe connected</span> ${st.mode === "live" ? "Live key: real cards are charged." : "Test key: only Stripe test cards work (4242 4242 4242 4242)."} ${st.webhook ? "Webhook secret set." : "No webhook secret yet (payments still record when the customer returns to the site; the webhook is the backup)."}` : `<span class="pill st-cancelled">Stripe not connected</span> Checkout takes order requests until the Stripe key is on the host.`}</p>
+      <label class="chk"><input type="checkbox" id="s-cardPayments"${s.cardPayments ? " checked" : ""}${ro()}${st && st.ready ? "" : " disabled"}> Take card payments at checkout (Stripe)${st && st.ready ? "" : " — connect Stripe first"}</label>
+      <p class="muted">With this on, the Checkout button becomes <strong>Pay with card</strong>: the customer pays on Stripe's secure page and the order marks itself <em>paid</em>. Off, customers submit order requests and you collect payment yourself; you can still send any unpaid order a card payment link from the order page.</p>
+      ${ta("paymentInstructions", "What customers see after an order request", "Explain how you'll confirm and how they pay (shown when card payments are off)")}
+      <details><summary style="cursor:pointer;font-weight:600">How to connect Stripe (one time)</summary><ol class="muted" style="margin:.6rem 0 0 1.2rem;display:grid;gap:.35rem">
+        <li>Create the account at <a href="https://dashboard.stripe.com/register" target="_blank" rel="noopener">dashboard.stripe.com/register</a> with your business details and bank account. Stripe reviews what you sell; research peptides can be declined, so wait for the account to be approved before turning this on.</li>
+        <li>In Stripe go to <strong>Developers → API keys</strong> and copy the <strong>Secret key</strong> (starts with <span class="mono">sk_live_</span>; use <span class="mono">sk_test_</span> to try it first).</li>
+        <li>In Render open the <strong>peptide-store</strong> service → <strong>Environment</strong> → add <span class="mono">STRIPE_SECRET_KEY</span> = that key → Save. The service restarts by itself.</li>
+        <li>Back in Stripe: <strong>Developers → Webhooks → Add endpoint</strong>, URL <span class="mono">${esc(site)}/api/stripe/webhook</span>, event <span class="mono">checkout.session.completed</span>. Copy its <strong>Signing secret</strong> (<span class="mono">whsec_…</span>) into Render as <span class="mono">STRIPE_WEBHOOK_SECRET</span>.</li>
+        <li>Reload this page: it should say <em>Stripe connected</em>. Tick the box above and Save.</li></ol></details></div>
+    ${part === "email" ? emailPanel : ""}
     ${isOwner() ? `<div class="panel" id="pinPanel"><h2>Site PIN</h2>
       <p class="muted">When on, nobody can see the store, products, prices or lab reports until they enter a PIN. Two kinds work: the <strong>shared PIN</strong> below, which anyone can use, and each customer's <strong>own PIN</strong>, which you give out under Customers. Admin stays open to you. Changing the shared PIN makes everyone using it enter the new one.</p>
       <label class="chk"><input type="checkbox" id="pinOn"> Require the PIN to view the store</label>
@@ -1611,6 +1622,7 @@ async function settings() {
         .map(([k, label]) => `<div class="field"><label class="eyebrow" for="s-${k}">${label}</label><textarea id="s-${k}" style="min-height:12rem"${ro()}>${esc((s[k] || []).join("\n"))}</textarea></div>`).join("")}</div>
     ${isOwner() ? `<div><button class="btn solid" id="sSave">Save settings</button></div>` : `<p class="muted">Only the owner can change settings.</p>`}`;
   if (!isOwner()) return;
+  if (part === "site") {
   const pin = await api("/pin");
   const pst = () => {
     const kinds = [pin.set ? "the shared PIN" : "", pin.customerPins ? `${pin.customerPins} customer PIN${pin.customerPins === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
@@ -1644,8 +1656,9 @@ async function settings() {
     if (!v("shippingOn").checked && !v("deliveryOn").checked && !confirm("Neither shipping nor delivery is offered: checkout will say shipping is confirmed with the order. Save anyway?")) return;
     await api("/settings", { method: "PUT", body }); toast("Settings saved"); paneDirty = false;
   };
+  } // end of the site-only handlers
   const prov = document.getElementById("s-mailProvider");
-  const mailFields = () => {
+  const mailFields = () => { if (!prov) return;
     const p = prov.value;
     const isSmtp = p === "microsoft" || p === "google" || p === "smtp";
     pane().querySelectorAll(".mail-smtp, .mail-resend, .mail-graph").forEach((el) => { el.hidden = !((el.classList.contains("mail-smtp") && isSmtp) || (el.classList.contains("mail-resend") && p === "resend") || (el.classList.contains("mail-graph") && p === "graph")); });
@@ -1654,7 +1667,7 @@ async function settings() {
     if (p === "google") { host.value = "smtp.gmail.com"; port.value = "465"; }
     host.readOnly = port.readOnly = p === "microsoft" || p === "google";
   };
-  mailFields(); prov.onchange = mailFields;
+  mailFields(); if (prov) prov.onchange = mailFields;
   const mailBody = () => {
     const v = (k) => document.getElementById("s-" + k);
     const p = prov.value;
@@ -1667,11 +1680,11 @@ async function settings() {
     if (b.mailMode === "smtp" && (!b.mailUser || (!b.mailPass && !s.mailPassSet))) return toast("Enter the login email and password");
     if (b.mailMode === "resend" && !b.resendKey && !s.resendKeySet) return toast("Paste the Resend API key");
     if (b.mailMode === "graph" && (!b.graphTenant || !b.graphClient || !b.mailUser || (!b.graphSecret && !s.graphSecretSet))) return toast("Enter the tenant ID, client ID, secret and the mailbox");
-    await api("/settings", { method: "PUT", body: b }); toast("Sending account saved"); paneDirty = false; settings();
+    await api("/settings", { method: "PUT", body: b }); toast("Sending account saved"); paneDirty = false; settings(part);
   };
   if (document.getElementById("mailClear")) document.getElementById("mailClear").onclick = async () => {
     if (!confirm("Forget the saved mail password / API key? The store stops sending until a new one is saved (unless the host has its own settings).")) return;
-    await api("/mail/clear", { method: "POST" }); toast("Forgotten"); settings();
+    await api("/mail/clear", { method: "POST" }); toast("Forgotten"); settings(part);
   };
   if (document.getElementById("mailShow")) document.getElementById("mailShow").onclick = async () => {
     const d = await api("/mail/secret");
@@ -1697,6 +1710,35 @@ async function settings() {
   };
 }
 
+const setup = () => settings("email");
+// the case tracker's approval emails, managed from here (on/off, test, previews); its sender and COO address are the store's
+async function trackerMailPanel() {
+  const box = document.getElementById("trackerMail"); if (!box) return;
+  if (!HUB.linked) { box.innerHTML = `<h2>Approval emails</h2><p class="muted">The case tracker isn't linked to this store yet (HUB_SECRET / TRACKER_URL on the host).</p>`; return; }
+  const r = await api("/hub/settings").catch((e) => ({ ok: false, error: e.message }));
+  if (!r.ok) { box.innerHTML = `<h2>Approval emails</h2><div class="err">Case tracker: ${esc(r.error || "not reachable")}</div>`; return; }
+  box.innerHTML = `<h2>Approval emails</h2>
+    <p class="muted">When a rep adds a facility or a surgeon in the case tracker, the COO gets an email with a one-tap <strong>Approve</strong> button. It goes to the <strong>COO approval emails</strong> address above and sends with the store's sending account${r.viaHub ? "" : " once that's a Microsoft 365 app"}.</p>
+    <label class="chk"><input type="checkbox" id="tmOn"${r.mailOn ? " checked" : ""}> Send approval emails</label>
+    <p class="muted" id="tmInfo">${esc(r.info || "")}</p>
+    <div class="row2" style="align-items:center"><button class="btn" id="tmTest" type="button">Send a test to the COO</button><a class="btn" id="tmPrevF" href="#" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">Preview facility email</a><a class="btn" id="tmPrevS" href="#" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">Preview surgeon email</a><a class="btn" href="/go/tracker?next=/admin" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">Open the tracker admin ↗</a><span class="muted" id="tmOut"></span></div>`;
+  document.getElementById("tmOn").onchange = async (e) => { try { await api("/hub/settings", { method: "PUT", body: { mailOn: e.target.checked } }); toast(e.target.checked ? "Approval emails on" : "Approval emails off"); } catch (x) { e.target.checked = !e.target.checked; } };
+  document.getElementById("tmTest").onclick = async () => { const o = document.getElementById("tmOut"); o.textContent = "Sending…"; try { const t = await api("/hub/mail-test", { method: "POST" }); o.textContent = `Sent to ${t.to}. Check the inbox (and spam).`; } catch (x) { o.textContent = "Not sent: " + x.message; } };
+  for (const [id, kind] of [["tmPrevF", "facility"], ["tmPrevS", "surgeon"]]) document.getElementById(id).onclick = async (e) => { e.preventDefault(); const { url } = await api("/hub/preview-url?kind=" + kind); window.open(url, "_blank", "noopener"); };
+}
+/* ---------- apps & downloads: every app in one place ---------- */
+function apps() {
+  const tr = HUB.linked;
+  const card = (title, what, who, open, install) => `<div class="panel"><h2>${title}</h2><p class="muted">${what}</p><p class="muted"><strong>Who:</strong> ${who}</p><div class="row2">${open}${install || ""}</div></div>`;
+  const link = (href, label, ext) => `<a class="btn" href="${href}"${ext ? ' target="_blank" rel="noopener"' : ""} style="display:inline-grid;place-items:center;text-decoration:none">${label}</a>`;
+  pane().innerHTML = `<header><h1>Apps &amp; downloads</h1></header>
+    <p class="muted">Each app installs from its own page on a phone or computer (Add to Home Screen / Install). One login works across all of them${tr ? "" : " once the case tracker is linked"}.</p>
+    ${card("360 Peptides admin", "Orders, customers, products, inventory, commissions, team logins — this app.", "Admins and managers", link("/admin", "Open"), `<button class="btn solid" data-install type="button">Install on this device</button>`)}
+    ${card("360 Peptides store", "The customer-facing store and lab reports.", "Customers (and the office, with the store PIN)", link("/", "Open the store", true) + link("/lab-reports", "Lab reports", true), `<span class="muted">Install from the store page's <strong>Download app</strong> button.</span>`)}
+    ${card("Rep app", "Sales reps' customers, orders and commissions on a phone.", "Sales reps", link("/rep", "Open the rep app", true), `<span class="muted">Install from the rep app's <strong>Download app</strong> button.</span>`)}
+    ${card("360 Medical case tracker", "Surgical cases, quotas, pace and commission plans for the medical reps.", "Medical reps and the COO", tr ? link("/go/tracker?next=/", "Open the tracker", true) + link("/go/tracker?next=/download", "Download page", true) : `<span class="muted">Not linked yet.</span>`)}
+    ${card("360 Medical tracker admin", "Reps and plans, visits, surgeons, facilities, approvals.", "COO and managers", tr ? link("/go/tracker?next=/admin", "Open the tracker admin", true) + link("/go/tracker?next=/admin/download", "Download page", true) : `<span class="muted">Not linked yet.</span>`)}`;
+}
 /* ---------- staff ---------- */
 async function staff() {
   if (!isOwner()) return dashboard();
@@ -1801,6 +1843,9 @@ if (window.AppRefresh) window.AppRefresh.init({
   const m = /^#order-(\d+)$/.exec(location.hash);
   if (m) { view = "orders"; orderId = m[1]; history.replaceState(null, "", location.pathname); }
   if (location.hash === "#customers") { view = "customers"; history.replaceState(null, "", location.pathname); }
+  if (/^#(staff|setup|apps|account|settings|commissions|reps)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
+  const sso = new URLSearchParams(location.search).get("sso");
+  if (sso) { const name = new URLSearchParams(location.search).get("name"); history.replaceState(null, "", location.pathname); window.__ssoMsg = sso === "expired" ? "That link from the case tracker expired — go back and tap it again." : `There's no store login for ${name || "that tracker sign-in"} yet. Sign in here, or an admin can add one under Team logins (same email).`; }
   const res = await fetch("/api/admin/me");
   if (res.ok) { me = (await res.json()).user; HUB = await api("/hub").catch(() => HUB); shell(); } else drawLogin();
 })();
