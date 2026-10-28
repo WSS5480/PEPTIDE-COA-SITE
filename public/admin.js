@@ -74,7 +74,7 @@ function drawLogin(msg) {
 const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["line"],
   ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["line2"],
   // below the second line: the things you reach from either app (the case tracker links here too)
-  ["staff", "Team logins", "owner"], ["setup", "Email & approvals", "owner"], ["apps", "Apps & downloads", "all"], ["account", "My account", "all"]];
+  ["staff", "Team logins", "owner"], ["setup", "Email & approvals", "owner"], ["geo", "Geofencing", "owner"], ["apps", "Apps & downloads", "all"], ["account", "My account", "all"]];
 const canSee = (who) => who === "all" || (who === "owner" && isOwner()) || (who === "team" && !isRep()) || (who === "ownerrep" && (isOwner() || isRep()));
 function shell() {
   app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><span><button type="button" data-refresh title="Refresh"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button> <button type="button" id="mm">Menu</button></span></div>
@@ -92,7 +92,7 @@ function shell() {
 async function drawNav() {
   try { stats = await api("/stats"); } catch (e) { return; }
   const n = stats.byStatus.new || 0;
-  document.getElementById("nav").innerHTML = NAV.map(([k, label, who]) => k === "line" ? (isRep() ? "" : '<hr class="navline">') : k === "line2" ? '<hr class="navline">' : !canSee(who) ? "" : `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}${k === "customers" && stats.pinRequests ? `<span class="badge" title="PIN requests">${stats.pinRequests}</span>` : ""}</button>`).join("");
+  document.getElementById("nav").innerHTML = NAV.filter(([k]) => k !== "geo" || HUB.linked).map(([k, label, who]) => k === "line" ? (isRep() ? "" : '<hr class="navline">') : k === "line2" ? '<hr class="navline">' : !canSee(who) ? "" : `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}${k === "customers" && stats.pinRequests ? `<span class="badge" title="PIN requests">${stats.pinRequests}</span>` : ""}</button>`).join("");
 }
 let paneDirty = false; // something typed on this screen and not saved yet
 document.addEventListener("input", (e) => { if (e.target.closest("#pane")) paneDirty = true; });
@@ -104,7 +104,7 @@ async function go(v, id, opts = {}) {
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  await ({ dashboard, orders, neworder, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps }[v] || dashboard)();
+  await ({ dashboard, orders, neworder, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps, geo }[v] || dashboard)();
   if (v === "dashboard" && document.getElementById("hubKpi")) fillHubKpi();
   if (!opts.keepScroll) window.scrollTo(0, 0);
 }
@@ -1732,6 +1732,11 @@ async function trackerMailPanel() {
   document.getElementById("tmTest").onclick = async () => { const o = document.getElementById("tmOut"); o.textContent = "Sending…"; try { const t = await api("/hub/mail-test", { method: "POST" }); o.textContent = `Sent to ${t.to}. Check the inbox (and spam).`; } catch (x) { o.textContent = "Not sent: " + x.message; } };
   for (const [id, kind] of [["tmPrevF", "facility"], ["tmPrevS", "surgeon"]]) document.getElementById(id).onclick = async (e) => { e.preventDefault(); const { url } = await api("/hub/preview-url?kind=" + kind); window.open(url, "_blank", "noopener"); };
 }
+/* ---------- geofencing: the case tracker's own card, shown here ---------- */
+function geo() {
+  pane().innerHTML = `<header><h1>Geofencing</h1></header>
+    ${HUB.linked ? `<p class="muted">Visit geofencing lives in the case tracker; this is its card. Changes save there.</p><iframe class="hubframe" title="Visit geofencing" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=geo-card")}" style="width:100%;height:calc(100vh - 9rem);min-height:32rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<p class="muted">The case tracker isn't linked to this store yet.</p>`}`;
+}
 /* ---------- apps & downloads: every app in one place ---------- */
 function apps() {
   const tr = HUB.linked;
@@ -1849,7 +1854,8 @@ if (window.AppRefresh) window.AppRefresh.init({
   const m = /^#order-(\d+)$/.exec(location.hash);
   if (m) { view = "orders"; orderId = m[1]; history.replaceState(null, "", location.pathname); }
   if (location.hash === "#customers") { view = "customers"; history.replaceState(null, "", location.pathname); }
-  if (/^#(staff|setup|apps|account|settings|commissions|reps)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
+  if (new URLSearchParams(location.search).get("embed") === "1") document.body.classList.add("embed");
+  if (/^#(staff|setup|apps|account|settings|commissions|reps|geo)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
   const sso = new URLSearchParams(location.search).get("sso");
   if (sso) { const name = new URLSearchParams(location.search).get("name"); history.replaceState(null, "", location.pathname); window.__ssoMsg = sso === "expired" ? "That link from the case tracker expired — go back and tap it again." : `There's no store login for ${name || "that tracker sign-in"} yet. Sign in here, or an admin can add one under Team logins (same email).`; }
   const res = await fetch("/api/admin/me");

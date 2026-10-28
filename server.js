@@ -2023,7 +2023,7 @@ app.get(["/go/tracker", "/admin/go/tracker", "/rep/go/tracker"], wrap(async (req
   if (!u) return res.redirect("/admin");
   req.user = u;
   if (!HUB_SECRET || !TRACKER_URL) return res.status(500).send("The case tracker isn't linked yet (HUB_SECRET / TRACKER_URL).");
-  const next = /^\/[A-Za-z0-9/_#-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : "/";
+  const next = /^\/[A-Za-z0-9/_#?=&%.-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : "/";
   if (u.role === "rep" && !appsOf(u).tracker) return res.status(403).send("This login doesn't have the case tracker turned on. An admin can tick it under Team logins.");
   const t = hubSign({ exp: Date.now() + 120000, sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate });
   res.redirect(`${TRACKER_URL}${next.startsWith("/admin") ? "/admin/sso" : "/sso"}?t=${encodeURIComponent(t)}&next=${encodeURIComponent(next)}`);

@@ -396,3 +396,9 @@ body { overscroll-behavior-y: contain; }
 
 /* app switch in the rep app: the app you are in lights up green */
 .appswitch button.on, .appswitch .on { background: #16a34a !important; color: #fff !important; }
+
+/* embed mode: this admin / rep app shown inside the case tracker's page — no sidebar, just the content */
+body.embed aside.side, body.embed .mtop, body.embed .navtoggle, body.embed .rtop { display: none !important; }
+body.embed .adm { grid-template-columns: minmax(0, 1fr) !important; }
+body.embed .pane { padding: 1rem !important; }
+body.embed .rnav { top: 0; }
