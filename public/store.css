@@ -386,3 +386,10 @@ body { overscroll-behavior-y: contain; }
 .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; }
 .seg button { height: 2.3rem; padding: 0 .9rem; background: var(--card); border: 0; border-right: 1px solid var(--line-strong); font: inherit; font-weight: 600; cursor: pointer; }
 .seg button:last-child { border-right: 0; } .seg button.on { background: var(--navy); color: #fff; }
+
+/* collapsible cards (collapse.js): the heading is the handle */
+[data-fold] > .fold-head .fold-h, [data-fold] > .fold-h { cursor: pointer; user-select: none; }
+.fold-h::before { content: "▾"; display: inline-block; width: 1em; margin-right: .1em; font-size: .9em; opacity: .55; transition: transform .15s; }
+.folded .fold-h::before { transform: rotate(-90deg); }
+.folded > :not(.fold-head) { display: none !important; }
+.folded > .fold-head { margin-bottom: 0 !important; }
