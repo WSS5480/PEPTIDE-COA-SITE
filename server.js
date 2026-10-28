@@ -39,7 +39,7 @@ const SECURE = process.env.NODE_ENV === "production" || !!process.env.RENDER;
 
 function publicSettings(s) {
   const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy",
-    "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote"];
+    "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote", "pricesRequireLogin"];
   // card payments only work once the Stripe key is on the host, so the store is told the effective state
   return { ...Object.fromEntries(keys.map((k) => [k, s[k]])), cardPayments: !!(s.cardPayments && stripe) };
 }
@@ -187,11 +187,13 @@ app.get("/api/store", wrap(async (req, res) => {
     customerFrom(req)
   ]);
   const { rows: documents } = await q("select d.id, d.product_id, d.title, d.kind, d.file_type, d.size from documents d join products p on p.id = d.product_id where d.public and p.active order by d.sort, d.created_at");
-  // a signed-in customer with their own markup sees their prices; our cost never leaves the server
+  // a signed-in customer with their own markup sees their prices; our cost never leaves the server.
+  // With "prices only after sign-in" on, guests get the catalog without prices.
   const markup = cust && cust.markup !== null ? Number(cust.markup) : null;
-  const out = products.map(({ cost_cents, ...p }) => ({ ...p, price_cents: priceFor({ ...p, cost_cents }, markup) }));
+  const hide = !!s.pricesRequireLogin && !cust;
+  const out = products.map(({ cost_cents, ...p }) => ({ ...p, price_cents: hide ? null : priceFor({ ...p, cost_cents }, markup) }));
   res.set("Cache-Control", "no-store");
-  res.json({ settings: publicSettings(s), products: out, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents, pricing: markup !== null ? { markup } : null });
+  res.json({ settings: publicSettings(s), products: out, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents, pricing: markup !== null ? { markup } : null, pricesHidden: hide, signedIn: !!cust });
 }));
 
 app.get("/coa/:id", wrap(async (req, res) => {
@@ -246,6 +248,7 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
   const a = b.address || {};
   const address = { line1: str(a.line1, 160), line2: str(a.line2, 160), city: str(a.city, 80), state: str(a.state, 40), zip: str(a.zip, 20), country: str(a.country || "US", 40) };
   const signedIn = await customerFrom(req);
+  if (s.pricesRequireLogin && !signedIn) return bad(res, "Please sign in with your PIN to order.");
   if (!name) return bad(res, "Enter your name.");
   if (email ? !isEmail(email) : !signedIn) return bad(res, email ? "That email doesn't look right." : "Enter your email.");
   if (!address.line1 || !address.city || !address.state || !address.zip) return bad(res, "Enter a full shipping address.");

@@ -1215,6 +1215,7 @@ async function settings() {
   pane().innerHTML = `<header><h1>Site settings</h1></header>
     <div class="panel"><h2>Store</h2>
       <label class="chk"><input type="checkbox" id="s-storeOpen"${s.storeOpen ? " checked" : ""}${ro()}> Taking orders (untick to pause checkout)</label>
+      <label class="chk"><input type="checkbox" id="s-pricesRequireLogin"${s.pricesRequireLogin ? " checked" : ""}${ro()}> Show prices and the cart only after a customer signs in with their PIN (each customer sees their own pricing)</label>
       <div class="grid2">${t("brand", "Store name", "Shown top left and in the footer")}${t("tagline", "Tagline (optional)")}${t("contact", "Contact for customers", "Phone, text or email")}
       ${t("distributorOf", "Brand you distribute", 'Shows "Authorized ___ distributor"')}${t("brandUrl", "Brand's website (https)")}</div>
       <div class="grid2">${t("priceNote", "Note under products")}
@@ -1317,7 +1318,7 @@ async function settings() {
     const v = (k) => document.getElementById("s-" + k);
     const body = {};
     ["brand", "tagline", "contact", "distributorOf", "brandUrl", "paymentInstructions", "priceNote", "shippingLabel", "shippingNote", "fedexAccount", "deliveryLabel", "deliveryNote", "orderEmail"].forEach((k) => { body[k] = v(k).value; });
-    ["storeOpen", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn"].forEach((k) => { body[k] = v(k).checked; });
+    ["storeOpen", "pricesRequireLogin", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn"].forEach((k) => { body[k] = v(k).checked; });
     body.minAge = v("minAge").value;
     const cents = (id) => Math.max(0, Math.round(parseFloat(String(v(id).value).replace(/[$,]/g, "") || 0) * 100));
     body.minOrderCents = cents("minOrder"); body.shippingCents = cents("shippingAmt"); body.shippingFreeOverCents = cents("shippingFree");

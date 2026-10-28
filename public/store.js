@@ -31,6 +31,7 @@ function banner(el, S) {
 let S = {}, PRODUCTS = [], REPORTS = [], FUL = [], DOCS = [];
 let CODE = null; // discount code applied at checkout: { code, kind, value, label, minSubtotalCents }
 let PRICING = null; // { markup } when the signed-in customer has their own pricing
+let HIDDEN = false; // prices are shown only after a customer signs in
 let cart = store.get("cart") || [];   // [{id, qty}]
 const saveCart = () => { store.set("cart", cart); drawCartCount(); };
 
@@ -91,9 +92,10 @@ function drawProducts() {
     const r = reportFor(p);
     const purity = r ? ((r.results || []).find(([n]) => isPurity(n)) || [])[1] : "";
     const sold = p.stock !== null && p.stock <= 0;
-    const price = p.price_cents !== null ? `<p class="p-price">${money(p.price_cents)}</p>` : `<p class="p-price ask">Ask for price</p>`;
+    const price = HIDDEN ? `<p class="p-price ask">Sign in for pricing</p>` : p.price_cents !== null ? `<p class="p-price">${money(p.price_cents)}</p>` : `<p class="p-price ask">Ask for price</p>`;
     const stock = sold ? `<span class="soldout">Sold out</span>` : p.stock !== null && p.stock <= 5 ? `<span class="stockline low">Only ${p.stock} left</span>` : "";
-    const buy = p.price_cents === null ? (S.contact ? `<span class="stockline">Contact us: ${esc(S.contact)}</span>` : "")
+    const buy = HIDDEN ? `<button class="btn solid" type="button" data-signin>Sign in to order</button>`
+      : p.price_cents === null ? (S.contact ? `<span class="stockline">Contact us: ${esc(S.contact)}</span>` : "")
       : sold ? "" : `<button class="btn solid" type="button" data-add="${p.id}">Add to cart${inCart(p.id) ? ` (${inCart(p.id)})` : ""}</button>`;
     return `<article class="pcard">
       <div class="thumb${!p.has_image && (S.vial || {}).shape !== "vial" && (S.vial || {}).shape !== "tall" && (S.vial || {}).shape !== "round" ? " photo" : ""}">${productArt(p)}</div>
@@ -127,6 +129,11 @@ function codeOff(sub) {
 function drawCart() {
   const lines = cartLines();
   if (lines.length !== cart.length) { cart = lines.map(({ id, qty }) => ({ id, qty })); saveCart(); }
+  if (HIDDEN) {
+    $("cartBody").innerHTML = `<div class="empty"><p>Sign in with your PIN to see prices and order.</p></div>`;
+    $("cartFoot").innerHTML = `<button class="btn solid wide" type="button" data-close data-signin>Sign in</button>`;
+    return;
+  }
   if (!lines.length) {
     $("cartBody").innerHTML = `<div class="empty"><p>Your cart is empty.</p></div>`;
     $("cartFoot").innerHTML = `<button class="btn wide" type="button" data-close data-goto="products">Browse products</button>`;
@@ -406,7 +413,7 @@ function acctView(mode) {
     : `<form id="acForm" class="stack"><div class="grid2">${fld("mN", "Full name", "text", "name", ME.name)}${fld("mPh", "Phone", "tel", "tel", ME.phone)}</div>
       <div class="grid2">${fld("m1", "Street address", "text", "address-line1", a.line1)}${fld("m2", "Apt, suite", "text", "address-line2", a.line2)}${fld("mC", "City", "text", "address-level2", a.city)}${fld("mS", "State", "text", "address-level1", a.state)}${fld("mZ", "ZIP", "text", "postal-code", a.zip)}</div>
       <div class="err" id="acErr" hidden></div><button class="btn solid wide">Save</button></form>`}`;
-  $("acOut").onclick = async () => { await post("/api/account/logout", {}); await loadAccount(); toast("Signed out"); closeD($("acct")); };
+  $("acOut").onclick = async () => { await post("/api/account/logout", {}); await loadAccount(); await load(); toast("Signed out"); closeD($("acct")); };
   if (tab === "details") $("acForm").onsubmit = async (e) => {
     e.preventDefault();
     try {
@@ -425,6 +432,7 @@ document.addEventListener("click", (e) => {
   if (ac) { acctView(ac.dataset.acct); return; }
   const po = t.closest("[data-payorder]");
   if (po && ME) { payOrder(po.dataset.payorder, ME.email, po); return; }
+  if (t.closest("[data-signin]")) { loadAccount().then(() => { acctView(); openD($("acct")); }); return; }
   const c = t.closest("[data-cat]");
   if (c && LAB) { location.href = "/#products"; return; }
   if (c) { e.preventDefault(); cat = c.dataset.cat; drawProducts(); $("products").scrollIntoView({ behavior: "smooth" }); return; }
@@ -486,7 +494,7 @@ let first = true;
 async function load() {
   const res = await fetch("/api/store"); const j = await res.json();
   S = j.settings; PRODUCTS = j.products; REPORTS = j.reports; FUL = j.fulfillment || []; DOCS = j.documents || [];
-  PRICING = j.pricing || null;
+  PRICING = j.pricing || null; HIDDEN = !!j.pricesHidden;
   if (first) {
     first = false;
     afterPayment();
@@ -530,7 +538,7 @@ async function load() {
     if (target) requestAnimationFrame(() => { const el = $(rid(target)); if (el) el.scrollIntoView({ block: "center" }); });
     gate();
   } else drawReports();
-  { const base = S.priceNote || ""; $("pNote").textContent = PRICING ? `${base}${base ? " · " : ""}Your account pricing is applied.` : base; }
+  { const base = S.priceNote || ""; $("pNote").textContent = HIDDEN ? "Prices show once you sign in with your PIN." : PRICING ? `${base}${base ? " · " : ""}Your account pricing is applied.` : base; }
   drawProducts(); drawCartCount();
 }
 if (window.AppRefresh) window.AppRefresh.init({

@@ -274,6 +274,7 @@ const DEFAULT_SETTINGS = {
   heroEyebrow: "Third-party tested",
   headline: "Research peptides with the lab report on every vial",
   storeOpen: true,
+  pricesRequireLogin: true,   // prices (and the cart) show only once a customer signs in with their PIN
   minAge: 21,
   ageGate: true,
   minOrderCents: 0,
