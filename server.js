@@ -36,6 +36,8 @@ const intOrNull = (v) => (v === "" || v === null || v === undefined ? null : Num
 const centsOrNull = (v) => (v === "" || v === null || v === undefined ? null : Number.isFinite(+v) ? Math.round(+v * 100) : null);
 const isEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
+// which apps a login is allowed into (Team logins checkboxes); older rows only have the store
+function appsOf(u) { return Object.assign({ store: true, tracker: !!(u && u.role === "owner") }, (u && u.apps) || {}); } // admins get both apps unless unticked
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const parseCookies = (h) => Object.fromEntries(String(h || "").split(/;\s*/).filter(Boolean).map((p) => { const i = p.indexOf("="); return [p.slice(0, i), decodeURIComponent(p.slice(i + 1))]; }));
 const SECURE = process.env.NODE_ENV === "production" || !!process.env.RENDER;
@@ -745,6 +747,7 @@ app.post("/api/admin/login", limit("login", 10, 15 * 60 * 1000), wrap(async (req
   const email = str(req.body?.email, 160).toLowerCase(), pass = String(req.body?.password || "");
   const { rows: [u] } = await q("select * from users where lower(email) = $1 and active", [email]);
   if (!u || !(await bcrypt.compare(pass, u.pass_hash))) return bad(res, "Email or password is wrong.", 401);
+  if (!appsOf(u).store) return bad(res, "This login doesn't have the peptide store turned on. An admin can tick it under Team logins.", 403);
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '14 days')", [token, u.id]);
   res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=${14 * 86400}`);
@@ -756,6 +759,7 @@ app.post("/api/admin/login-pin", limit("loginpin", 10, 15 * 60 * 1000), wrap(asy
   const id = intOrNull(req.body?.id), pin = String(req.body?.pin || "").replace(/\D/g, "").slice(0, 12);
   const { rows: [u] } = await q("select * from users where id = $1 and active and pin_hash is not null", [id]);
   if (!u || pin.length < 4 || !(await bcrypt.compare(pin, u.pin_hash))) return bad(res, "That PIN isn't right.", 401);
+  if (!appsOf(u).store) return bad(res, "This login doesn't have the peptide store turned on.", 403);
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '14 days')", [token, u.id]);
   res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=${14 * 86400}`);
@@ -1986,8 +1990,7 @@ function hubVerify(token) {
   try { const o = JSON.parse(Buffer.from(m[1], "base64url").toString()); return o.exp && o.exp > Date.now() ? o : null; } catch (e) { return null; }
 }
 // calls from the tracker carry Authorization: Hub <signed {exp}>
-const hubAuth = (req, res, next) => { const t = /^Hub (.+)$/.exec(req.headers.authorization || ""); if (!HUB_SECRET || !t || !hubVerify(t[1])) return bad(res, "Hub signature missing or wrong", 401); next(); };
-const appsOf = (u) => Object.assign({ store: true, tracker: false }, u.apps || {});
+const hubAuth = (req, res, next) => { const t = /^Hub (.+)$/.exec(req.headers.authorization || ""); if (!HUB_SECRET || !t || !(hubVerify(t[1]) || {}).svc) return bad(res, "Hub signature missing or wrong", 401); next(); };
 const hubUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, phone: u.phone || "", commission_rate: u.commission_rate, active: u.active, apps: appsOf(u), pin_version: u.pin_version || 0 });
 // the people the tracker should know: everyone with the Case tracker box ticked
 app.get("/api/hub/people", hubAuth, wrap(async (req, res) => {
@@ -1998,7 +2001,8 @@ app.get("/api/hub/people", hubAuth, wrap(async (req, res) => {
 app.post("/api/hub/check-pin", hubAuth, wrap(async (req, res) => {
   const { rows: [u] } = await q("select * from users where id = $1 and active and pin_hash is not null", [intOrNull(req.body?.id)]);
   const pin = String(req.body?.pin || "").replace(/\D/g, "");
-  res.json({ ok: !!(u && appsOf(u).tracker && pin.length >= 4 && (await bcrypt.compare(pin, u.pin_hash))), user: u ? hubUser(u) : null });
+  const ok = !!(u && appsOf(u).tracker && pin.length >= 4 && (await bcrypt.compare(pin, u.pin_hash)));
+  res.json({ ok, user: ok ? hubUser(u) : null });
 }));
 // the one email setup: Microsoft 365 app + the COO address, so the tracker sends with it too
 app.get("/api/hub/mail", hubAuth, wrap(async (req, res) => {
@@ -2008,11 +2012,11 @@ app.get("/api/hub/mail", hubAuth, wrap(async (req, res) => {
 app.get("/api/hub/ping", hubAuth, (req, res) => res.json({ ok: true, hub: "peptide-store" }));
 // a signed call to the tracker
 // after a login changes here, the tracker is told to pull people again right away (otherwise it refreshes within a minute)
-function pokeTracker() { if (!HUB_SECRET || !TRACKER_URL) return; fetch(`${TRACKER_URL}/api/hub/sync`, { method: "POST", headers: { Authorization: "Hub " + hubSign({ exp: Date.now() + 120000 }) }, signal: AbortSignal.timeout(8000) }).catch(() => {}); }
+function pokeTracker() { if (!HUB_SECRET || !TRACKER_URL) return; fetch(`${TRACKER_URL}/api/hub/sync`, { method: "POST", headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }) }, signal: AbortSignal.timeout(8000) }).catch(() => {}); }
 async function trackerGet(pathname, query = {}) {
   if (!HUB_SECRET || !TRACKER_URL) throw new Error("The case tracker isn't linked: set HUB_SECRET and TRACKER_URL on the host.");
   const qs = new URLSearchParams(query).toString();
-  const r = await fetch(`${TRACKER_URL}${pathname}${qs ? "?" + qs : ""}`, { headers: { Authorization: "Hub " + hubSign({ exp: Date.now() + 120000 }) }, signal: AbortSignal.timeout(12000) });
+  const r = await fetch(`${TRACKER_URL}${pathname}${qs ? "?" + qs : ""}`, { headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }) }, signal: AbortSignal.timeout(12000) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `The case tracker answered ${r.status}`);
   return j;
@@ -2021,25 +2025,26 @@ async function trackerGet(pathname, query = {}) {
 app.get(["/go/tracker", "/admin/go/tracker", "/rep/go/tracker"], wrap(async (req, res) => {
   const token = parseCookies(req.headers.cookie).sid;
   const { rows: [u] } = token ? await q("select id, email, name, role, commission_rate, apps from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]) : { rows: [] };
-  if (!u) return res.redirect("/admin");
+  if (!u) return res.redirect((req.path.startsWith("/rep") ? "/rep" : "/admin") + "?next=" + encodeURIComponent(req.originalUrl));
   req.user = u;
   if (!HUB_SECRET || !TRACKER_URL) return res.status(500).send("The case tracker isn't linked yet (HUB_SECRET / TRACKER_URL).");
-  const next = /^\/[A-Za-z0-9/_#?=&%.-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : "/";
-  if (u.role === "rep" && !appsOf(u).tracker) return res.status(403).send("This login doesn't have the case tracker turned on. An admin can tick it under Team logins.");
+  const next = /^\/(?![\/\\])[A-Za-z0-9/_#?=&%.-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : "/";
+  if (!appsOf(u).tracker) return res.status(403).send("This login doesn't have the case tracker turned on. An admin can tick it under Team logins.");
   const t = hubSign({ exp: Date.now() + 120000, sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate });
   res.redirect(`${TRACKER_URL}${next.startsWith("/admin") ? "/admin/sso" : "/sso"}?t=${encodeURIComponent(t)}&next=${encodeURIComponent(next)}`);
 }));
 // the other direction: a tracker login lands here with a signed token and gets a store session (matched by email)
 app.get(["/sso", "/admin/sso", "/rep/sso"], wrap(async (req, res) => { // in-scope paths so an installed app window stays "inside" its app
   const t = hubVerify(String(req.query.t || ""));
-  const next = /^\/[A-Za-z0-9/_#?=&%.-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : "/admin";
+  const next = /^\/(?![\/\\])[A-Za-z0-9/_#?=&%.-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : "/admin";
   const land = (to) => res.type("html").send(`<!doctype html><meta charset="utf-8"><title>Signing in…</title><meta http-equiv="refresh" content="0;url=${escHtml(to)}"><script>location.replace(${JSON.stringify(to)})</script>`);
   if (!t || !t.sso) return land("/admin?sso=expired");
   const email = String(t.email || "").toLowerCase();
   const { rows: [u] } = email ? await q("select * from users where lower(email) = $1 and active", [email]) : { rows: [] };
   if (!u) return land("/admin?sso=nouser&name=" + encodeURIComponent(t.name || ""));
+  if (!appsOf(u).store) return land("/admin?sso=noapp&name=" + encodeURIComponent(u.name || ""));
   const token = crypto.randomBytes(32).toString("hex");
-  await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '14 days')", [token, u.id]);
+  await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '1 day')", [token, u.id]); // hop-in sessions are short; the switch mints a fresh one each time
   res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=${14 * 86400}`);
   land(u.role === "rep" && next.startsWith("/admin") ? next.replace("/admin", "/rep") : next);
 }));
@@ -2050,8 +2055,8 @@ app.get(["/admin/tracker", "/rep/tracker"], wrap(async (req, res) => {
   const isRep = req.path.startsWith("/rep");
   if (!u) return res.redirect(isRep ? "/rep" : "/admin");
   if (!HUB_SECRET || !TRACKER_URL) return res.redirect(isRep ? "/rep" : "/admin");
-  if (u.role === "rep" && !appsOf(u).tracker) return res.redirect(isRep ? "/rep" : "/admin");
-  const next = /^\/[A-Za-z0-9/_#-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : (u.role === "rep" ? "/" : "/admin");
+  if (!appsOf(u).tracker) return res.status(403).type("text").send("This login doesn't have the Case tracker turned on. An admin can tick it under Team logins.");
+  const next = /^\/(?![\/\\])[A-Za-z0-9/_#-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : (u.role === "rep" ? "/" : "/admin");
   const t = hubSign({ sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate, exp: Date.now() + 120000 });
   const src = `${TRACKER_URL}${next.startsWith("/admin") ? "/admin/sso" : "/sso"}?t=${encodeURIComponent(t)}&next=${encodeURIComponent(next)}&framed=1`;
   res.type("html").send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>360 Medical · Case tracker</title>
@@ -2075,13 +2080,13 @@ admin.get("/hub/commissions", wrap(async (req, res) => {
 admin.get("/hub/settings", owner, wrap(async (req, res) => { try { res.json({ ok: true, ...(await trackerGet("/api/hub/settings")) }); } catch (e) { res.json({ ok: false, error: e.message }); } }));
 admin.put("/hub/settings", owner, wrap(async (req, res) => {
   try {
-    const r = await fetch(`${TRACKER_URL}/api/hub/settings`, { method: "PUT", headers: { Authorization: "Hub " + hubSign({ exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify({ mailOn: !!req.body?.mailOn }), signal: AbortSignal.timeout(12000) });
+    const r = await fetch(`${TRACKER_URL}/api/hub/settings`, { method: "PUT", headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify({ mailOn: !!req.body?.mailOn }), signal: AbortSignal.timeout(12000) });
     const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `The case tracker answered ${r.status}`); res.json({ ok: true, ...j });
   } catch (e) { bad(res, e.message); }
 }));
 admin.post("/hub/mail-test", owner, wrap(async (req, res) => {
   try {
-    const r = await fetch(`${TRACKER_URL}/api/hub/mail-test`, { method: "POST", headers: { Authorization: "Hub " + hubSign({ exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify({ by: req.user.name }), signal: AbortSignal.timeout(20000) });
+    const r = await fetch(`${TRACKER_URL}/api/hub/mail-test`, { method: "POST", headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify({ by: req.user.name }), signal: AbortSignal.timeout(20000) });
     const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `The case tracker answered ${r.status}`); res.json({ ok: true, ...j });
   } catch (e) { bad(res, e.message); }
 }));
