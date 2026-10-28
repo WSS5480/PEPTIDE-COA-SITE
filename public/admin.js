@@ -970,7 +970,7 @@ async function inventory() {
   const counts = { low: items.filter((p) => status(p) === "low").length, out: items.filter((p) => status(p) === "out").length, untracked: items.filter((p) => p.stock === null).length, expiring: items.filter((p) => soon(p.next_expiry)).length };
   const weeksLeft = (p) => (p.stock > 0 && p.sold_30d > 0 ? Math.round((p.stock / p.sold_30d) * 30 / 7) : null);
   const lastAt = stats && stats.count ? stats.count.lastAt : null, dueDays = stats && stats.count ? stats.count.dueDays : 7;
-  pane().innerHTML = `<header><h1>Inventory</h1><div class="row2"><button class="btn solid" id="rcvBtn">Receive shipment</button><button class="btn" type="button" data-invtab="count">Count sheet</button><a class="btn" href="/api/admin/inventory.csv" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></div></header>
+  pane().innerHTML = `<header><h1>Inventory</h1><div class="row2"><button class="btn solid" id="rcvBtn">Receive shipment</button><a class="btn" href="/api/admin/inventory.csv" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></div></header>
     ${invTabs()}
     ${countDue(lastAt, dueDays) ? `<div class="panel" style="border-color:var(--blue)"><strong>Weekly count is due.</strong><span class="muted">${lastAt ? `Last count ${when(lastAt)}, ${agoText(lastAt)}.` : "No physical count has been posted yet — do the first one to set what's on the shelf."}</span><div><button class="btn solid" type="button" data-invtab="count">Open count sheet</button></div></div>` : ""}
     <dl class="kpis">
