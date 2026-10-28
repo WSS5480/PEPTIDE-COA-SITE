@@ -109,6 +109,7 @@ main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
 .hsearch svg, .stoggle svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .hsearch svg { position: absolute; left: .9rem; top: 50%; transform: translateY(-50%); color: var(--ink-2); pointer-events: none; }
 .stoggle { display: none; width: 2.6rem; height: 2.6rem; place-items: center; background: none; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; }
+@media (max-width: 1040px) { .top .wrap { flex-wrap: wrap; } .top .eyebrow { display: none; } }
 @media (max-width: 760px) {
   .top .wrap { flex-wrap: wrap; }
   .top .eyebrow { display: none; }
@@ -127,18 +128,26 @@ main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
 /* product cards */
 .prices { display: grid; gap: 1rem; }
 .prices > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .4rem 1rem; padding-inline: .25rem; }
-.pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(15rem, 100%), 1fr)); gap: 1rem; }
+/* six vials per line on a desktop; the products section is wider than the rest of the page to fit them */
+.pgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
+@media (min-width: 640px) { .pgrid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 900px) { .pgrid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 1180px) {
+  .prices#products { width: min(1560px, 100vw - 2 * var(--gutter)); margin-inline: calc(50% - min(1560px, 100vw - 2 * var(--gutter)) / 2); }
+  .pgrid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .9rem; }
+}
 .pcard { display: grid; grid-template-rows: auto 1fr; overflow: hidden; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); transition: border-color .15s, box-shadow .15s; }
 .pcard:hover { border-color: var(--line-strong); box-shadow: 0 10px 28px -18px rgba(15, 27, 51, .45); }
 .thumb { display: grid; place-items: center; aspect-ratio: 1; background: radial-gradient(70% 70% at 50% 40%, #ffffff 0, var(--blue-wash) 100%); border-bottom: 1px solid var(--line); }
 .thumb svg { width: 46%; height: auto; }
-.pbody { display: grid; gap: .35rem; align-content: start; padding: 1rem 1.1rem 1.15rem; }
+.pbody { display: grid; gap: .35rem; align-content: start; padding: .85rem .9rem 1rem; }
 .pcat { color: var(--ink-2); font: 600 .66rem/1.3 var(--body); letter-spacing: .09em; text-transform: uppercase; }
-.pname { font: 700 1.3rem/1.1 var(--display); letter-spacing: .02em; text-transform: uppercase; overflow-wrap: anywhere; }
+.pname { font: 700 1.1rem/1.1 var(--display); letter-spacing: .02em; text-transform: uppercase; overflow-wrap: anywhere; }
 .pmeta { color: var(--ink-2); font-size: .84rem; font-variant-numeric: tabular-nums; }
-.p-price { margin-top: .2rem; font-weight: 700; font-size: 1.2rem; font-variant-numeric: tabular-nums; }
+.p-price { margin-top: .2rem; font-weight: 700; font-size: 1.1rem; font-variant-numeric: tabular-nums; }
 .p-price.ask { color: var(--ink-2); font-size: .92rem; font-weight: 500; }
-.pact { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .55rem; }
+.pact { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; }
+.pact .btn { padding-inline: .8rem; font-size: .84rem; }
 .pact .btn { display: inline-grid; place-items: center; text-decoration: none; }
 .btn.solid { background: var(--navy); border-color: var(--navy); color: var(--on-navy); }
 .btn.solid:hover { background: var(--blue); border-color: var(--blue); color: var(--on-navy); }
@@ -203,6 +212,9 @@ main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
 .qty button:hover { background: var(--ground); }
 .qty span { min-width: 2rem; text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; }
 .stockline { font-size: .8rem; color: var(--ink-2); }
+.pdesc { color: var(--ink); }
+.benefits { margin: .15rem 0 .25rem; padding: 0 0 0 1.05rem; font-size: .8rem; color: var(--ink-2); display: grid; gap: .12rem; }
+.benefits li::marker { color: var(--blue); }
 .stockline.low { color: #a15c00; font-weight: 600; }
 .soldout { color: #9b1c1c; font-weight: 600; font-size: .85rem; }
 

@@ -12,13 +12,13 @@
     "cost": 12.31
   },
   {
-    "name": "BPC-157 + TB-500",
+    "name": "Wolverine Blend",
     "strength": "10 mg",
     "category": "Blends",
     "cost": 13.71
   },
   {
-    "name": "BPC-157 + TB-500",
+    "name": "Wolverine Blend",
     "strength": "20 mg",
     "category": "Blends",
     "cost": 21.05
@@ -30,19 +30,19 @@
     "cost": 12.99
   },
   {
-    "name": "GLOW",
+    "name": "GLOW Blend",
     "strength": "50 mg",
     "category": "Blends",
     "cost": 22.27
   },
   {
-    "name": "GLOW",
+    "name": "GLOW Blend",
     "strength": "70 mg",
     "category": "Blends",
     "cost": 23.37
   },
   {
-    "name": "KLOW",
+    "name": "KLOW Blend",
     "strength": "80 mg",
     "category": "Blends",
     "cost": 25.37
@@ -90,13 +90,13 @@
     "cost": 15.9
   },
   {
-    "name": "CJC-1295 + Ipamorelin",
+    "name": "CJC-1295 + Ipamorelin Blend",
     "strength": "10 mg",
     "category": "Blends",
     "cost": 14.44
   },
   {
-    "name": "CJC-1295 + Ipamorelin",
+    "name": "CJC-1295 + Ipamorelin Blend",
     "strength": "20 mg",
     "category": "Blends",
     "cost": 19.16
@@ -372,7 +372,7 @@
     "cost": 25.76
   },
   {
-    "name": "Tesamorelin + Ipamorelin",
+    "name": "Tesamorelin + Ipamorelin Blend",
     "strength": "15 mg",
     "category": "Blends",
     "cost": 23.65

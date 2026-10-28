@@ -1,10 +1,15 @@
 {
-  "BPC-157 + GHK-Cu + TB-500 + KPV (10 / 50 / 10 / 10 mg)": "KLOW",
-  "BPC-157 + GHK-Cu + TB-500 (10 / 50 / 10 mg)": "GLOW",
-  "BPC-157 + GHK-Cu + TB-500 (10 / 30 / 10 mg)": "GLOW",
-  "BPC-157 + TB-500 (5 mg / 5 mg)": "BPC-157 + TB-500",
-  "BPC-157 + TB-500 (10 mg / 10 mg)": "BPC-157 + TB-500",
-  "CJC-1295 without DAC + Ipamorelin (5 mg / 5 mg)": "CJC-1295 + Ipamorelin",
-  "CJC-1295 without DAC + Ipamorelin (10 mg / 10 mg)": "CJC-1295 + Ipamorelin",
-  "Tesamorelin + Ipamorelin (10 mg / 5 mg)": "Tesamorelin + Ipamorelin"
+  "BPC-157 + GHK-Cu + TB-500 + KPV (10 / 50 / 10 / 10 mg)": "KLOW Blend",
+  "BPC-157 + GHK-Cu + TB-500 (10 / 50 / 10 mg)": "GLOW Blend",
+  "BPC-157 + GHK-Cu + TB-500 (10 / 30 / 10 mg)": "GLOW Blend",
+  "BPC-157 + TB-500 (5 mg / 5 mg)": "Wolverine Blend",
+  "BPC-157 + TB-500 (10 mg / 10 mg)": "Wolverine Blend",
+  "CJC-1295 without DAC + Ipamorelin (5 mg / 5 mg)": "CJC-1295 + Ipamorelin Blend",
+  "CJC-1295 without DAC + Ipamorelin (10 mg / 10 mg)": "CJC-1295 + Ipamorelin Blend",
+  "Tesamorelin + Ipamorelin (10 mg / 5 mg)": "Tesamorelin + Ipamorelin Blend",
+  "KLOW": "KLOW Blend",
+  "GLOW": "GLOW Blend",
+  "BPC-157 + TB-500": "Wolverine Blend",
+  "CJC-1295 + Ipamorelin": "CJC-1295 + Ipamorelin Blend",
+  "Tesamorelin + Ipamorelin": "Tesamorelin + Ipamorelin Blend"
 }

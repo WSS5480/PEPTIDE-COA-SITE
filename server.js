@@ -1271,8 +1271,9 @@ admin.post("/costs/add-missing", owner, wrap(async (req, res) => {
   res.json({ ok: true, added });
 }));
 // Product descriptions: seed/descriptions.json has one per catalog name (blends included). Fills products whose description is blank.
-const DESCRIPTIONS = (() => { try { return Object.fromEntries(Object.entries(JSON.parse(require("fs").readFileSync(path.join(__dirname, "seed", "descriptions.json"), "utf8"))).map(([k, v]) => [k.split("|").map(normName).join("|"), v])); } catch (e) { console.error("seed/descriptions.json: " + e.message); return {}; } })();
-const descriptionFor = (name, strength) => DESCRIPTIONS[normName(name) + "|" + normName(strength)] || DESCRIPTIONS[normName(name)] || "";
+// First line: what's in the vial ({size} = the product's size); then "- " lines = the benefit bullets shown on the store.
+const DESCRIPTIONS = (() => { try { return Object.fromEntries(Object.entries(JSON.parse(require("fs").readFileSync(path.join(__dirname, "seed", "descriptions.json"), "utf8"))).filter(([k]) => !k.startsWith("_")).map(([k, v]) => [k.split("|").map(normName).join("|"), v])); } catch (e) { console.error("seed/descriptions.json: " + e.message); return {}; } })();
+const descriptionFor = (name, strength) => (DESCRIPTIONS[normName(name) + "|" + normName(strength)] || DESCRIPTIONS[normName(name)] || "").replace(/\{size\}/g, String(strength || "").trim());
 async function fillDescriptions(who) {
   const { rows } = await q("select id, name, strength from products where coalesce(description, '') = ''");
   const done = [], missing = [];
@@ -2060,7 +2061,7 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
     }
   }
   // One-time: the blends get their market names (KLOW, GLOW, …); what's in each vial moves into the description.
-  const { rows: [renamed] } = await q("select 1 from settings where key = 'blendNamesV1'");
+  const { rows: [renamed] } = await q("select 1 from settings where key = 'blendNamesV2'");
   if (!renamed) {
     const map = JSON.parse(require("fs").readFileSync(path.join(__dirname, "seed", "blend-renames.json"), "utf8"));
     const { rows: all } = await q("select id, name, strength from products");
@@ -2068,7 +2069,7 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
       await q("update products set name = $1, description = case when coalesce(description, '') = '' then $2 else description end where id = $3", [to, descriptionFor(to, p.strength), p.id]);
       console.log(`Renamed "${p.name} ${p.strength}" → "${to} ${p.strength}"`);
     }
-    await q("insert into settings(key, value) values ('blendNamesV1', 'true') on conflict (key) do nothing");
+    await q("insert into settings(key, value) values ('blendNamesV2', 'true') on conflict (key) do nothing");
   }
   // CATALOG_IMPORT on the host names a list in seed/catalog-<name>.json. Each new value adds those products once
   // (no prices); a product with the same name, size and no manufacturer is updated instead of duplicated.
@@ -2116,8 +2117,15 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
     await q("insert into settings(key, value) values ('costDupesTidied', 'true') on conflict (key) do nothing");
   }
   // One-time: give every product with a blank description the standard research description (seed/descriptions.json).
-  const { rows: [descDone] } = await q("select 1 from settings where key = 'descriptionsV1'");
-  if (!descDone) { await fillDescriptions("startup"); await q("insert into settings(key, value) values ('descriptionsV1', 'true') on conflict (key) do nothing"); }
+  // v2 (makeup line + benefit bullets) replaces the v1 text on every product that has standard text on file.
+  const { rows: [descDone] } = await q("select 1 from settings where key = 'descriptionsV2'");
+  if (!descDone) {
+    const { rows: all } = await q("select id, name, strength from products");
+    let n = 0;
+    for (const p of all) { const d = descriptionFor(p.name, p.strength); if (d) { await q("update products set description = $1 where id = $2", [d, p.id]); n++; } }
+    console.log(`Descriptions v2: set ${n} of ${all.length} products`);
+    await q("insert into settings(key, value) values ('descriptionsV2', 'true') on conflict (key) do nothing");
+  }
   // SITE_PIN on the host sets the shared store PIN. It's applied once per new value, so a PIN
   // changed later in admin isn't overwritten on restart. It doesn't turn the lock on or off.
   const envPin = String(process.env.SITE_PIN || "").trim();

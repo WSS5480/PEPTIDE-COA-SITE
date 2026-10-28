@@ -84,6 +84,13 @@ function drawChips() {
     + `<label class="chip coachip${coaOnly ? " on" : ""}"><input type="checkbox" data-coaonly${coaOnly ? " checked" : ""}> Only with lab report</label>`;
   document.querySelectorAll("[data-coaonly]").forEach((b) => { b.checked = coaOnly; });
 }
+// A product description: the first line(s) say what's in the vial; lines starting with "- " are the benefit bullets.
+const descHtml = (d) => {
+  const lines = String(d || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const isB = (l) => /^[-•*]\s*/.test(l);
+  const text = lines.filter((l) => !isB(l)), bullets = lines.filter(isB).map((l) => l.replace(/^[-•*]\s*/, ""));
+  return `${text.length ? `<p class="stockline pdesc">${text.map(esc).join("<br>")}</p>` : ""}${bullets.length ? `<ul class="benefits">${bullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}`;
+};
 function drawProducts() {
   drawChips();
   const words = norm($("hq").value) ? $("hq").value.toLowerCase().split(/\s+/).map(norm).filter(Boolean) : [];
@@ -103,7 +110,7 @@ function drawProducts() {
         <span class="pcat">${esc(p.category || "Research peptide")}${p.manufacturer ? ` · ${esc(p.manufacturer)}` : ""}</span>
         <h3 class="pname">${esc(p.name)}</h3>
         <span class="pmeta">${[p.strength, purity ? `${purity} purity` : ""].filter(Boolean).map(esc).join(" · ")}</span>
-        ${p.description ? `<p class="stockline">${esc(p.description)}</p>` : ""}
+        ${descHtml(p.description)}
         ${price}${stock}
         <p class="research">For laboratory research use only.</p>
         <div class="pact">${buy}${r ? `<a class="btn" href="/lab-reports#${esc(rid(r))}" data-report="${r.id}" data-pid="${p.id}">Lab report</a>` : `<span class="stockline">No report yet</span>`}${docsFor(p).length ? `<button class="btn" type="button" data-docs="${p.id}">Documents (${docsFor(p).length})</button>` : ""}</div>
