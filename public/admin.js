@@ -799,9 +799,11 @@ async function products() {
       <div class="row2" style="align-items:center"><button class="btn solid" id="costApply"${differ.length ? "" : " disabled"}>Set ${differ.length} cost${differ.length === 1 ? "" : "s"} from the sheet</button>
         ${unmatched.length ? `<button class="btn" id="costAdd">Add the ${unmatched.length} missing product${unmatched.length === 1 ? "" : "s"}</button>` : ""}
         ${d.notInSheet.length ? `<button class="btn danger" id="costPrune">Remove the ${d.notInSheet.length} not on the sheet</button>` : ""}
+        <button class="btn" id="costDesc" title="Every product with a blank description gets the standard research description for its peptide">Fill blank descriptions</button>
         <button class="btn" id="costClose">Close</button></div>
-      <p class="muted" style="margin:0">"Add" creates each missing row with its cost and a price at cost +100% (the sheet's own column) — change it with the markup buttons. "Remove" deletes the products the sheet doesn't list; past orders keep their copies.</p></div>`;
+      <p class="muted" style="margin:0">"Add" creates each missing row with its cost, its description and a price at cost +100% (the sheet's own column) — change it with the markup buttons. "Remove" deletes the products the sheet doesn't list; past orders keep their copies. "Fill blank descriptions" writes the standard description for any product that has none (edit any of them in the Description column).</p></div>`;
     document.getElementById("costClose").onclick = () => { box.innerHTML = ""; };
+    document.getElementById("costDesc").onclick = async () => { const r = await api("/costs/descriptions", { method: "POST" }); toast(r.filled.length ? `Filled ${r.filled.length} description${r.filled.length === 1 ? "" : "s"}` : r.missing.length ? `Nothing filled — no text on file for: ${r.missing.slice(0, 3).join("; ")}${r.missing.length > 3 ? "…" : ""}` : "Every product already has a description"); unsaved = false; products(); };
     if (document.getElementById("costAdd")) document.getElementById("costAdd").onclick = async () => { const r = await api("/costs/add-missing", { method: "POST" }); toast(`Added ${r.added.length} product${r.added.length === 1 ? "" : "s"}`); unsaved = false; products(); };
     if (document.getElementById("costPrune")) document.getElementById("costPrune").onclick = async () => {
       const names = d.notInSheet.map((p) => `${p.name} ${p.strength}${p.manufacturer ? " · " + p.manufacturer : ""}`).join("\n");
