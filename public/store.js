@@ -368,10 +368,10 @@ async function lookup(e) {
 
 
 /* ---------- customer account ---------- */
-let ME = null, MY_ORDERS = [];
+let ME = null, MY_ORDERS = [], HOUSE = false; // HOUSE: signed in with the store's own PIN (the office), no customer account
 async function loadAccount() {
-  try { const j = await (await fetch("/api/account", { credentials: "same-origin" })).json(); ME = j.customer; MY_ORDERS = j.orders || []; } catch (e) { ME = null; }
-  $("acctLabel").textContent = ME ? (ME.name || "Account").split(" ")[0] : "Sign in";
+  try { const j = await (await fetch("/api/account", { credentials: "same-origin" })).json(); ME = j.customer; MY_ORDERS = j.orders || []; HOUSE = !ME && !!j.house; } catch (e) { ME = null; HOUSE = false; }
+  $("acctLabel").textContent = ME ? (ME.name || "Account").split(" ")[0] : HOUSE ? "Office" : "Sign in";
 }
 async function post(url, body, method = "POST") {
   const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify(body) });
@@ -397,11 +397,18 @@ function acctView(mode) {
     };
     return;
   }
+  if (!ME && HOUSE) {
+    b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Office sign-in</h2>${close}</div>
+      <p class="dist">You're signed in with the store PIN. Store prices are showing and the cart is open; checkout asks for the customer's name and email, like a walk-in order. Customers with their own PIN see their own pricing instead.</p>
+      <p class="dist"><button class="linkbtn" type="button" id="acOut">Sign out</button></p>`;
+    $("acOut").onclick = async () => { await post("/api/account/logout", {}); await loadAccount(); await load(); toast("Signed out"); closeD($("acct")); };
+    return;
+  }
   if (!ME) {
     b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Sign in</h2>${close}</div>
       <div class="tabs"><button class="on" type="button">Sign in</button><button type="button" data-acct="request">Request a PIN</button></div>
       <p class="dist">Enter the PIN ${esc(S.brand || "we")} gave you. It signs you in, shows your pricing and keeps your orders in one place.</p>
-      <form id="acForm" class="stack"><div class="field"><label class="eyebrow" for="acPin">Your PIN</label><input id="acPin" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="6 to 8 digits" style="font:600 1.4rem/1 var(--mono);letter-spacing:.3em;text-align:center"></div>
+      <form id="acForm" class="stack"><div class="field"><label class="eyebrow" for="acPin">Your PIN</label><input id="acPin" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="4 to 8 digits" style="font:600 1.4rem/1 var(--mono);letter-spacing:.3em;text-align:center"></div>
       <div class="err" id="acErr" hidden></div><button class="btn solid wide">Sign in</button></form>
       <p class="dist">No PIN yet? <button class="linkbtn" type="button" data-acct="request">Request one</button> — accounts are set up by us, not online. You can still order as a guest.</p>`;
     $("acPin").focus();

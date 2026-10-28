@@ -183,19 +183,19 @@ app.get("/api/version", wrap(async (req, res) => {
 }));
 app.get("/api/store", wrap(async (req, res) => {
   const s = await getSettings();
-  const [{ rows: products }, { rows: reports }, cust] = await Promise.all([
+  const [{ rows: products }, { rows: reports }, cust, house] = await Promise.all([
     q("select id,name,strength,manufacturer,category,description,price_cents,cost_cents,stock,max_per_order,vial_label,media_v,(image is not null) has_image,(logo is not null) has_logo from products where active order by sort, name, strength, manufacturer, id"),
     q(`select ${REPORT_COLS} from reports where active order by product, tested desc nulls last`),
-    customerFrom(req)
+    customerFrom(req), houseFrom(req)
   ]);
   const { rows: documents } = await q("select d.id, d.product_id, d.title, d.kind, d.file_type, d.size from documents d join products p on p.id = d.product_id where d.public and p.active order by d.sort, d.created_at");
   // a signed-in customer with their own markup sees their prices; our cost never leaves the server.
   // With "prices only after sign-in" on, guests get the catalog without prices.
   const markup = cust && cust.markup !== null ? Number(cust.markup) : null;
-  const hide = !!s.pricesRequireLogin && !cust;
+  const hide = !!s.pricesRequireLogin && !cust && !house;
   const out = products.map(({ cost_cents, ...p }) => ({ ...p, price_cents: hide ? null : priceFor({ ...p, cost_cents }, markup) }));
   res.set("Cache-Control", "no-store");
-  res.json({ settings: publicSettings(s), products: out, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents, pricing: markup !== null ? { markup } : null, pricesHidden: hide, signedIn: !!cust });
+  res.json({ settings: publicSettings(s), products: out, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents, pricing: markup !== null ? { markup } : null, pricesHidden: hide, signedIn: !!cust || !!(house && !cust), house: !!(house && !cust) });
 }));
 
 app.get("/coa/:id", wrap(async (req, res) => {
@@ -250,7 +250,8 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
   const a = b.address || {};
   const address = { line1: str(a.line1, 160), line2: str(a.line2, 160), city: str(a.city, 80), state: str(a.state, 40), zip: str(a.zip, 20), country: str(a.country || "US", 40) };
   const signedIn = await customerFrom(req);
-  if (s.pricesRequireLogin && !signedIn) return bad(res, "Please sign in with your PIN to order.");
+  const house = !signedIn && (await houseFrom(req));
+  if (s.pricesRequireLogin && !signedIn && !house) return bad(res, "Please sign in with your PIN to order.");
   if (!name) return bad(res, "Enter your name.");
   if (email ? !isEmail(email) : !signedIn) return bad(res, email ? "That email doesn't look right." : "Enter your email.");
   if (!address.line1 || !address.city || !address.state || !address.zip) return bad(res, "Enter a full shipping address.");
@@ -602,6 +603,15 @@ async function notifyOrder(orderId, kind, extra = {}) {
 }
 
 /* ---------- customer accounts ---------- */
+// The store's own shared PIN (Site settings → Site PIN, SITE_PIN on the host) also works in the "Sign in for pricing" box:
+// it signs the office in without a customer account — store prices, cart open, name and email asked at checkout.
+const HOUSE_COOKIE = (v, age) => `hpin=${v}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${SECURE ? "; Secure" : ""}`;
+async function houseFrom(req) {
+  const t = parseCookies(req.headers.cookie).hpin;
+  if (!t) return false;
+  const st = await pinState();
+  return !!st.hash && sameStr(t, pinToken(st));
+}
 async function customerFrom(req) {
   const token = parseCookies(req.headers.cookie).cid;
   if (!token) return null;
@@ -654,10 +664,17 @@ app.post("/api/account/pin", jsonOnly, limit("cpin", 10, 15 * 60 * 1000), wrap(a
   const pin = String(req.body?.pin || "").replace(/\D/g, "").slice(0, 12);
   if (pin.length < 4) return bad(res, "Enter the PIN you were given.");
   const st = await pinState();
+  if (st.hash && (await bcrypt.compare(pin, st.hash))) {
+    // the store's shared PIN: office sign-in (no customer account)
+    res.append("Set-Cookie", `spin=${pinToken(st)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`);
+    res.append("Set-Cookie", HOUSE_COOKIE(pinToken(st), 30 * 86400));
+    return res.json({ ok: true, house: true });
+  }
   const { rows: [c] } = await q("select id, pin_version from customers where access_pin_key = $1 and active", [customerPinKey(st, pin)]);
   if (!c) return bad(res, "That PIN isn't right. Contact us if you need a new one.", 401);
   await q("update customers set pin_used_at = now() where id = $1", [c.id]);
   res.append("Set-Cookie", `spin=${customerPass(st, c.id, c.pin_version)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`);
+  res.append("Set-Cookie", HOUSE_COOKIE("", 0));
   await startCustomerSession(res, c.id);
   res.json({ ok: true });
 }));
@@ -673,12 +690,13 @@ app.post("/api/account/logout", wrap(async (req, res) => {
   const token = parseCookies(req.headers.cookie).cid;
   if (token) await q("delete from customer_sessions where token = $1", [token]);
   res.set("Set-Cookie", `cid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${SECURE ? "; Secure" : ""}`);
+  res.append("Set-Cookie", HOUSE_COOKIE("", 0));
   res.json({ ok: true });
 }));
 app.get("/api/account", wrap(async (req, res) => {
   const c = await customerFrom(req);
   res.set("Cache-Control", "no-store");
-  if (!c) return res.json({ customer: null });
+  if (!c) return res.json({ customer: null, house: await houseFrom(req) });
   const { rows: orders } = await q(`select o.id, o.number, o.status, o.total_cents, o.carrier, o.tracking, o.created_at, o.paid_at, o.pay_method, o.fulfillment, o.shipping_method,
       (select json_agg(json_build_object('name', i.name, 'strength', i.strength, 'qty', i.qty) order by i.id) from order_items i where i.order_id = o.id) items
     from orders o where o.customer_id = $1 order by o.created_at desc limit 100`, [c.id]);
