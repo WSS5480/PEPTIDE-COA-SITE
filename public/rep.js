@@ -8,7 +8,8 @@ const STATUS_TEXT = { new: "Received", confirmed: "Awaiting payment", paid: "Pai
 const pill = (s) => `<span class="pill st-${esc(s)}">${esc(STATUS_TEXT[s] || s)}</span>`;
 function toast(msg) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2000); }
 let me = null, view = "home", pick = null, paneDirty = false, HUB = { linked: false, apps: {} };
-const STANDALONE = !!(window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+const FRAMED = (() => { try { return window.top !== window; } catch (e) { return true; } })();
+const HOSTABLE = !/iPhone|iPad|iPod/.test(navigator.userAgent) && /Chrome|Edg|Firefox/.test(navigator.userAgent);
 const $ = (id) => document.getElementById(id);
 
 async function api(path, opts = {}) {
@@ -55,7 +56,7 @@ function drawLogin(msg) {
 const NAV = [["home", "Home"], ["customers", "Customers"], ["neworder", "New order"], ["orders", "Orders"], ["commissions", "Commissions"], ["account", "Account"]];
 function shell() {
   app.innerHTML = `<div class="rtop"><div style="display:flex;align-items:center;gap:.6rem"><span class="logopill"><img src="/site-logo?v=2" alt="360 Peptides"></span><div class="logo"><span id="rbrand">Sales rep</span><small>${esc(me.name || me.email)} <span id="rver"></span></small></div></div>
-      <div class="tools">${HUB.linked && HUB.apps && HUB.apps.tracker ? `<a href="/rep/go/tracker?next=/" class="btn" style="display:inline-grid;place-items:center;text-decoration:none;color:inherit;height:2.2rem;padding:0 .7rem;font-size:.82rem" title="Switch to the case tracker with this login">Case tracker ↗</a>` : ""}<button type="button" data-refresh title="Refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button><button type="button" id="lo">Sign out</button></div></div>
+      <div class="tools">${HUB.linked && HUB.apps && HUB.apps.tracker ? `<a href="${FRAMED ? HUB.trackerUrl + "/" : (HOSTABLE ? "/rep/tracker?next=/" : "/rep/go/tracker?next=/")}"${FRAMED ? ' target="_top"' : ""} class="btn" style="display:inline-grid;place-items:center;text-decoration:none;color:inherit;height:2.2rem;padding:0 .7rem;font-size:.82rem" title="Switch to the case tracker with this login">Case tracker ↗</a>` : ""}<button type="button" data-refresh title="Refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button><button type="button" id="lo">Sign out</button></div></div>
     <nav class="rnav" id="rnav"></nav><main class="rpane" id="pane"></main>`;
   $("lo").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };
   fetch("/api/build").then((r) => r.json()).then((b) => { const v = $("rver"); if (v) v.textContent = `· v${b.version}`; }).catch(() => {});

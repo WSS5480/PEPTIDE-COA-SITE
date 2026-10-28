@@ -393,3 +393,6 @@ body { overscroll-behavior-y: contain; }
 .folded .fold-h::before { transform: rotate(-90deg); }
 .folded > :not(.fold-head) { display: none !important; }
 .folded > .fold-head { margin-bottom: 0 !important; }
+
+/* app switch in the rep app: the app you are in lights up green */
+.appswitch button.on, .appswitch .on { background: #16a34a !important; color: #fff !important; }

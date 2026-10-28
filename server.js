@@ -20,7 +20,8 @@ app.use(express.json({ limit: "16mb" }));
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
   res.set("Referrer-Policy", "same-origin");
-  res.set("X-Frame-Options", "DENY");
+  const host = String(process.env.TRACKER_URL || "").replace(/\/$/, "");
+  if (host && process.env.HUB_SECRET) res.set("Content-Security-Policy", `frame-ancestors 'self' ${host}`); else res.set("X-Frame-Options", "DENY");
   // keep every page, image and file out of search engines
   res.set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet, noimageindex");
   next();
@@ -38,6 +39,8 @@ const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const parseCookies = (h) => Object.fromEntries(String(h || "").split(/;\s*/).filter(Boolean).map((p) => { const i = p.indexOf("="); return [p.slice(0, i), decodeURIComponent(p.slice(i + 1))]; }));
 const SECURE = process.env.NODE_ENV === "production" || !!process.env.RENDER;
+// when the case tracker is linked, the admin session cookie must travel inside the tracker's window (a different site): SameSite=None needs Secure
+const SID_ATTRS = () => (process.env.HUB_SECRET && process.env.TRACKER_URL) ? "SameSite=None; Secure" : `SameSite=Strict${SECURE ? "; Secure" : ""}`;
 
 function publicSettings(s) {
   const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy",
@@ -743,7 +746,7 @@ app.post("/api/admin/login", limit("login", 10, 15 * 60 * 1000), wrap(async (req
   if (!u || !(await bcrypt.compare(pass, u.pass_hash))) return bad(res, "Email or password is wrong.", 401);
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '14 days')", [token, u.id]);
-  res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${14 * 86400}${SECURE ? "; Secure" : ""}`);
+  res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=${14 * 86400}`);
   res.json({ ok: true, user: { id: u.id, name: u.name, email: u.email, role: u.role, commission_rate: u.commission_rate } });
 }));
 // PIN quick sign-in: pick your name, type your PIN (set by an admin under Team logins, or by you under My account)
@@ -754,7 +757,7 @@ app.post("/api/admin/login-pin", limit("loginpin", 10, 15 * 60 * 1000), wrap(asy
   if (!u || pin.length < 4 || !(await bcrypt.compare(pin, u.pin_hash))) return bad(res, "That PIN isn't right.", 401);
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '14 days')", [token, u.id]);
-  res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${14 * 86400}${SECURE ? "; Secure" : ""}`);
+  res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=${14 * 86400}`);
   res.json({ ok: true, user: { id: u.id, name: u.name, email: u.email, role: u.role, commission_rate: u.commission_rate } });
 }));
 app.post("/api/admin/my-pin", wrap(auth), wrap(async (req, res) => {
@@ -766,7 +769,7 @@ app.post("/api/admin/my-pin", wrap(auth), wrap(async (req, res) => {
 app.post("/api/admin/logout", wrap(async (req, res) => {
   const token = parseCookies(req.headers.cookie).sid;
   if (token) await q("delete from sessions where token = $1", [token]);
-  res.set("Set-Cookie", `sid=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${SECURE ? "; Secure" : ""}`);
+  res.set("Set-Cookie", `sid=; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=0`);
   res.json({ ok: true });
 }));
 app.get("/api/admin/me", wrap(auth), (req, res) => res.json({ user: Object.assign({}, req.user, { pass_hash: undefined, pin_hash: undefined, apps: Object.assign({ store: true, tracker: false }, req.user.apps || {}) }) }));
@@ -2036,8 +2039,24 @@ app.get(["/sso", "/admin/sso", "/rep/sso"], wrap(async (req, res) => { // in-sco
   if (!u) return land("/admin?sso=nouser&name=" + encodeURIComponent(t.name || ""));
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '14 days')", [token, u.id]);
-  res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${14 * 86400}${SECURE ? "; Secure" : ""}`);
+  res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=${14 * 86400}`);
   land(u.role === "rep" && next.startsWith("/admin") ? next.replace("/admin", "/rep") : next);
+}));
+// the switch, kept inside this app's own address: a full-window frame of the tracker (signed in through the frame)
+app.get(["/admin/tracker", "/rep/tracker"], wrap(async (req, res) => {
+  const token = parseCookies(req.headers.cookie).sid;
+  const { rows: [u] } = token ? await q("select id, email, name, role, commission_rate, apps from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]) : { rows: [] };
+  const isRep = req.path.startsWith("/rep");
+  if (!u) return res.redirect(isRep ? "/rep" : "/admin");
+  if (!HUB_SECRET || !TRACKER_URL) return res.redirect(isRep ? "/rep" : "/admin");
+  if (u.role === "rep" && !appsOf(u).tracker) return res.redirect(isRep ? "/rep" : "/admin");
+  const next = /^\/[A-Za-z0-9/_#-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : (u.role === "rep" ? "/" : "/admin");
+  const t = hubSign({ sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate, exp: Date.now() + 120000 });
+  const src = `${TRACKER_URL}${next.startsWith("/admin") ? "/admin/sso" : "/sso"}?t=${encodeURIComponent(t)}&next=${encodeURIComponent(next)}&framed=1`;
+  res.type("html").send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>360 Medical · Case tracker</title>
+<link rel="manifest" href="${isRep ? "/rep.webmanifest" : "/admin.webmanifest"}"><meta name="theme-color" content="#0f1b33">
+<style>html,body{margin:0;height:100%;background:#0f1b33}iframe{position:fixed;inset:0;width:100%;height:100%;border:0}</style></head>
+<body><iframe src="${escHtml(src)}" title="Case tracker" allow="clipboard-write; geolocation; camera"></iframe></body></html>`);
 }));
 app.get("/api/admin/hub", wrap(auth), (req, res) => res.json({ linked: !!(HUB_SECRET && TRACKER_URL), trackerUrl: TRACKER_URL, apps: appsOf(req.user) }));
 // combined commissions: the store's rows plus the tracker's month estimates
