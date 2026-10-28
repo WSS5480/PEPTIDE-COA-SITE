@@ -1040,6 +1040,40 @@ admin.patch("/products/:id", owner, wrap(async (req, res) => {
   await q(`update products set ${cols.map((c, i) => `${c} = $${i + 1}`)} where id = $${cols.length + 1}`, [...Object.values(f), intOrNull(req.params.id)]);
   res.json({ ok: true });
 }));
+// The internal cost sheet (seed/catalog-q4-2026-costs.json): preview how its rows line up with the products, then apply.
+const COST_SHEET = "q4-2026-costs";
+const normName = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const normSize = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/mg$/, "");
+async function costSheetMatches() {
+  const file = path.join(__dirname, "seed", `catalog-${COST_SHEET}.json`);
+  const list = JSON.parse(require("fs").readFileSync(file, "utf8"));
+  const { rows: products } = await q("select id, name, strength, manufacturer, cost_cents, price_cents, active from products order by name, strength, manufacturer");
+  const rows = list.map((r) => {
+    const matches = products.filter((p) => normName(p.name) === normName(r.name) && normSize(p.strength) === normSize(r.strength));
+    const cost = typeof r.cost === "number" ? Math.round(r.cost * 100) : null;
+    return { name: r.name, strength: r.strength, costCents: cost, matches: matches.map((p) => ({ id: p.id, name: p.name, strength: p.strength, manufacturer: p.manufacturer, costCents: p.cost_cents, priceCents: p.price_cents, active: p.active, same: p.cost_cents === cost })) };
+  });
+  const inSheet = new Set(rows.flatMap((r) => r.matches.map((m) => m.id)));
+  const notInSheet = products.filter((p) => !inSheet.has(p.id)).map((p) => ({ id: p.id, name: p.name, strength: p.strength, manufacturer: p.manufacturer, costCents: p.cost_cents, active: p.active }));
+  return { sheet: COST_SHEET, rows, notInSheet };
+}
+admin.get("/costs/sheet", owner, wrap(async (req, res) => res.json(await costSheetMatches())));
+admin.post("/costs/apply", owner, wrap(async (req, res) => {
+  const { rows } = await costSheetMatches();
+  const overwrite = req.body?.overwrite !== false;
+  let updated = 0, unmatched = [];
+  for (const r of rows) {
+    if (r.costCents === null) continue;
+    if (!r.matches.length) { unmatched.push(`${r.name} ${r.strength}`); continue; }
+    for (const m of r.matches) {
+      if (m.costCents === r.costCents) continue;
+      if (m.costCents !== null && !overwrite) continue;
+      await q("update products set cost_cents = $1 where id = $2", [r.costCents, m.id]); updated++;
+    }
+  }
+  console.log(`Cost sheet applied by ${req.user.email}: ${updated} products updated; unmatched: ${unmatched.join("; ") || "none"}`);
+  res.json({ ok: true, updated, unmatched });
+}));
 // Bulk import from a spreadsheet. Matches existing products by name + size; blank cells keep current values.
 admin.post("/products/import", owner, wrap(async (req, res) => {
   const rows = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, 1000) : [];

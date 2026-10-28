@@ -623,8 +623,8 @@ async function products() {
         <label class="chk"><input type="checkbox" id="mkRound"${localStorage.getItem("markupRound") === "1" ? " checked" : ""}> Round to whole dollars</label>
         <button class="btn solid" id="mkApply">Set all prices from cost</button><span class="muted" id="mkNote"></span></div>
       <span class="muted">Pick a markup, then Set all prices: price = cost + markup (a $20 cost at +100% is $40). Only products with a cost change; the new prices show in the table until you click Save all changes. Costs come from the cost sheet, the Cost column or Inventory → Receive.</span></div>` : "";
-  pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>${list.length ? `<button class="btn danger" id="clrP">Remove all products</button>` : ""}` : ""}</div></header>
-    <div id="impBox"></div><div id="manageBox"></div>
+  pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="costP">Cost sheet</button><button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>${list.length ? `<button class="btn danger" id="clrP">Remove all products</button>` : ""}` : ""}</div></header>
+    <div id="costBox"></div><div id="impBox"></div><div id="manageBox"></div>
     <p class="muted">Click a column name to sort. Cost = what you pay per vial (never shown on the store). Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). Untick Active to hide a product. A lab report attaches to a product when the peptide name, size and manufacturer match.</p>
     ${(() => { const n = list.filter((p) => p.active && !repFor(p).length).length; return n ? `<p class="muted"><strong>${n} active product${n === 1 ? " has" : "s have"} no lab report.</strong> Sort by the Lab report column to see them.</p>` : ""; })()}
     ${markupBar}
@@ -698,6 +698,25 @@ async function products() {
     };
   }
   if (document.getElementById("impP")) document.getElementById("impP").onclick = () => importBox(list);
+  if (document.getElementById("costP")) document.getElementById("costP").onclick = async () => {
+    const box = document.getElementById("costBox");
+    if (box.innerHTML) { box.innerHTML = ""; return; }
+    box.innerHTML = `<div class="panel"><p class="muted">Checking the cost sheet against your products…</p></div>`;
+    const d = await api("/costs/sheet");
+    const withCost = d.rows.filter((r) => r.costCents !== null);
+    const matched = withCost.filter((r) => r.matches.length), unmatched = withCost.filter((r) => !r.matches.length);
+    const differ = matched.flatMap((r) => r.matches.filter((m) => !m.same));
+    box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Cost sheet · Internal pricing Q4 2026</h2>
+      <p class="muted">${withCost.length} products on the sheet with a cost. <strong>${matched.length}</strong> match a product here by name and size (${matched.reduce((n, r) => n + r.matches.length, 0)} products, counting each manufacturer). <strong>${differ.length}</strong> of those currently have a different or missing cost.${unmatched.length ? ` <strong>${unmatched.length}</strong> rows match nothing — their name or size differs from the product list, so fix the product name (or type the cost by hand) for: ${unmatched.map((r) => esc(`${r.name} ${r.strength} ($${(r.costCents / 100).toFixed(2)})`)).join("; ")}.` : " Every row matches."}</p>
+      ${differ.length ? `<div class="tblwrap" style="max-height:20rem"><table class="tbl compact"><tr><th>Product</th><th>Maker</th><th class="num">Cost now</th><th class="num">Sheet cost</th></tr>${matched.flatMap((r) => r.matches.filter((m) => !m.same).map((m) => `<tr><td class="namecol">${esc(m.name)} ${esc(m.strength)}</td><td>${esc(m.manufacturer || "")}</td><td class="num">${m.costCents === null ? "—" : money(m.costCents)}</td><td class="num"><strong>${money(r.costCents)}</strong></td></tr>`)).join("")}</table></div>` : `<p class="muted">All matched products already have the sheet's cost.</p>`}
+      ${d.notInSheet.filter((p) => p.active).length ? `<p class="muted">Not on the sheet (no cost from it): ${d.notInSheet.filter((p) => p.active).map((p) => esc(`${p.name} ${p.strength}${p.manufacturer ? " · " + p.manufacturer : ""}`)).join("; ")}.</p>` : ""}
+      <div class="row2" style="align-items:center"><button class="btn solid" id="costApply"${differ.length ? "" : " disabled"}>Set ${differ.length} cost${differ.length === 1 ? "" : "s"} from the sheet</button><button class="btn" id="costClose">Close</button></div></div>`;
+    document.getElementById("costClose").onclick = () => { box.innerHTML = ""; };
+    document.getElementById("costApply").onclick = async () => {
+      const r = await api("/costs/apply", { method: "POST", body: { overwrite: true } });
+      toast(`${r.updated} cost${r.updated === 1 ? "" : "s"} updated`); unsaved = false; products();
+    };
+  };
   if (document.getElementById("addP")) document.getElementById("addP").onclick = () => { pb.insertAdjacentHTML("afterbegin", row(null)); refresh(); pb.querySelector("tr input").focus(); };
   if (document.getElementById("clrP")) document.getElementById("clrP").onclick = async () => {
     const typed = prompt(`This removes all ${list.length} products, their prices and their documents from the store. Past orders keep their own copy of what was bought. Lab reports are not touched.\n\nType DELETE to confirm.`);
