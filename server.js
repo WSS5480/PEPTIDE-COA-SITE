@@ -1824,6 +1824,13 @@ admin.get("/settings", wrap(async (req, res) => {
   res.json({ settings: out, stripe: stripeInfo(), mail: mail.info(st), baseUrl: BASE_URL });
 }));
 // forget the saved mail password / API key (then the host's settings, if any, are used again)
+// The owner can read back the saved Microsoft 365 app details to set up another app (the case tracker) with the same sender.
+admin.get("/mail/secret", owner, wrap(async (req, res) => {
+  const s = await getSettings();
+  console.log(`Mail secret shown to ${req.user.email}`);
+  res.set("Cache-Control", "no-store");
+  res.json({ tenant: s.graphTenant || "", client: s.graphClient || "", secret: s.graphSecret || "", mailbox: s.mailUser || "", from: s.mailFrom || "" });
+}));
 admin.post("/mail/clear", owner, wrap(async (req, res) => {
   await q("update settings set value = '\"\"' where key in ('mailPass','resendKey','graphSecret')");
   await q(`update settings set value = '""' where key = 'mailMode'`);

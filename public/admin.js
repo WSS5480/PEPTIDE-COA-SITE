@@ -1510,7 +1510,7 @@ async function settings() {
         <div class="field mail-smtp mail-resend mail-graph"><label class="eyebrow" for="s-mailFrom">From (optional)</label><input id="s-mailFrom" value="${esc(s.mailFrom)}" placeholder="360 Medical Peptides <noreply@360medical.net>"${ro()}><span class="muted">Blank = the login / mailbox address</span></div>
         <div class="field mail-smtp"><label class="eyebrow" for="s-mailHost">Mail server</label><input id="s-mailHost" value="${esc(s.mailHost)}"${ro()}></div>
         <div class="field mail-smtp"><label class="eyebrow" for="s-mailPort">Port</label><input id="s-mailPort" value="${esc(s.mailPort)}" inputmode="numeric"${ro()}></div></div>
-      ${isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" id="mailSave">Save sending account</button><button class="btn" id="mailTest">Send a test email</button>${s.mailPassSet || s.resendKeySet || s.graphSecretSet ? `<button class="btn" id="mailClear">Forget saved password / secret</button>` : ""}<span class="muted" id="mailTestOut"></span></div>` : ""}
+      ${isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" id="mailSave">Save sending account</button><button class="btn" id="mailTest">Send a test email</button>${s.mailPassSet || s.resendKeySet || s.graphSecretSet ? `<button class="btn" id="mailClear">Forget saved password / secret</button>` : ""}${s.graphSecretSet ? `<button class="btn" id="mailShow" title="For setting up the case tracker with the same Microsoft 365 app">Show app details</button>` : ""}<span class="muted" id="mailTestOut"></span></div><div id="mailShowOut"></div>` : ""}
       <details><summary style="cursor:pointer;font-weight:600">Help: Microsoft 365 app, mailbox login, Google, Resend</summary>
         <p class="muted" style="margin-top:.6rem"><strong>Microsoft 365 app (recommended):</strong> one-time setup by a Microsoft 365 admin, about 10 minutes.</p><ol class="muted" style="margin:.3rem 0 0 1.2rem;display:grid;gap:.35rem">
         <li>Go to <a href="https://entra.microsoft.com" target="_blank" rel="noopener">entra.microsoft.com</a> → Identity → Applications → <strong>App registrations</strong> → <strong>New registration</strong>. Name: <em>Peptide store mail</em>. Leave "single tenant" selected → Register.</li>
@@ -1598,6 +1598,13 @@ async function settings() {
   if (document.getElementById("mailClear")) document.getElementById("mailClear").onclick = async () => {
     if (!confirm("Forget the saved mail password / API key? The store stops sending until a new one is saved (unless the host has its own settings).")) return;
     await api("/mail/clear", { method: "POST" }); toast("Forgotten"); settings();
+  };
+  if (document.getElementById("mailShow")) document.getElementById("mailShow").onclick = async () => {
+    const d = await api("/mail/secret");
+    const row = (l, v) => `<tr><td class="eyebrow" style="padding:.3rem .6rem .3rem 0;white-space:nowrap">${l}</td><td class="mono" style="padding:.3rem 0;word-break:break-all">${esc(v || "—")}</td><td style="padding:.3rem 0 .3rem .6rem"><button class="btn" type="button" data-copy="${esc(v || "")}">Copy</button></td></tr>`;
+    document.getElementById("mailShowOut").innerHTML = `<div class="panel" style="border-color:var(--blue);margin-top:.6rem"><p class="muted">Paste these into the case tracker: Admin → Approval emails. Keep the secret private.</p><table>${row("Tenant ID", d.tenant)}${row("Client ID", d.client)}${row("Client secret", d.secret)}${row("Mailbox", d.mailbox)}${row("From", d.from)}</table><div><button class="btn" type="button" id="mailHide">Hide</button></div></div>`;
+    document.querySelectorAll("#mailShowOut [data-copy]").forEach((b) => (b.onclick = () => navigator.clipboard?.writeText(b.dataset.copy).then(() => toast("Copied"), () => toast("Copy failed"))));
+    document.getElementById("mailHide").onclick = () => { document.getElementById("mailShowOut").innerHTML = ""; };
   };
   if (document.getElementById("mailTest")) document.getElementById("mailTest").onclick = async () => {
     const b = document.getElementById("mailTest"), out = document.getElementById("mailTestOut");
