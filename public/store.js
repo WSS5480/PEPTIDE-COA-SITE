@@ -400,7 +400,8 @@ function acctView(mode) {
   if (!ME && HOUSE) {
     b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Office sign-in</h2>${close}</div>
       <p class="dist">You're signed in with the store PIN. Store prices are showing and the cart is open; checkout asks for the customer's name and email, like a walk-in order. Customers with their own PIN see their own pricing instead.</p>
-      <p class="dist"><button class="linkbtn" type="button" id="acOut">Sign out</button></p>`;
+      <div class="row2" style="margin:.4rem 0"><a class="btn solid" href="/admin" style="display:inline-grid;place-items:center;text-decoration:none">Open Admin</a><a class="btn" href="/rep" style="display:inline-grid;place-items:center;text-decoration:none">Rep app</a></div>
+      <p class="dist">Admin and the rep app ask for your email and password (team logins). <button class="linkbtn" type="button" id="acOut">Sign out</button></p>`;
     $("acOut").onclick = async () => { await post("/api/account/logout", {}); await loadAccount(); await load(); toast("Signed out"); closeD($("acct")); };
     return;
   }
@@ -410,7 +411,8 @@ function acctView(mode) {
       <p class="dist">Enter the PIN ${esc(S.brand || "we")} gave you. It signs you in, shows your pricing and keeps your orders in one place.</p>
       <form id="acForm" class="stack"><div class="field"><label class="eyebrow" for="acPin">Your PIN</label><input id="acPin" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="4 to 8 digits" style="font:600 1.4rem/1 var(--mono);letter-spacing:.3em;text-align:center"></div>
       <div class="err" id="acErr" hidden></div><button class="btn solid wide">Sign in</button></form>
-      <p class="dist">No PIN yet? <button class="linkbtn" type="button" data-acct="request">Request one</button> — accounts are set up by us, not online. You can still order as a guest.</p>`;
+      <p class="dist">No PIN yet? <button class="linkbtn" type="button" data-acct="request">Request one</button> — accounts are set up by us, not online. You can still order as a guest.</p>
+      <p class="dist" style="margin-top:.6rem">Staff: the store PIN signs the office in here; <a href="/admin">Admin</a> and the <a href="/rep">rep app</a> use your email and password.</p>`;
     $("acPin").focus();
     $("acForm").onsubmit = async (e) => { e.preventDefault(); try { await post("/api/account/pin", { pin: $("acPin").value }); await loadAccount(); await load(); toast("Signed in"); acctView(); } catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; } };
     return;
