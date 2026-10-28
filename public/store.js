@@ -89,7 +89,8 @@ const descHtml = (d) => {
   const lines = String(d || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const isB = (l) => /^[-•*]\s*/.test(l);
   const text = lines.filter((l) => !isB(l)), bullets = lines.filter(isB).map((l) => l.replace(/^[-•*]\s*/, ""));
-  return `${text.length ? `<p class="stockline pdesc">${text.map(esc).join("<br>")}</p>` : ""}${bullets.length ? `<ul class="benefits">${bullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}`;
+  const keepMg = (l) => esc(l).replace(/(\d) (mg|mcg|iu)\b/gi, "$1\u00a0$2"); // "5 mg" never splits across lines
+  return `${text.length ? `<p class="stockline pdesc">${text.map(keepMg).join("<br>")}</p>` : ""}${bullets.length ? `<ul class="benefits">${bullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}`;
 };
 function drawProducts() {
   drawChips();
