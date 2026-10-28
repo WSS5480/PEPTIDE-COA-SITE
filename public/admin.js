@@ -1784,14 +1784,14 @@ async function staff() {
     if (!r.ok) { box.innerHTML = `<p class="muted">Case tracker: ${esc(r.error)}</p>`; return; }
     const missing = (r.reps || []).filter((t) => !users.some((u) => u.name.trim().toLowerCase() === String(t.rep).trim().toLowerCase()));
     if (!missing.length) return;
-    box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><strong>${missing.length} rep${missing.length === 1 ? "" : "s"} exist only in the case tracker:</strong> <span class="muted">${missing.map((t) => esc(t.rep)).join(", ")}.</span> Add them here as logins (Case tracker ticked, same PIN as in the tracker where one is set) so they have one login.
+    box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><strong>${missing.length} rep${missing.length === 1 ? "" : "s"} exist only in the case tracker:</strong> <span class="muted">${missing.map((t) => esc(t.rep)).join(", ")}.</span> Add them here as logins (both apps ticked, same PIN as in the tracker where one is set) so they have one login.
       <div class="grid2" style="margin-top:.5rem">${missing.map((t, i) => `<div class="field"><label class="eyebrow">${esc(t.rep)} · email for their login</label><input data-imp="${i}" type="email" placeholder="${esc(String(t.rep).toLowerCase().replace(/[^a-z0-9]+/g, "."))}@360medical.net"></div>`).join("")}</div>
       <div><button class="btn solid" type="button" id="impReps">Add these logins</button></div></div>`;
     document.getElementById("impReps").onclick = async () => {
       let n = 0;
       for (let i = 0; i < missing.length; i++) {
         const email = (document.querySelector(`[data-imp="${i}"]`).value || "").trim(); if (!email) continue;
-        try { await api("/users", { method: "POST", body: { name: missing[i].rep, email, password: "temp-" + Math.random().toString(36).slice(2, 10) + "A1", role: "rep", rate: "0", pin: missing[i].pin || "", apps: { store: false, tracker: true } } }); n++; } catch (e) {}
+        try { await api("/users", { method: "POST", body: { name: missing[i].rep, email, password: "temp-" + Math.random().toString(36).slice(2, 10) + "A1", role: "rep", rate: "0", pin: missing[i].pin || "", apps: { store: true, tracker: true } } }); n++; } catch (e) {}
       }
       toast(`Added ${n} login${n === 1 ? "" : "s"}`); staff();
     };
