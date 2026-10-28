@@ -7,7 +7,7 @@ const when = (iso) => { if (!iso) return ""; const d = new Date(iso); return d.t
 const STATUS_TEXT = { new: "Received", confirmed: "Awaiting payment", paid: "Paid", shipped: "Shipped", delivered: "Delivered", cancelled: "Cancelled" };
 const pill = (s) => `<span class="pill st-${esc(s)}">${esc(STATUS_TEXT[s] || s)}</span>`;
 function toast(msg) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2000); }
-let me = null, view = "home", pick = null, paneDirty = false;
+let me = null, view = "home", pick = null, paneDirty = false, HUB = { linked: false, apps: {} };
 const $ = (id) => document.getElementById(id);
 
 async function api(path, opts = {}) {
@@ -20,23 +20,33 @@ async function api(path, opts = {}) {
 }
 
 /* ---------- login ---------- */
+let loginMode = localStorage.getItem("loginMode") || "email";
 function drawLogin(msg) {
+  const pinMode = loginMode === "pin";
   app.innerHTML = `<div class="login"><form id="lf">
     <img src="/site-logo?v=2" alt="360 Peptides" style="height:3rem;width:auto;max-width:15rem;object-fit:contain;justify-self:start">
-    <h1>Sales rep sign in</h1><p class="muted">Add customers, place their orders and see your commissions.</p>
-    <div class="field"><label class="eyebrow" for="le">Email</label><input id="le" type="email" autocomplete="username" required></div>
-    <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>
+    <h1>Sales rep sign in</h1><p class="muted">One login for the peptide store and the case tracker.</p>
+    <div class="seg" style="justify-self:start"><button type="button" data-lmode="email"${pinMode ? "" : ' class="on"'}>Email + password</button><button type="button" data-lmode="pin"${pinMode ? ' class="on"' : ""}>Name + PIN</button></div>
+    ${pinMode ? `<div class="field"><label class="eyebrow" for="ln">Your name</label><select id="ln" required><option value="">Loading…</option></select></div>
+    <div class="field"><label class="eyebrow" for="lpin">PIN</label><input id="lpin" inputmode="numeric" autocomplete="one-time-code" maxlength="10" required style="font:600 1.3rem/1 var(--mono);letter-spacing:.3em"></div>`
+    : `<div class="field"><label class="eyebrow" for="le">Email</label><input id="le" type="email" autocomplete="username" required></div>
+    <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>`}
     ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
     <button class="btn solid wide rep">Sign in</button>
     <button class="btn wide" type="button" data-install>Download rep app</button>
     <p class="muted" style="text-align:center">Office staff? <a href="/admin">Sign in to admin</a></p></form></div>`;
+  document.querySelectorAll("[data-lmode]").forEach((b) => (b.onclick = () => { loginMode = b.dataset.lmode; localStorage.setItem("loginMode", loginMode); drawLogin(); }));
+  if (pinMode) fetch("/api/admin/pin-names").then((r) => r.json()).then((j) => { const sel = $("ln"); if (!sel) return; sel.innerHTML = `<option value="">Choose your name…</option>` + j.names.map((n) => `<option value="${n.id}"${String(n.id) === localStorage.getItem("loginName") ? " selected" : ""}>${esc(n.name)}</option>`).join(""); if (!j.names.length) sel.innerHTML = `<option value="">No PINs set yet — use email + password</option>`; }).catch(() => {});
   $("lf").onsubmit = async (e) => {
     e.preventDefault();
-    const res = await fetch("/api/admin/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: $("le").value, password: $("lp").value }) });
+    const res = pinMode
+      ? await fetch("/api/admin/login-pin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: +$("ln").value, pin: $("lpin").value }) })
+      : await fetch("/api/admin/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: $("le").value, password: $("lp").value }) });
     const j = await res.json();
     if (!res.ok) return drawLogin(j.error);
+    if (pinMode) localStorage.setItem("loginName", $("ln").value);
     if (j.user.role !== "rep") { await fetch("/api/admin/logout", { method: "POST" }); return drawLogin("That login is for the admin, not the rep app. Go to /admin."); }
-    me = j.user; shell();
+    me = j.user; HUB = await api("/hub").catch(() => HUB); shell();
   };
 }
 
@@ -44,7 +54,7 @@ function drawLogin(msg) {
 const NAV = [["home", "Home"], ["customers", "Customers"], ["neworder", "New order"], ["orders", "Orders"], ["commissions", "Commissions"], ["account", "Account"]];
 function shell() {
   app.innerHTML = `<div class="rtop"><div style="display:flex;align-items:center;gap:.6rem"><span class="logopill"><img src="/site-logo?v=2" alt="360 Peptides"></span><div class="logo"><span id="rbrand">Sales rep</span><small>${esc(me.name || me.email)} <span id="rver"></span></small></div></div>
-      <div class="tools"><button type="button" data-refresh title="Refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button><button type="button" id="lo">Sign out</button></div></div>
+      <div class="tools">${HUB.linked && HUB.apps && HUB.apps.tracker ? `<a href="/go/tracker?next=/" class="btn" style="display:inline-grid;place-items:center;text-decoration:none;color:inherit;height:2.2rem;padding:0 .7rem;font-size:.82rem" title="Switch to the case tracker with this login">Case tracker ↗</a>` : ""}<button type="button" data-refresh title="Refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button><button type="button" id="lo">Sign out</button></div></div>
     <nav class="rnav" id="rnav"></nav><main class="rpane" id="pane"></main>`;
   $("lo").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };
   fetch("/api/build").then((r) => r.json()).then((b) => { const v = $("rver"); if (v) v.textContent = `· v${b.version}`; }).catch(() => {});
@@ -273,6 +283,6 @@ if (window.AppRefresh) window.AppRefresh.init({
 
 (async () => {
   const res = await fetch("/api/admin/me");
-  if (res.ok) { me = (await res.json()).user; if (me.role === "rep") shell(); else drawLogin("That login is for the admin, not the rep app. Go to /admin."); } else drawLogin();
+  if (res.ok) { me = (await res.json()).user; HUB = await api("/hub").catch(() => HUB); if (me.role === "rep") shell(); else drawLogin("That login is for the admin, not the rep app. Go to /admin."); } else drawLogin();
 })();
 })();

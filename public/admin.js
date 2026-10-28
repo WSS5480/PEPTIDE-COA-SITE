@@ -28,26 +28,36 @@ const szk = (x) => nrm(x).replace(/mg$/, "");
 const mfrOk = (p, r) => { const a = nrm(p.manufacturer), b = nrm(r.manufacturer); return !a || !b || a.includes(b) || b.includes(a); };
 const reportMatches = (p, r) => mfrOk(p, r) && nrm(p.name) === nrm(r.product) && szk(p.strength) === szk(r.strength);
 addEventListener("beforeunload", (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ""; } });
-let me = null, view = "dashboard", orderId = null, stats = null, BUILD = null;
+let me = null, view = "dashboard", orderId = null, stats = null, BUILD = null, HUB = { linked: false, trackerUrl: "", apps: {} };
 const isOwner = () => me && me.role === "owner";
 const isRep = () => me && me.role === "rep";
 
 /* ---------- login ---------- */
+let loginMode = localStorage.getItem("loginMode") || "email";
 function drawLogin(msg) {
+  const pinMode = loginMode === "pin";
   app.innerHTML = `<div class="login"><form id="lf">
     <img src="/site-logo?v=2" alt="360 Peptides" style="height:3.2rem;width:auto;max-width:16rem;object-fit:contain;justify-self:start">
-    <h1>Peptides Admin</h1><p class="muted">Sign in to manage orders, prices and the site.</p>
-    <div class="field"><label class="eyebrow" for="le">Email</label><input id="le" type="email" autocomplete="username" required></div>
-    <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>
+    <h1>360 Medical · Admin</h1><p class="muted">One login for the peptide store and the surgical case tracker.</p>
+    <div class="seg" style="justify-self:start"><button type="button" data-lmode="email"${pinMode ? "" : ' class="on"'}>Email + password</button><button type="button" data-lmode="pin"${pinMode ? ' class="on"' : ""}>Name + PIN</button></div>
+    ${pinMode ? `<div class="field"><label class="eyebrow" for="ln">Your name</label><select id="ln" required><option value="">Loading…</option></select></div>
+    <div class="field"><label class="eyebrow" for="lpin">PIN</label><input id="lpin" inputmode="numeric" autocomplete="one-time-code" maxlength="10" required style="font:600 1.3rem/1 var(--mono);letter-spacing:.3em"></div>`
+    : `<div class="field"><label class="eyebrow" for="le">Email</label><input id="le" type="email" autocomplete="username" required></div>
+    <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>`}
     ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
     <button class="btn solid wide">Sign in</button><button class="btn wide" type="button" data-install>Download admin app</button>
-    <p class="muted" style="text-align:center;margin:0">Sales reps sign in here too (you see your own customers, orders and commissions), or use the <a href="/rep">phone rep app</a>.</p></form></div>`;
+    <p class="muted" style="text-align:center;margin:0">Sales reps sign in here too, or use the <a href="/rep">phone rep app</a>. A PIN is set under Team logins or My account.</p></form></div>`;
+  document.querySelectorAll("[data-lmode]").forEach((b) => (b.onclick = () => { loginMode = b.dataset.lmode; localStorage.setItem("loginMode", loginMode); drawLogin(); }));
+  if (pinMode) fetch("/api/admin/pin-names").then((r) => r.json()).then((j) => { const sel = document.getElementById("ln"); if (!sel) return; sel.innerHTML = `<option value="">Choose your name…</option>` + j.names.map((n) => `<option value="${n.id}"${String(n.id) === localStorage.getItem("loginName") ? " selected" : ""}>${esc(n.name)}</option>`).join(""); if (!j.names.length) sel.innerHTML = `<option value="">No PINs set yet — use email + password</option>`; }).catch(() => {});
   document.getElementById("lf").onsubmit = async (e) => {
     e.preventDefault();
-    const res = await fetch("/api/admin/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: le.value, password: lp.value }) });
+    const res = pinMode
+      ? await fetch("/api/admin/login-pin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: +document.getElementById("ln").value, pin: document.getElementById("lpin").value }) })
+      : await fetch("/api/admin/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: le.value, password: lp.value }) });
     const j = await res.json();
     if (!res.ok) return drawLogin(j.error);
-    me = j.user; shell();
+    if (pinMode) localStorage.setItem("loginName", document.getElementById("ln").value);
+    me = j.user; HUB = await api("/hub").catch(() => HUB); shell();
   };
 }
 
@@ -60,7 +70,7 @@ const canSee = (who) => who === "all" || (who === "owner" && isOwner()) || (who 
 function shell() {
   app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><span><button type="button" data-refresh title="Refresh"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button> <button type="button" id="mm">Menu</button></span></div>
   <div class="adm" id="adm"><aside class="side">
-    <div class="logobox"><img src="/site-logo?v=2" alt="360 Peptides"></div><div class="logo"><small>Peptides admin</small><span class="ver" id="buildTop">v…</span></div>
+    <div class="logobox"><img src="/site-logo?v=2" alt="360 Peptides"></div><div class="logo"><small>Peptides admin</small><span class="ver" id="buildTop">v…</span>${HUB.linked && (isOwner() || !isRep() || (HUB.apps && HUB.apps.tracker)) ? `<div class="seg appswitch" style="display:flex;margin:.6rem 0 0"><button type="button" class="on" style="flex:1">Peptide store</button><a href="/go/tracker?next=${encodeURIComponent(isRep() ? "/" : "/admin")}" style="flex:1;display:grid;place-items:center;text-decoration:none;color:inherit;font-weight:600;font-size:.86rem;background:var(--card)" title="Switch to the 360 Medical case tracker with this login">Case tracker ↗</a></div>` : ""}</div>
     <button type="button" class="sref" data-refresh title="Reload this screen"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="vertical-align:-2px"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg> Refresh</button>
     <nav id="nav"></nav>
     <div class="who"><span>${esc(me.name || me.email)} · ${esc(me.role)}</span><div class="row2" style="gap:.4rem;flex-wrap:nowrap"><a class="btn" href="/" target="_blank" style="flex:1;display:inline-grid;place-items:center;text-decoration:none;background:#fff;color:var(--navy);border-color:#fff;height:2.2rem;font-size:.82rem">Store view ↗</a><a class="btn" href="/rep" target="_blank" style="flex:1;display:inline-grid;place-items:center;text-decoration:none;background:#fff;color:var(--navy);border-color:#fff;height:2.2rem;font-size:.82rem">Rep view ↗</a></div><button type="button" data-refresh><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="vertical-align:-2px"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg> Refresh</button><button type="button" data-install>Download admin app</button><button type="button" id="lo">Sign out</button><span id="buildLine" style="font-size:.7rem;opacity:.7"></span></div>
@@ -77,7 +87,7 @@ async function drawNav() {
 }
 let paneDirty = false; // something typed on this screen and not saved yet
 document.addEventListener("input", (e) => { if (e.target.closest("#pane")) paneDirty = true; });
-function go(v, id, opts = {}) {
+async function go(v, id, opts = {}) {
   if (!opts.silent && unsaved && !confirm("You have unsaved product changes. Leave without saving?")) return;
   unsaved = false; paneDirty = false;
   const pn = document.getElementById("pane"); if (pn) { pn.onclick = null; pn.oninput = null; pn.onchange = null; } // drop the last screen's handlers
@@ -85,7 +95,8 @@ function go(v, id, opts = {}) {
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  ({ dashboard, orders, neworder, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account }[v] || dashboard)();
+  await ({ dashboard, orders, neworder, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account }[v] || dashboard)();
+  if (v === "dashboard" && document.getElementById("hubKpi")) fillHubKpi();
   if (!opts.keepScroll) window.scrollTo(0, 0);
 }
 const pane = () => document.getElementById("pane");
@@ -110,6 +121,7 @@ async function dashboard() {
         <div class="kpi" data-go="commissions"><dt>Commission pending</dt><dd>${money(c.pending)}</dd></div>
         <div class="kpi" data-go="commissions"><dt>Commission earned, owed</dt><dd>${money(c.earned)}</dd></div>
         <div class="kpi" data-go="commissions"><dt>Commission paid out</dt><dd>${money(c.paid)}</dd></div>
+        ${HUB.linked && HUB.apps && HUB.apps.tracker ? `<div class="kpi" data-go="commissions" id="hubKpi"><dt>Case tracker commission this month</dt><dd>…</dd></div>` : ""}
       </dl>
       <div class="panel"><h2>How it works</h2><p class="muted">Every order from one of your customers earns you ${me.commission_rate !== null && me.commission_rate !== undefined ? esc(Number(me.commission_rate)) + "%" : "a commission"} of the product total (after any discount, before shipping), whether you enter it or they order on the store themselves. Commission is <strong>pending</strong> until the office marks the order paid, then <strong>earned</strong> until it's paid out to you.</p></div>`;
     return;
@@ -128,6 +140,7 @@ async function dashboard() {
       <div class="kpi" data-go="orders:shipped"><dt>Shipped</dt><dd>${b.shipped || 0}</dd></div>
       <div class="kpi"><dt>Paid this month</dt><dd>${money(s.month.paid_cents)}</dd></div>
       ${s.stockValue ? `<div class="kpi" data-nav="inventory"><dt>Inventory at cost</dt><dd>${money(s.stockValue.cents)}</dd></div>` : ""}
+      ${HUB.linked ? `<div class="kpi" data-go="commissions" id="hubKpi"><dt>Commissions this month, both apps</dt><dd>…</dd></div>` : ""}
     </dl>
     <div id="linkCheck"></div>
     ${s.count && countDue(s.count.lastAt, s.count.dueDays) ? `<div class="panel"><strong>Weekly inventory count is due.</strong><span class="muted">${s.count.lastAt ? `Last count ${when(s.count.lastAt)}, ${agoText(s.count.lastAt)}.` : "No physical count has been posted yet."} Count the shelf, type the numbers in, post — differences are corrected and logged.</span><div><button class="btn" data-nav="inventory:count">Open count sheet</button></div></div>` : ""}
@@ -136,6 +149,15 @@ async function dashboard() {
     <div class="panel"><h2>How orders flow</h2><p class="muted">New → Confirmed (you've sent the total and payment info) → Paid → Shipped (add carrier and tracking) or Delivered. Orders paid by card through Stripe arrive already <em>paid</em>. Cancelling puts the stock back. Every order is also emailed to the address under Site settings → Order emails.</p></div>`;
 }
 
+function fillHubKpi() {
+  const k = document.getElementById("hubKpi"); if (!k) return;
+  const ym = new Date().toISOString().slice(0, 7), { from, to } = monthRange(ym);
+  Promise.all([api("/hub/commissions?month=" + ym), isRep() ? Promise.resolve({ rows: [] }) : api("/commissions?" + new URLSearchParams({ from, to }).toString())]).then(([tr, st]) => {
+    const dd = k.querySelector("dd"); if (!dd) return;
+    const storeCents = (st.rows || []).filter((r) => r.comm_status !== "void").reduce((t, r) => t + r.commission_cents, 0);
+    dd.textContent = tr.ok ? (isRep() ? usd(tr.total || 0) : usd(storeCents / 100 + (tr.total || 0))) : "tracker offline";
+  }).catch(() => { const dd = k.querySelector("dd"); if (dd) dd.textContent = "tracker offline"; });
+}
 /* ---------- orders ---------- */
 let oFilter = { status: "", q: "" };
 async function orders() {
@@ -624,12 +646,21 @@ async function reps() {
 }
 
 /* ---------- commissions ---------- */
-let commFilter = { rep: "", from: "", to: "", status: "" };
+let commFilter = { rep: "", from: "", to: "", status: "" }, commView = localStorage.getItem("commView") || "store", commMonth = new Date().toISOString().slice(0, 7);
+const usd = (n) => "$" + (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const monthLabel = (ym) => new Date(ym + "-15T12:00:00").toLocaleDateString("en-US", { month: "long", year: "numeric" });
+const commSwitch = () => HUB.linked ? `<div class="seg" style="display:inline-flex;margin:0 0 .8rem">${[["combined", "Combined"], ["store", "Peptide store"], ["tracker", "Case tracker"]].map(([k, l]) => `<button type="button" data-cv="${k}"${commView === k ? ' class="on"' : ""}>${l}</button>`).join("")}</div>` : "";
+const wireCommSwitch = () => { document.querySelectorAll("[data-cv]").forEach((b) => { b.onclick = () => { commView = b.dataset.cv; localStorage.setItem("commView", commView); commissions(); }; }); };
+// the month the store rows use when the view is Combined / Case tracker
+const monthRange = (ym) => { const [y, m] = ym.split("-").map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate(); return { from: `${ym}-01`, to: `${ym}-${String(last).padStart(2, "0")}` }; };
 async function commissions() {
   if (!isOwner() && !isRep()) return dashboard();
   const $ = (x) => document.getElementById(x);
+  if (!HUB.linked) commView = "store";
+  if (commView !== "store") return commissionsHub();
   const { reps: repList } = isRep() ? { reps: [] } : await api("/reps");
   pane().innerHTML = `<header><h1>${isRep() ? "My commissions" : "Commissions"}</h1><a class="btn" id="cmCsv" href="#" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></header>
+    ${commSwitch()}
     <div class="filters"><select id="cm-rep"${isRep() ? " hidden" : ""}><option value="">All reps</option>${repList.map((r) => `<option value="${r.id}"${String(r.id) === String(commFilter.rep) ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
       <input id="cm-from" type="date" value="${esc(commFilter.from)}"><input id="cm-to" type="date" value="${esc(commFilter.to)}">
       <select id="cm-st"><option value="">All statuses</option>${["pending", "earned", "paid", "void"].map((x) => `<option value="${x}"${commFilter.status === x ? " selected" : ""}>${x}</option>`).join("")}</select>
@@ -639,6 +670,7 @@ async function commissions() {
     <div class="tblwrap" id="cmT"></div>
     <div id="cmHist"></div>
     <p class="muted"><strong>Pending</strong> = order not paid yet. <strong>Earned</strong> = order paid, commission owed. <strong>Paid</strong> = included in a payout. <strong>Void</strong> = order cancelled. Commission = product total after discount × the rep's rate when the order was placed.</p>`;
+  wireCommSwitch();
   const qs = () => new URLSearchParams(Object.fromEntries(Object.entries({ rep: commFilter.rep, from: commFilter.from, to: commFilter.to, status: commFilter.status }).filter(([, v]) => v))).toString();
   const load = async () => {
     const d = await api("/commissions?" + qs());
@@ -675,6 +707,48 @@ async function commissions() {
   load();
 }
 
+/* Combined / Case tracker commissions: the tracker is asked for its month per rep (actual vs plan × rate), the store's rows for the
+   same month are summed per rep, and the two are shown side by side. Goals and targets stay separate — each app keeps its own plan. */
+async function commissionsHub() {
+  const $ = (x) => document.getElementById(x);
+  const title = isRep() ? "My commissions" : "Commissions";
+  pane().innerHTML = `<header><h1>${title}</h1><div class="row2"><button class="btn" id="cmPrev" type="button" title="Previous month">‹</button><input id="cmMonth" type="month" value="${esc(commMonth)}"><button class="btn" id="cmNext" type="button" title="Next month">›</button></div></header>
+    ${commSwitch()}
+    <dl class="kpis" id="cmK"></dl>
+    <div class="tblwrap" id="cmT"><p class="muted">Loading…</p></div>
+    <p class="muted" id="cmNote"></p>`;
+  wireCommSwitch();
+  const step = (n) => { const [y, m] = commMonth.split("-").map(Number); const d = new Date(Date.UTC(y, m - 1 + n, 1)); commMonth = d.toISOString().slice(0, 7); commissions(); };
+  $("cmPrev").onclick = () => step(-1); $("cmNext").onclick = () => step(1);
+  $("cmMonth").onchange = () => { if (/^\d{4}-\d{2}$/.test($("cmMonth").value)) { commMonth = $("cmMonth").value; commissions(); } };
+  const { from, to } = monthRange(commMonth);
+  const [tr, st] = await Promise.all([api("/hub/commissions?month=" + commMonth).catch((e) => ({ ok: false, error: e.message, reps: [] })), api("/commissions?" + new URLSearchParams({ from, to }).toString()).catch(() => ({ rows: [], totals: {} }))]);
+  // store rows → per rep (name) for the month: earned + paid count as commission, pending shown separately, void ignored
+  const storeBy = {};
+  for (const r of st.rows || []) {
+    const k = String(r.rep_name || "").trim(); if (!k || r.comm_status === "void") continue;
+    const o = storeBy[k] || (storeBy[k] = { rep: k, sales: 0, pending: 0, earned: 0, paid: 0, orders: 0 });
+    o.sales += r.subtotal_cents - r.discount_cents; o.orders++; o[r.comm_status] = (o[r.comm_status] || 0) + r.commission_cents;
+  }
+  const trackerBy = {}; for (const r of tr.reps || []) trackerBy[String(r.rep).trim()] = r;
+  const names = [...new Set([...Object.keys(storeBy), ...Object.keys(trackerBy)])].sort((a, b) => a.localeCompare(b));
+  const storeComm = (o) => (o ? o.earned + o.paid + o.pending : 0);
+  if (commView === "tracker") {
+    const rows = (tr.reps || []).slice().sort((a, b) => b.commission - a.commission);
+    $("cmK").innerHTML = [["Reps", rows.length], ["Sales (tracker)", usd(tr.sales)], ["Commission (tracker)", usd(tr.total)]].map(([k, v]) => `<div class="kpi"><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+    $("cmT").innerHTML = !tr.ok ? `<div class="err">Case tracker: ${esc(tr.error || "not reachable")}</div>` : rows.length ? `<table class="tbl"><tr><th>Rep</th><th>Plan</th><th class="num">Actual</th><th class="num">Goal</th><th class="num">Target (with carry)</th><th class="num">Cases</th><th class="num">Rate</th><th class="num">Floor</th><th class="num">Commission</th><th>Pay</th></tr>
+      ${rows.map((r) => `<tr><td><strong>${esc(r.rep)}</strong><div class="muted" style="font-size:.72rem">${esc(r.role || "")}</div></td><td>${esc(r.metric || "Revenue")}</td><td class="num">${r.metric === "Cases" ? r.actual : usd(r.actual)}</td><td class="num">${r.quota === null || r.quota === undefined ? "—" : r.metric === "Cases" ? r.quota : usd(r.quota)}</td><td class="num">${r.target === null || r.target === undefined ? "—" : r.metric === "Cases" ? r.target : usd(r.target)}</td><td class="num">${r.cases}</td><td class="num">${r.comm_rate ? r.comm_rate + "%" : "—"}</td><td class="num">${r.comm_floor ? usd(r.comm_floor) : "—"}</td><td class="num"><strong>${usd(r.commission)}</strong></td><td>${r.pay_type ? esc(r.pay_type) + (r.pay_amount ? " " + usd(r.pay_amount) : "") : "—"}</td></tr>`).join("")}</table>` : `<p class="muted">No reps with a plan in the case tracker for ${monthLabel(commMonth)}.</p>`;
+    $("cmNote").innerHTML = `Case tracker commission for ${esc(monthLabel(commMonth))} = rate × (actual − floor), where the floor includes any carried shortfall. Goals, targets and rates are set in the <a href="/go/tracker?next=/admin" target="_blank" rel="noopener">tracker admin ↗</a>.`;
+    return;
+  }
+  // combined
+  const totStore = names.reduce((t, n) => t + storeComm(storeBy[n]), 0), totTr = tr.total || 0;
+  $("cmK").innerHTML = [["Peptide store commission", money(totStore)], ["Case tracker commission", usd(totTr)], ["Both apps", usd(totStore / 100 + totTr)], ["Store sales", money(names.reduce((t, n) => t + (storeBy[n] ? storeBy[n].sales : 0), 0))], ["Tracker sales", usd(tr.sales)]].map(([k, v]) => `<div class="kpi"><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+  $("cmT").innerHTML = names.length ? `<table class="tbl"><tr><th>Rep</th><th class="num">Store sales</th><th class="num">Store commission</th><th class="num">Tracker actual</th><th class="num">Tracker goal</th><th class="num">Tracker commission</th><th class="num">Total commission</th></tr>
+    ${names.map((n) => { const s = storeBy[n], t = trackerBy[n]; const tot = storeComm(s) / 100 + (t ? t.commission : 0); return `<tr><td><strong>${esc(n)}</strong><div class="muted" style="font-size:.72rem">${[s ? "store" : "", t ? "tracker" : ""].filter(Boolean).join(" + ")}</div></td><td class="num">${s ? money(s.sales) : "—"}</td><td class="num">${s ? `${money(storeComm(s))}${s.pending ? `<div class="muted" style="font-size:.72rem">${money(s.pending)} pending</div>` : ""}` : "—"}</td><td class="num">${t ? (t.metric === "Cases" ? t.actual : usd(t.actual)) : "—"}</td><td class="num">${t && t.quota !== null && t.quota !== undefined ? (t.metric === "Cases" ? t.quota : usd(t.quota)) : "—"}</td><td class="num">${t ? usd(t.commission) : "—"}</td><td class="num"><strong>${usd(tot)}</strong></td></tr>`; }).join("")}</table>` : `<p class="muted">Nothing for ${monthLabel(commMonth)} in either app.</p>`;
+  $("cmNote").innerHTML = `${tr.ok ? "" : `<span class="err" style="display:inline-block;margin-bottom:.4rem">Case tracker: ${esc(tr.error || "not reachable")} — showing the store only.</span><br>`}Store commission = earned + paid (+ pending) on orders placed in ${esc(monthLabel(commMonth))}; tracker commission = that app's plan for the same month. Switch to <strong>Peptide store</strong> to pick commissions and pay them out, or <strong>Case tracker</strong> for goals and targets.`;
+}
+
 /* ---------- products ---------- */
 async function products() {
   const [{ products: list }, { reports: reps }] = await Promise.all([api("/products"), api("/reports")]);
@@ -688,8 +762,8 @@ async function products() {
     <td><textarea data-k="description" rows="4" placeholder="Line 1: what's in the vial. Then one benefit per line starting with -" title="First line shows under the name on the store; lines that start with - become the benefit bullets" style="min-width:22rem;width:100%;font:inherit;font-size:.85rem;line-height:1.3;resize:vertical"${ro()}>${esc(p?.description || "")}</textarea></td>
     <td>${inp("category", p?.category ?? "Research peptide", "Category", ' list="catlist" style="min-width:9rem"')}</td>
     <td>${inp("manufacturer", p?.manufacturer, "", ' list="mfrlist" style="min-width:7rem"')}</td>
-    <td>${inp("cost", dollars(p?.cost_cents), "—", ' inputmode="decimal" style="min-width:4.5rem" title="Our cost per vial (staff never see it on the store)"')}</td>
-    <td>${inp("price", dollars(p?.price_cents), "Ask", ' inputmode="decimal" style="min-width:5rem"')}</td>
+    <td>${inp("cost", usd(p?.cost_cents), "—", ' inputmode="decimal" style="min-width:4.5rem" title="Our cost per vial (staff never see it on the store)"')}</td>
+    <td>${inp("price", usd(p?.price_cents), "Ask", ' inputmode="decimal" style="min-width:5rem"')}</td>
     <td>${inp("stock", p?.stock ?? "", "∞", ' inputmode="numeric" style="min-width:4rem"')}</td>
     <td>${inp("maxPerOrder", p?.max_per_order ?? "", "—", ' inputmode="numeric" style="min-width:4rem"')}</td>
     <td>${inp("sort", p?.sort ?? 0, "", ' inputmode="numeric" style="min-width:3.5rem"')}</td>
@@ -918,7 +992,7 @@ async function inventory() {
       <td class="num"><strong>${p.stock ?? "—"}</strong>${p.stock < 0 ? '<div class="muted" style="font-size:.72rem" title="Open orders need more than what\'s on the shelf">short for orders</div>' : ""}</td><td class="num">${p.committed || ""}</td><td class="num">${p.stock === null ? "" : p.stock + p.committed}</td>
       <td class="num">${p.sold_30d || ""}${weeksLeft(p) !== null ? `<div class="muted" style="font-size:.72rem">~${weeksLeft(p)} wk left</div>` : ""}</td>
       <td class="num">${own ? `<input data-reorder value="${p.reorder_point ?? ""}" placeholder="5" inputmode="numeric" style="width:4.2rem;text-align:right">` : (p.reorder_point ?? 5)}</td>
-      ${own ? `<td class="num"><input data-cost value="${dollars(p.cost_cents)}" placeholder="—" inputmode="decimal" style="width:5.5rem;text-align:right"></td><td class="num">${p.cost_cents !== null && p.stock !== null ? money(p.cost_cents * Math.max(0, p.stock + p.committed)) : ""}</td>` : ""}
+      ${own ? `<td class="num"><input data-cost value="${usd(p.cost_cents)}" placeholder="—" inputmode="decimal" style="width:5.5rem;text-align:right"></td><td class="num">${p.cost_cents !== null && p.stock !== null ? money(p.cost_cents * Math.max(0, p.stock + p.committed)) : ""}</td>` : ""}
       <td>${p.next_expiry ? `<span${soon(p.next_expiry) ? ' class="pill st-new"' : ""}>${esc(String(p.next_expiry).slice(0, 10))}</span>` : ""}</td>
       <td>${pillFor[status(p)]}</td>
       <td><div class="acts"><button class="btn" data-act="receive">Receive</button>${p.stock === null ? (own ? '<button class="btn" data-act="track">Track</button>' : "") : '<button class="btn" data-act="adjust">Adjust</button>'}<button class="btn" data-act="history">History</button></div></td></tr>`).join("")
@@ -934,7 +1008,7 @@ async function inventory() {
       ${only ? "" : `<input id="rvQ" type="search" placeholder="Filter products" style="height:2.4rem;padding:0 .8rem;border:1px solid var(--line-strong);border-radius:8px;max-width:20rem">`}
       <div class="tblwrap" style="max-height:26rem;overflow:auto"><table class="tbl compact" id="rvT"><tr><th>Product</th><th class="num">Now</th><th>Qty received</th><th>Cost each $</th><th>Lot / batch</th><th>Expires</th></tr>
       ${rows.map((p) => `<tr data-rid="${p.id}" data-txt="${esc([p.name, p.strength, p.manufacturer].join(" ").toLowerCase())}"><td class="namecol"><strong>${esc(label(p))}</strong><div class="muted" style="font-size:.78rem">${esc(sub(p))}</div></td><td class="num">${p.stock ?? "—"}</td>
-        <td><input data-f="qty" inputmode="numeric" style="width:5rem"></td><td><input data-f="costEach" inputmode="decimal" style="width:6rem" placeholder="${p.cost_cents !== null ? dollars(p.cost_cents) : ""}"></td>
+        <td><input data-f="qty" inputmode="numeric" style="width:5rem"></td><td><input data-f="costEach" inputmode="decimal" style="width:6rem" placeholder="${p.cost_cents !== null ? usd(p.cost_cents) : ""}"></td>
         <td><input data-f="lot" style="width:9rem"></td><td><input data-f="expires" type="date" style="width:9.5rem"></td></tr>`).join("")}</table></div>
       <div class="row2"><button class="btn solid" type="button" id="rvGo">Add to stock</button><span class="muted">Only rows with a quantity are received. Cost updates the average cost per unit.</span></div></div>`;
     if (!only) document.getElementById("rvQ").oninput = (e) => { const t = e.target.value.toLowerCase(); document.querySelectorAll("#rvT tr[data-rid]").forEach((tr) => { tr.hidden = t && !tr.dataset.txt.includes(t); }); };
@@ -1462,14 +1536,14 @@ async function settings() {
       <div class="grid2">${t("brand", "Store name", "Shown top left and in the footer")}${t("tagline", "Tagline (optional)")}${t("contact", "Contact for customers", "Phone, text or email")}
       ${t("distributorOf", "Brand you distribute", 'Shows "Authorized ___ distributor"')}${t("brandUrl", "Brand's website (https)")}</div>
       <div class="grid2">${t("priceNote", "Note under products")}
-        <div class="field"><label class="eyebrow" for="s-minOrder">Minimum order $</label><input id="s-minOrder" value="${dollars(s.minOrderCents) || ""}" placeholder="None" inputmode="decimal"${ro()}></div></div></div>
+        <div class="field"><label class="eyebrow" for="s-minOrder">Minimum order $</label><input id="s-minOrder" value="${usd(s.minOrderCents) || ""}" placeholder="None" inputmode="decimal"${ro()}></div></div></div>
     <div class="panel"><h2>Shipping &amp; local delivery</h2>
       <p class="muted">Customers (and sales reps) choose one at checkout. Shipping is charged; local delivery is free. Orders show which one was picked.</p>
       <div class="grid2">
         <div class="stack"><label class="chk"><input type="checkbox" id="s-shippingOn"${s.shippingOn ? " checked" : ""}${ro()}> Offer shipping</label>
           ${t("shippingLabel", "Shipping name shown", "e.g. FedEx shipping")}
-          <div class="field"><label class="eyebrow" for="s-shippingAmt">Shipping charge $</label><input id="s-shippingAmt" value="${dollars(s.shippingCents)}" inputmode="decimal"${ro()}></div>
-          <div class="field"><label class="eyebrow" for="s-shippingFree">Free shipping on orders over $ (optional)</label><input id="s-shippingFree" value="${s.shippingFreeOverCents ? dollars(s.shippingFreeOverCents) : ""}" placeholder="Never free" inputmode="decimal"${ro()}></div>
+          <div class="field"><label class="eyebrow" for="s-shippingAmt">Shipping charge $</label><input id="s-shippingAmt" value="${usd(s.shippingCents)}" inputmode="decimal"${ro()}></div>
+          <div class="field"><label class="eyebrow" for="s-shippingFree">Free shipping on orders over $ (optional)</label><input id="s-shippingFree" value="${s.shippingFreeOverCents ? usd(s.shippingFreeOverCents) : ""}" placeholder="Never free" inputmode="decimal"${ro()}></div>
           ${t("shippingNote", "Note under it", "e.g. Ships in 1 to 3 business days")}
           ${t("fedexAccount", "FedEx account number", "Shown to staff on orders to ship, with a copy button. Customers never see it.")}</div>
         <div class="stack"><label class="chk"><input type="checkbox" id="s-deliveryOn"${s.deliveryOn ? " checked" : ""}${ro()}> Offer local delivery (free)</label>
@@ -1488,7 +1562,7 @@ async function settings() {
         <li>Reload this page: it should say <em>Stripe connected</em>. Tick the box above and Save.</li></ol></details></div>
     <div class="panel"><h2>Order emails</h2>
       <p>${ml && ml.ready ? `<span class="pill st-shipped">Email connected</span> Sending through ${esc(ml.detail)} as ${esc(ml.from)}${ml.source === "host" ? " (from the settings on the host)" : ""}.` : `<span class="pill st-cancelled">Email not connected</span> Orders are saved here, but no emails go out until a sending account is saved below.`}</p>
-      <div class="grid2">${t("orderEmail", "Send every order to", "You get a message for each new order and each card payment")}</div>
+      <div class="grid2">${t("orderEmail", "Send every order to", "You get a message for each new order and each card payment")}${t("cooEmail", "COO approval emails (case tracker) to", "Where the case tracker sends its facility / surgeon approvals; it uses the sending account below")}</div>
       <label class="chk"><input type="checkbox" id="s-orderEmailOn"${s.orderEmailOn ? " checked" : ""}${ro()}> Email me every order</label>
       <label class="chk"><input type="checkbox" id="s-customerEmailOn"${s.customerEmailOn ? " checked" : ""}${ro()}> Email the customer a confirmation (and a receipt when they pay by card)</label>
       <h2 style="font-size:1.05rem;margin-top:.4rem">Sending account</h2>
@@ -1560,7 +1634,7 @@ async function settings() {
   document.getElementById("sSave").onclick = async () => {
     const v = (k) => document.getElementById("s-" + k);
     const body = {};
-    ["brand", "tagline", "contact", "distributorOf", "brandUrl", "paymentInstructions", "priceNote", "shippingLabel", "shippingNote", "fedexAccount", "deliveryLabel", "deliveryNote", "orderEmail"].forEach((k) => { body[k] = v(k).value; });
+    ["brand", "tagline", "contact", "distributorOf", "brandUrl", "paymentInstructions", "priceNote", "shippingLabel", "shippingNote", "fedexAccount", "deliveryLabel", "deliveryNote", "orderEmail", "cooEmail"].forEach((k) => { body[k] = v(k).value; });
     ["storeOpen", "pricesRequireLogin", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn"].forEach((k) => { body[k] = v(k).checked; });
     body.minAge = v("minAge").value;
     const cents = (id) => Math.max(0, Math.round(parseFloat(String(v(id).value).replace(/[$,]/g, "") || 0) * 100));
@@ -1586,7 +1660,7 @@ async function settings() {
     const p = prov.value;
     return { mailMode: p === "resend" ? "resend" : p === "graph" ? "graph" : p ? "smtp" : "", mailHost: v("mailHost").value, mailPort: v("mailPort").value, mailUser: v("mailUser").value, mailPass: v("mailPass").value, mailFrom: v("mailFrom").value, resendKey: v("resendKey").value,
       graphTenant: v("graphTenant").value, graphClient: v("graphClient").value, graphSecret: v("graphSecret").value,
-      orderEmail: v("orderEmail").value, orderEmailOn: v("orderEmailOn").checked, customerEmailOn: v("customerEmailOn").checked };
+      orderEmail: v("orderEmail").value, cooEmail: v("cooEmail").value, orderEmailOn: v("orderEmailOn").checked, customerEmailOn: v("customerEmailOn").checked };
   };
   if (document.getElementById("mailSave")) document.getElementById("mailSave").onclick = async () => {
     const b = mailBody();
@@ -1630,12 +1704,16 @@ async function staff() {
   const ROLE = { owner: "Admin", staff: "Manager", rep: "Sales rep" };
   const roleSel = (cur, id) => `<select ${id ? `id="${id}"` : 'data-k="role" style="min-width:7.5rem"'}>${Object.entries(ROLE).map(([k, l]) => `<option value="${k}"${cur === k ? " selected" : ""}>${l}</option>`).join("")}</select>`;
   pane().innerHTML = `<header><h1>Team logins</h1></header>
-    <p class="muted"><strong>Admin</strong> can do everything (prices, costs, settings, logins, deleting orders). <strong>Manager</strong> works orders, customers, products, inventory and settings but can't see costs, change prices or manage logins. <strong>Sales rep</strong> signs in to the admin or the <a href="/rep" target="_blank" rel="noopener">rep app</a> and sees only their own customers, orders and commission. Changing someone's role or password signs them out everywhere.</p>
-    <div class="tblwrap"><table class="tbl compact" id="ut"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Phone</th><th class="num">Commission %</th><th class="num">Customers</th><th>Active</th><th>New password</th><th></th></tr></thead><tbody>
+    <div id="trackerImport"></div>
+    <p class="muted">One login for both apps: tick <strong>Peptide store</strong> and/or <strong>Case tracker</strong> per person. A <strong>PIN</strong> lets them sign in by name + PIN on either app (email + password always works too). <strong>Admin</strong> can do everything (prices, costs, settings, logins, deleting orders). <strong>Manager</strong> works orders, customers, products, inventory and settings but can't see costs, change prices or manage logins. <strong>Sales rep</strong> signs in to the admin or the <a href="/rep" target="_blank" rel="noopener">rep app</a> and sees only their own customers, orders and commission. Changing someone's role or password signs them out everywhere.</p>
+    <div class="tblwrap"><table class="tbl compact" id="ut"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Phone</th><th class="num">Commission %</th><th class="num">Customers</th><th>Apps</th><th>PIN</th><th>Active</th><th>New password</th><th></th></tr></thead><tbody>
     ${users.map((u) => `<tr data-id="${u.id}" data-role="${u.role}"><td class="namecol"><input data-k="name" value="${esc(u.name)}" style="min-width:9rem">${u.id === me.id ? '<div class="muted" style="font-size:.75rem">you</div>' : u.signed_in ? '<div class="muted" style="font-size:.75rem">signed in</div>' : ""}</td><td>${esc(u.email)}</td>
       <td>${roleSel(u.role)}</td><td><input data-k="phone" value="${esc(u.phone || "")}" style="width:8rem"></td>
       <td class="num"><input data-k="rate" inputmode="decimal" value="${u.role === "rep" ? esc(Number(u.commission_rate ?? 0)) : ""}" placeholder="${u.role === "rep" ? "10" : "—"}" style="width:4.5rem;text-align:right"${u.role === "rep" ? "" : " disabled"}></td>
-      <td class="num">${u.role === "rep" ? u.customers : ""}</td><td><input type="checkbox" data-k="active"${u.active ? " checked" : ""}${u.id === me.id ? " disabled" : ""}></td>
+      <td class="num">${u.role === "rep" ? u.customers : ""}</td>
+      <td style="white-space:nowrap"><label class="chk" style="display:block"><input type="checkbox" data-app="store"${!u.apps || u.apps.store !== false ? " checked" : ""}> Peptide store</label><label class="chk" style="display:block"><input type="checkbox" data-app="tracker"${u.apps && u.apps.tracker ? " checked" : ""}> Case tracker</label></td>
+      <td><input data-k="pin" inputmode="numeric" placeholder="${u.pin_set ? "Set · type to change" : "4–10 digits"}" style="width:7rem" title="Name + PIN sign-in for both apps"></td>
+      <td><input type="checkbox" data-k="active"${u.active ? " checked" : ""}${u.id === me.id ? " disabled" : ""}></td>
       <td><input data-k="password" type="password" placeholder="Leave blank to keep" autocomplete="new-password" style="min-width:9rem"></td><td><button class="btn" data-save>Save</button></td></tr>`).join("")}</tbody></table></div>
     <div class="panel"><h2>Add a login</h2><div class="grid2">
       <div class="field"><label class="eyebrow" for="nu-n">Name</label><input id="nu-n"></div>
@@ -1643,20 +1721,40 @@ async function staff() {
       <div class="field"><label class="eyebrow" for="nu-p">Temporary password (8+ characters)</label><input id="nu-p" type="password" autocomplete="new-password"></div>
       <div class="field"><label class="eyebrow" for="nu-r">Role</label>${roleSel("staff", "nu-r")}</div>
       <div class="field"><label class="eyebrow" for="nu-ph">Phone (optional)</label><input id="nu-ph"></div>
-      <div class="field" id="nu-rateWrap" hidden><label class="eyebrow" for="nu-rate">Commission %</label><input id="nu-rate" inputmode="decimal" placeholder="10"></div></div>
+      <div class="field" id="nu-rateWrap" hidden><label class="eyebrow" for="nu-rate">Commission %</label><input id="nu-rate" inputmode="decimal" placeholder="10"></div>
+      <div class="field"><label class="eyebrow" for="nu-pin">PIN (optional, 4–10 digits)</label><input id="nu-pin" inputmode="numeric" placeholder="Name + PIN sign-in"></div>
+      <div class="field"><span class="eyebrow">Apps</span><label class="chk"><input type="checkbox" id="nu-store" checked> Peptide store</label><label class="chk"><input type="checkbox" id="nu-tracker"> Case tracker</label></div></div>
       <div class="row2"><button class="btn solid" id="nuAdd">Add login</button><span class="muted">Send them the email and temporary password; they can change it under My account.</span></div></div>`;
   document.getElementById("nu-r").onchange = () => { document.getElementById("nu-rateWrap").hidden = document.getElementById("nu-r").value !== "rep"; };
+  api("/hub/tracker-reps").then((r) => {
+    const box = document.getElementById("trackerImport"); if (!box) return;
+    if (!r.ok) { box.innerHTML = `<p class="muted">Case tracker: ${esc(r.error)}</p>`; return; }
+    const missing = (r.reps || []).filter((t) => !users.some((u) => u.name.trim().toLowerCase() === String(t.rep).trim().toLowerCase()));
+    if (!missing.length) return;
+    box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><strong>${missing.length} rep${missing.length === 1 ? "" : "s"} exist only in the case tracker:</strong> <span class="muted">${missing.map((t) => esc(t.rep)).join(", ")}.</span> Add them here as logins (Case tracker ticked, same PIN as in the tracker where one is set) so they have one login.
+      <div class="grid2" style="margin-top:.5rem">${missing.map((t, i) => `<div class="field"><label class="eyebrow">${esc(t.rep)} · email for their login</label><input data-imp="${i}" type="email" placeholder="${esc(String(t.rep).toLowerCase().replace(/[^a-z0-9]+/g, "."))}@360medical.net"></div>`).join("")}</div>
+      <div><button class="btn solid" type="button" id="impReps">Add these logins</button></div></div>`;
+    document.getElementById("impReps").onclick = async () => {
+      let n = 0;
+      for (let i = 0; i < missing.length; i++) {
+        const email = (document.querySelector(`[data-imp="${i}"]`).value || "").trim(); if (!email) continue;
+        try { await api("/users", { method: "POST", body: { name: missing[i].rep, email, password: "temp-" + Math.random().toString(36).slice(2, 10) + "A1", role: "rep", rate: "0", pin: missing[i].pin || "", apps: { store: false, tracker: true } } }); n++; } catch (e) {}
+      }
+      toast(`Added ${n} login${n === 1 ? "" : "s"}`); staff();
+    };
+  }).catch(() => {});
   document.getElementById("ut").onchange = (e) => { if (e.target.matches('[data-k="role"]')) { const tr = e.target.closest("tr"), rate = tr.querySelector('[data-k="rate"]'); rate.disabled = e.target.value !== "rep"; if (e.target.value === "rep" && !rate.value) rate.value = "0"; } };
   document.getElementById("ut").onclick = async (e) => {
     if (!e.target.closest("[data-save]")) return;
     const tr = e.target.closest("tr"), body = {};
-    tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body.active = i.checked; else if (i.dataset.k === "rate") { if (!i.disabled && i.value.trim() !== "") body.rate = i.value.trim(); } else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
+    tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body.active = i.checked; else if (i.dataset.k === "rate") { if (!i.disabled && i.value.trim() !== "") body.rate = i.value.trim(); } else if (i.dataset.k === "pin") { if (i.value.trim()) body.pin = i.value.trim(); } else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
+    body.apps = { store: tr.querySelector('[data-app="store"]').checked, tracker: tr.querySelector('[data-app="tracker"]').checked };
     if (body.role && body.role !== tr.dataset.role && !confirm(`Change this login to ${ROLE[body.role]}? They'll be signed out.`)) return;
     await api("/users/" + tr.dataset.id, { method: "PATCH", body }); toast("Saved"); staff();
   };
   document.getElementById("nuAdd").onclick = async () => {
     const g = (x) => document.getElementById(x).value;
-    const r = await api("/users", { method: "POST", body: { name: g("nu-n"), email: g("nu-e"), password: g("nu-p"), role: g("nu-r"), phone: g("nu-ph"), rate: g("nu-rate") } });
+    const r = await api("/users", { method: "POST", body: { name: g("nu-n"), email: g("nu-e"), password: g("nu-p"), role: g("nu-r"), phone: g("nu-ph"), rate: g("nu-rate"), pin: g("nu-pin"), apps: { store: document.getElementById("nu-store").checked, tracker: document.getElementById("nu-tracker").checked } } });
     toast(`${ROLE[g("nu-r")]} login added`); staff();
   };
 }
@@ -1668,7 +1766,12 @@ function account() {
       <div class="field"><label class="eyebrow" for="pc">Current password</label><input id="pc" type="password" autocomplete="current-password"></div>
       <div class="field"><label class="eyebrow" for="pn">New password (10+ characters)</label><input id="pn" type="password" autocomplete="new-password"></div>
       <div><button class="btn solid" id="pSave">Change password</button></div>
-      <p class="muted">Changing it signs you out everywhere else.</p></div>`;
+      <p class="muted">Changing it signs you out everywhere else.</p></div>
+    <div class="panel" style="max-width:28rem"><h2>My PIN</h2>
+      <p class="muted">Sign in faster with your name + PIN on this admin, the rep app and the case tracker. ${me.apps && me.apps.tracker ? "" : ""}</p>
+      <div class="field"><label class="eyebrow" for="myPin">PIN (4–10 digits; blank to remove)</label><input id="myPin" inputmode="numeric" maxlength="10"></div>
+      <div><button class="btn solid" id="pinSave">Save PIN</button></div></div>`;
+  document.getElementById("pinSave").onclick = async () => { const r = await api("/my-pin", { method: "POST", body: { pin: document.getElementById("myPin").value } }); toast(r.pinSet ? "PIN saved" : "PIN removed"); document.getElementById("myPin").value = ""; };
   document.getElementById("pSave").onclick = async () => {
     await fetch("/api/admin/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ current: pc.value, next: pn.value }) })
       .then(async (r) => { const j = await r.json(); toast(r.ok ? "Password changed" : j.error); if (r.ok) { pc.value = pn.value = ""; } });
@@ -1699,6 +1802,6 @@ if (window.AppRefresh) window.AppRefresh.init({
   if (m) { view = "orders"; orderId = m[1]; history.replaceState(null, "", location.pathname); }
   if (location.hash === "#customers") { view = "customers"; history.replaceState(null, "", location.pathname); }
   const res = await fetch("/api/admin/me");
-  if (res.ok) { me = (await res.json()).user; shell(); } else drawLogin();
+  if (res.ok) { me = (await res.json()).user; HUB = await api("/hub").catch(() => HUB); shell(); } else drawLogin();
 })();
 })();

@@ -79,7 +79,7 @@ function limit(name, max, windowMs) {
 async function auth(req, res, next) {
   const token = parseCookies(req.headers.cookie).sid;
   if (!token) return bad(res, "Sign in first", 401);
-  const { rows } = await q("select u.id, u.email, u.name, u.role, u.commission_rate from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]);
+  const { rows } = await q("select u.id, u.email, u.name, u.role, u.commission_rate, u.apps, u.phone from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]);
   if (!rows[0]) return bad(res, "Sign in first", 401);
   req.user = rows[0];
   // admin API only accepts JSON, which a plain cross-site form cannot send
@@ -746,13 +746,30 @@ app.post("/api/admin/login", limit("login", 10, 15 * 60 * 1000), wrap(async (req
   res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${14 * 86400}${SECURE ? "; Secure" : ""}`);
   res.json({ ok: true, user: { id: u.id, name: u.name, email: u.email, role: u.role, commission_rate: u.commission_rate } });
 }));
+// PIN quick sign-in: pick your name, type your PIN (set by an admin under Team logins, or by you under My account)
+app.get("/api/admin/pin-names", wrap(async (req, res) => { const { rows } = await q("select id, name from users where active and pin_hash is not null order by name"); res.json({ names: rows }); }));
+app.post("/api/admin/login-pin", limit("loginpin", 10, 15 * 60 * 1000), wrap(async (req, res) => {
+  const id = intOrNull(req.body?.id), pin = String(req.body?.pin || "").replace(/\D/g, "").slice(0, 12);
+  const { rows: [u] } = await q("select * from users where id = $1 and active and pin_hash is not null", [id]);
+  if (!u || pin.length < 4 || !(await bcrypt.compare(pin, u.pin_hash))) return bad(res, "That PIN isn't right.", 401);
+  const token = crypto.randomBytes(32).toString("hex");
+  await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '14 days')", [token, u.id]);
+  res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${14 * 86400}${SECURE ? "; Secure" : ""}`);
+  res.json({ ok: true, user: { id: u.id, name: u.name, email: u.email, role: u.role, commission_rate: u.commission_rate } });
+}));
+app.post("/api/admin/my-pin", wrap(auth), wrap(async (req, res) => {
+  const pin = String(req.body?.pin || "").replace(/\D/g, "");
+  if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits.");
+  await q("update users set pin_hash = $1, pin_version = pin_version + 1 where id = $2", [pin ? await bcrypt.hash(pin, 11) : null, req.user.id]);
+  res.json({ ok: true, pinSet: !!pin });
+}));
 app.post("/api/admin/logout", wrap(async (req, res) => {
   const token = parseCookies(req.headers.cookie).sid;
   if (token) await q("delete from sessions where token = $1", [token]);
   res.set("Set-Cookie", `sid=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${SECURE ? "; Secure" : ""}`);
   res.json({ ok: true });
 }));
-app.get("/api/admin/me", wrap(auth), (req, res) => res.json({ user: req.user }));
+app.get("/api/admin/me", wrap(auth), (req, res) => res.json({ user: Object.assign({}, req.user, { pass_hash: undefined, pin_hash: undefined, apps: Object.assign({ store: true, tracker: false }, req.user.apps || {}) }) }));
 app.post("/api/admin/password", wrap(auth), wrap(async (req, res) => {
   const { current, next } = req.body || {};
   if (String(next || "").length < 10) return bad(res, "Use at least 10 characters.");
@@ -768,7 +785,7 @@ admin.use(wrap(auth));
 // Sales reps get the top of the admin only (dashboard, orders, customers, commissions, their account), scoped to their own customers.
 const REP_OK = [[/^\/stats$/, "GET"], [/^\/orders(\.csv)?$/, "GET"], [/^\/orders\/\d+$/, "GET"], [/^\/orders\/\d+\/(note|paylink)$/, "POST"],
   [/^\/customers$/, "GET"], [/^\/customers$/, "POST"], [/^\/customers\/\d+$/, "PATCH"], [/^\/commissions(\.csv)?$/, "GET"],
-  [/^\/catalog$/, "GET"], [/^\/orders$/, "POST"]];
+  [/^\/catalog$/, "GET"], [/^\/orders$/, "POST"], [/^\/hub\/commissions$/, "GET"]];
 admin.use((req, res, next) => (req.user.role !== "rep" || REP_OK.some(([re, m]) => re.test(req.path) && m === req.method) ? next() : bad(res, "Sales reps can only see their own customers, orders and commissions.", 403)));
 const isRep = (req) => req.user.role === "rep";
 
@@ -1858,6 +1875,7 @@ admin.put("/settings", owner, wrap(async (req, res) => {
     let v = b[k];
     if (k === "vialLogoV" || k === "siteLogoV" || k === "vialPhotoV") continue; // changed only by uploading or removing a logo
     if (k === "orderEmail") { v = str(v, 160).toLowerCase(); if (v && !isEmail(v)) return bad(res, "The order email address doesn't look right."); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; }
+    if (k === "cooEmail") { v = str(v, 160).toLowerCase(); if (v && !isEmail(v)) return bad(res, "The COO email address doesn't look right."); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; }
     if (k === "mailPass" || k === "resendKey" || k === "graphSecret") { v = String(v || ""); if (!v.trim()) continue; v = v.trim().slice(0, 300); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; } // blank = keep the saved one
     if (k === "mailMode") v = ["smtp", "resend", "graph"].includes(v) ? v : "";
     if (k === "mailFrom" && v && !/^[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+$/.test(String(v).trim()) && !/^[^<>]+<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>$/.test(String(v).trim())) return bad(res, 'The From address should look like "Name <you@domain.com>" or just the address.');
@@ -1903,7 +1921,7 @@ admin.put("/pin", owner, wrap(async (req, res) => {
 /* ---------- admin: users (owner only) ---------- */
 const ROLES = ["owner", "staff", "rep"]; // shown as Admin · Manager · Sales rep
 admin.get("/users", owner, wrap(async (req, res) => {
-  const { rows } = await q(`select u.id, u.email, u.name, u.role, u.phone, u.commission_rate, u.active, u.created_at,
+  const { rows } = await q(`select u.id, u.email, u.name, u.role, u.phone, u.commission_rate, u.active, u.created_at, u.apps, (u.pin_hash is not null) pin_set,
       (select count(*)::int from customers c where c.rep_id = u.id) customers,
       exists(select 1 from sessions se where se.user_id = u.id and se.expires > now()) signed_in
     from users u order by case u.role when 'owner' then 0 when 'staff' then 1 else 2 end, u.active desc, u.name, u.email`);
@@ -1917,8 +1935,11 @@ admin.post("/users", owner, wrap(async (req, res) => {
   const rate = role === "rep" ? rateOf(b.rate === undefined || b.rate === "" ? "0" : b.rate) : 0;
   if (role === "rep" && rate === null) return bad(res, "Enter the rep's commission as a percent, e.g. 10.");
   try {
-    const { rows: [u] } = await q("insert into users(email,name,role,pass_hash,phone,commission_rate) values ($1,$2,$3,$4,$5,$6) returning id", [email, str(b.name, 80), role, await bcrypt.hash(pass, 11), str(b.phone, 40), rate]);
-    res.json({ ok: true, id: u.id });
+    const apps = JSON.stringify({ store: !(b.apps && b.apps.store === false), tracker: !!(b.apps && b.apps.tracker) });
+    const pin = String(b.pin || "").replace(/\D/g, "");
+    if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits.");
+    const { rows: [u] } = await q("insert into users(email,name,role,pass_hash,phone,commission_rate,apps,pin_hash) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id", [email, str(b.name, 80), role, await bcrypt.hash(pass, 11), str(b.phone, 40), rate, apps, pin ? await bcrypt.hash(pin, 11) : null]);
+    pokeTracker(); res.json({ ok: true, id: u.id });
   } catch (e) { return bad(res, "That email already has a login"); }
 }));
 admin.patch("/users/:id", owner, wrap(async (req, res) => {
@@ -1934,15 +1955,89 @@ admin.patch("/users/:id", owner, wrap(async (req, res) => {
   if (b.active !== undefined) { await q("update users set active = $1 where id = $2", [!!b.active, id]); if (!b.active) await q("delete from sessions where user_id = $1", [id]); }
   if (b.name !== undefined) await q("update users set name = $1 where id = $2", [str(b.name, 80), id]);
   if (b.phone !== undefined) await q("update users set phone = $1 where id = $2", [str(b.phone, 40), id]);
+  if (b.apps && typeof b.apps === "object") await q("update users set apps = $1 where id = $2", [JSON.stringify({ store: b.apps.store !== false, tracker: !!b.apps.tracker }), id]);
+  if (b.pin !== undefined) { const pin = String(b.pin || "").replace(/\D/g, ""); if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits."); if (pin || b.pin === "") await q("update users set pin_hash = $1, pin_version = pin_version + 1 where id = $2", [pin ? await bcrypt.hash(pin, 11) : null, id]); }
   if (b.rate !== undefined && b.rate !== "" && (b.role === "rep" || u.role === "rep")) { const r = rateOf(b.rate); if (r === null) return bad(res, "Enter the commission as a percent."); await q("update users set commission_rate = $1 where id = $2", [r, id]); }
   if (b.password) {
     if (String(b.password).length < 8) return bad(res, "Password needs at least 8 characters");
     await q("update users set pass_hash = $1 where id = $2", [await bcrypt.hash(String(b.password), 11), id]);
     await q("delete from sessions where user_id = $1", [id]);
   }
-  res.json({ ok: true });
+  pokeTracker(); res.json({ ok: true });
 }));
 
+
+/* ---------- the hub: this admin is the one login and one place for the peptide store AND the 360 Medical case tracker ----------
+   Shared secret HUB_SECRET (same value on both Render services) signs every call between the two apps and the
+   single-sign-on hand-off. TRACKER_URL is the case tracker's address. */
+const HUB_SECRET = String(process.env.HUB_SECRET || "").trim();
+const TRACKER_URL = String(process.env.TRACKER_URL || "").replace(/\/$/, "");
+const b64u = (buf) => Buffer.from(buf).toString("base64url");
+const hubSign = (obj) => { const body = b64u(JSON.stringify(obj)); return body + "." + crypto.createHmac("sha256", HUB_SECRET).update(body).digest("base64url"); };
+function hubVerify(token) {
+  if (!HUB_SECRET) return null;
+  const m = /^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(String(token || "")); if (!m) return null;
+  const sig = crypto.createHmac("sha256", HUB_SECRET).update(m[1]).digest("base64url");
+  if (sig.length !== m[2].length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(m[2]))) return null;
+  try { const o = JSON.parse(Buffer.from(m[1], "base64url").toString()); return o.exp && o.exp > Date.now() ? o : null; } catch (e) { return null; }
+}
+// calls from the tracker carry Authorization: Hub <signed {exp}>
+const hubAuth = (req, res, next) => { const t = /^Hub (.+)$/.exec(req.headers.authorization || ""); if (!HUB_SECRET || !t || !hubVerify(t[1])) return bad(res, "Hub signature missing or wrong", 401); next(); };
+const appsOf = (u) => Object.assign({ store: true, tracker: false }, u.apps || {});
+const hubUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, phone: u.phone || "", commission_rate: u.commission_rate, active: u.active, apps: appsOf(u), pin_version: u.pin_version || 0 });
+// the people the tracker should know: everyone with the Case tracker box ticked
+app.get("/api/hub/people", hubAuth, wrap(async (req, res) => {
+  const { rows } = await q("select id, email, name, role, phone, commission_rate, active, apps, pin_version from users order by name");
+  res.json({ people: rows.filter((u) => appsOf(u).tracker).map(hubUser), at: new Date().toISOString() });
+}));
+// a tracker rep signing in by name + PIN on the tracker's own page: checked against the hub PIN
+app.post("/api/hub/check-pin", hubAuth, wrap(async (req, res) => {
+  const { rows: [u] } = await q("select * from users where id = $1 and active and pin_hash is not null", [intOrNull(req.body?.id)]);
+  const pin = String(req.body?.pin || "").replace(/\D/g, "");
+  res.json({ ok: !!(u && appsOf(u).tracker && pin.length >= 4 && (await bcrypt.compare(pin, u.pin_hash))), user: u ? hubUser(u) : null });
+}));
+// the one email setup: Microsoft 365 app + the COO address, so the tracker sends with it too
+app.get("/api/hub/mail", hubAuth, wrap(async (req, res) => {
+  const s = await getSettings();
+  res.json({ tenant: s.graphTenant || "", client: s.graphClient || "", secret: s.graphSecret || "", mailbox: s.mailUser || "", from: s.mailFrom || "", to: s.cooEmail || s.orderEmail || "", mode: s.mailMode || "" });
+}));
+app.get("/api/hub/ping", hubAuth, (req, res) => res.json({ ok: true, hub: "peptide-store" }));
+// a signed call to the tracker
+// after a login changes here, the tracker is told to pull people again right away (otherwise it refreshes within a minute)
+function pokeTracker() { if (!HUB_SECRET || !TRACKER_URL) return; fetch(`${TRACKER_URL}/api/hub/sync`, { method: "POST", headers: { Authorization: "Hub " + hubSign({ exp: Date.now() + 120000 }) }, signal: AbortSignal.timeout(8000) }).catch(() => {}); }
+async function trackerGet(pathname, query = {}) {
+  if (!HUB_SECRET || !TRACKER_URL) throw new Error("The case tracker isn't linked: set HUB_SECRET and TRACKER_URL on the host.");
+  const qs = new URLSearchParams(query).toString();
+  const r = await fetch(`${TRACKER_URL}${pathname}${qs ? "?" + qs : ""}`, { headers: { Authorization: "Hub " + hubSign({ exp: Date.now() + 120000 }) }, signal: AbortSignal.timeout(12000) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `The case tracker answered ${r.status}`);
+  return j;
+}
+// single sign-on: a signed-in person is handed to the tracker with a 2-minute token; the tracker makes its own session from it
+app.get("/go/tracker", wrap(async (req, res) => {
+  const token = parseCookies(req.headers.cookie).sid;
+  const { rows: [u] } = token ? await q("select id, email, name, role, commission_rate, apps from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]) : { rows: [] };
+  if (!u) return res.redirect("/admin");
+  req.user = u;
+  if (!HUB_SECRET || !TRACKER_URL) return res.status(500).send("The case tracker isn't linked yet (HUB_SECRET / TRACKER_URL).");
+  const next = /^\/[A-Za-z0-9/_#-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : "/";
+  if (u.role === "rep" && !appsOf(u).tracker) return res.status(403).send("This login doesn't have the case tracker turned on. An admin can tick it under Team logins.");
+  const t = hubSign({ exp: Date.now() + 120000, sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate });
+  res.redirect(`${TRACKER_URL}/sso?t=${encodeURIComponent(t)}&next=${encodeURIComponent(next)}`);
+}));
+app.get("/api/admin/hub", wrap(auth), (req, res) => res.json({ linked: !!(HUB_SECRET && TRACKER_URL), trackerUrl: TRACKER_URL, apps: appsOf(req.user) }));
+// combined commissions: the store's rows plus the tracker's month estimates
+admin.get("/hub/commissions", wrap(async (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || "")) ? String(req.query.month) : new Date().toISOString().slice(0, 7);
+  try {
+    const j = await trackerGet("/api/hub/commissions", { month });
+    if (req.user.role === "rep") { const mine = String(req.user.name).trim().toLowerCase(); j.reps = (j.reps || []).filter((r) => String(r.rep).trim().toLowerCase() === mine || r.hub === req.user.id); j.total = j.reps.reduce((t, r) => t + r.commission, 0); j.sales = j.reps.reduce((t, r) => t + (r.metric === "Cases" ? 0 : r.actual), 0); }
+    res.json({ ok: true, month, ...j });
+  } catch (e) { res.json({ ok: false, month, error: e.message, reps: [] }); }
+}));
+admin.get("/hub/tracker-reps", owner, wrap(async (req, res) => {
+  try { res.json({ ok: true, ...(await trackerGet("/api/hub/reps")) }); } catch (e) { res.json({ ok: false, error: e.message, reps: [] }); }
+}));
 app.use("/api/admin", admin);
 
 /* ---------- sales rep app (/rep): a rep sees and works only their own customers and orders ---------- */

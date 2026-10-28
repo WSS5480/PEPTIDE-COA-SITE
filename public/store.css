@@ -382,3 +382,7 @@ body { overscroll-behavior-y: contain; }
 .top .cartbtn { background: #fff; color: var(--navy); }
 .top .cartbtn:hover { background: var(--blue-wash); }
 .top .cartbtn .n { background: var(--navy); color: #fff; }
+/* segmented switch (shared with the admin look) */
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; }
+.seg button { height: 2.3rem; padding: 0 .9rem; background: var(--card); border: 0; border-right: 1px solid var(--line-strong); font: inherit; font-weight: 600; cursor: pointer; }
+.seg button:last-child { border-right: 0; } .seg button.on { background: var(--navy); color: #fff; }

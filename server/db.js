@@ -140,6 +140,9 @@ alter table users drop constraint if exists users_role_check;
 alter table users add constraint users_role_check check (role in ('owner','staff','rep'));
 alter table users add column if not exists phone text not null default '';
 alter table users add column if not exists commission_rate numeric(5,2) not null default 0;
+alter table users add column if not exists apps jsonb not null default '{"store": true}';
+alter table users add column if not exists pin_hash text;
+alter table users add column if not exists pin_version int not null default 0;
 create table if not exists commission_payouts (
   id serial primary key,
   rep_id int references users(id) on delete set null,
@@ -316,6 +319,7 @@ const DEFAULT_SETTINGS = {
   cardPayments: false,
   // Order emails
   orderEmail: "orders@360medical.net",
+  cooEmail: "", // the case tracker's approval emails go here (managed from this admin)
   orderEmailOn: true,
   customerEmailOn: true,
   // The account the store sends from (set under Site settings → Order emails). mailMode "" = use the host's settings, if any.
