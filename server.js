@@ -803,7 +803,8 @@ app.post("/api/admin/login", limit("login", 10, 15 * 60 * 1000), wrap(async (req
   res.json({ ok: true, user: { id: u.id, name: u.name, email: u.email, role: u.role, commission_rate: u.commission_rate } });
 }));
 // PIN quick sign-in: pick your name, type your PIN (set by an admin under Team logins, or by you under My account)
-app.get("/api/admin/pin-names", wrap(async (req, res) => { const { rows } = await q("select id, name from users where active and pin_hash is not null order by name"); res.json({ names: rows }); }));
+app.get("/api/admin/pin-names", wrap(async (req, res) => { // the admin sign-in lists admins + managers; the rep app (?reps=1) lists everyone with a PIN
+  const { rows } = await q(`select id, name from users where active and pin_hash is not null ${req.query.reps === "1" ? "" : "and role <> 'rep'"} order by name`); res.json({ names: rows }); }));
 app.post("/api/admin/login-pin", limit("loginpin", 10, 15 * 60 * 1000), wrap(async (req, res) => {
   const id = intOrNull(req.body?.id), pin = String(req.body?.pin || "").replace(/\D/g, "").slice(0, 12);
   const { rows: [u] } = await q("select * from users where id = $1 and active and pin_hash is not null", [id]);
