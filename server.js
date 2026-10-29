@@ -2114,12 +2114,12 @@ app.get(["/sso", "/admin/sso", "/rep/sso"], wrap(async (req, res) => { // in-sco
   const t = hubVerify(String(req.query.t || ""));
   const next = /^\/(?![\/\\])[A-Za-z0-9/_#?=&%.-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : "/admin";
   const land = (to) => res.type("html").send(`<!doctype html><meta charset="utf-8"><title>Signing in…</title><meta http-equiv="refresh" content="0;url=${escHtml(to)}"><script>location.replace(${JSON.stringify(to)})</script>`);
-  if (!t || !t.sso) return land("/admin?sso=expired");
+  const miss = (why, name) => land("/admin?" + (/[?&]embed=1/.test(next) ? "embed=1&" : "") + "sso=" + why + "&name=" + encodeURIComponent(name || "") + (next.includes("#") ? next.slice(next.indexOf("#")) : "")); // keep the embed + page so a hosted pane shows the message, not a whole admin
+  if (!t || !t.sso) return miss("expired");
   const email = String(t.email || "").toLowerCase();
   let { rows: [u] } = email ? await q("select * from users where lower(email) = $1 and active", [email]) : { rows: [] };
   // the tracker's own owner login (COO PIN) has no store email: it is the same office, so it comes in as the store's admin account
   if (!u && !email && t.coo === true) ({ rows: [u] } = await q("select * from users where role = 'owner' and active order by id limit 1")); // only the bare COO-PIN session, never a token that carried an email
-  const miss = (why, name) => land("/admin?" + (/[?&]embed=1/.test(next) ? "embed=1&" : "") + "sso=" + why + "&name=" + encodeURIComponent(name || "") + (next.includes("#") ? next.slice(next.indexOf("#")) : "")); // keep the embed + page so a hosted pane shows the message, not a whole admin
   if (!u) return miss("nouser", t.name);
   if (!appsOf(u).store) return miss("noapp", u.name);
   const token = crypto.randomBytes(32).toString("hex");
