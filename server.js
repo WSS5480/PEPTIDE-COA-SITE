@@ -2046,7 +2046,7 @@ app.get(["/sso", "/admin/sso", "/rep/sso"], wrap(async (req, res) => { // in-sco
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '1 day')", [token, u.id]); // hop-in sessions are short; the switch mints a fresh one each time
   res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=${14 * 86400}`);
-  land(u.role === "rep" && next.startsWith("/admin") ? next.replace("/admin", "/rep") : next);
+  land(u.role === "rep" && /^\/admin(\?[^#]*)?#account$/.test(next) ? next.replace("/admin", "/rep") : next); // reps: My account lives in the rep app; the shared admin pages (Apps, How to) are theirs too
 }));
 // the switch, kept inside this app's own address: a full-window frame of the tracker (signed in through the frame)
 app.get(["/admin/tracker", "/rep/tracker"], wrap(async (req, res) => {
