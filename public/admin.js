@@ -1953,21 +1953,24 @@ async function staff() {
       <div class="field" id="nu-rateWrap" hidden><label class="eyebrow" for="nu-rate">Commission %</label><input id="nu-rate" inputmode="decimal" placeholder="10"></div>
       <div class="field"><label class="eyebrow" for="nu-pin">PIN (optional, 4–10 digits)</label><input id="nu-pin" inputmode="numeric" placeholder="Name + PIN sign-in"></div>
       <div class="field"><span class="eyebrow">Apps</span><label class="chk"><input type="checkbox" id="nu-store" checked> Peptide store</label><label class="chk"><input type="checkbox" id="nu-tracker"> Case tracker</label></div></div>
-      <div class="row2"><button class="btn solid" id="nuAdd">Add login</button><span class="muted">Send them the email and temporary password; they can change it under My account.</span></div></div>`;
+      <div class="row2"><button class="btn solid" id="nuAdd">Add login</button><span class="muted">Send them the email and temporary password; they can change it under My account.</span></div></div>
+    ${HUB.linked && HUB.apps && HUB.apps.tracker ? `<div class="panel" id="plansPanel"><h2>Case tracker plans</h2>
+      <p class="muted">Quota, commission plan, pay and territory for each rep with the Case tracker ticked above. Names, PINs and on/off come from the logins table; add or remove reps up there. Team quotas are set here.</p>
+      <iframe class="hubframe" title="Reps and plans" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=reps-card")}" style="width:100%;height:40rem;min-height:24rem;border:0;border-radius:14px;background:var(--card)"></iframe></div>` : ""}`;
   document.getElementById("nu-r").onchange = () => { document.getElementById("nu-rateWrap").hidden = document.getElementById("nu-r").value !== "rep"; };
   api("/hub/tracker-reps").then((r) => {
     const box = document.getElementById("trackerImport"); if (!box) return;
     if (!r.ok) { box.innerHTML = `<p class="muted">Case tracker: ${esc(r.error)}</p>`; return; }
     const missing = (r.reps || []).filter((t) => !users.some((u) => u.name.trim().toLowerCase() === String(t.rep).trim().toLowerCase()));
     if (!missing.length) return;
-    box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><strong>${missing.length} rep${missing.length === 1 ? "" : "s"} exist only in the case tracker:</strong> <span class="muted">${missing.map((t) => esc(t.rep)).join(", ")}.</span> Add them here as logins (both apps ticked, same PIN as in the tracker where one is set) so they have one login.
-      <div class="grid2" style="margin-top:.5rem">${missing.map((t, i) => `<div class="field"><label class="eyebrow">${esc(t.rep)} · email for their login</label><input data-imp="${i}" type="email" placeholder="${esc(String(t.rep).toLowerCase().replace(/[^a-z0-9]+/g, "."))}@360medical.net"></div>`).join("")}</div>
+    box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><strong>${missing.length} rep${missing.length === 1 ? "" : "s"} exist only in the case tracker:</strong> <span class="muted">${missing.map((t) => esc(t.rep)).join(", ")}.</span> Add them here so there is one roster. Each gets a login with the Case tracker ticked and the same PIN they use today; fix the email if they have a real one (it's only needed for email + password sign-in).
+      <div class="grid2" style="margin-top:.5rem">${missing.map((t, i) => `<div class="field"><label class="eyebrow">${esc(t.rep)} · email for their login</label><input data-imp="${i}" type="email" value="${esc(String(t.rep).toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, ""))}@360medical.net"></div>`).join("")}</div>
       <div><button class="btn solid" type="button" id="impReps">Add these logins</button></div></div>`;
     document.getElementById("impReps").onclick = async () => {
       let n = 0;
       for (let i = 0; i < missing.length; i++) {
         const email = (document.querySelector(`[data-imp="${i}"]`).value || "").trim(); if (!email) continue;
-        try { await api("/users", { method: "POST", body: { name: missing[i].rep, email, password: "temp-" + Math.random().toString(36).slice(2, 10) + "A1", role: "rep", rate: "0", pin: missing[i].pin || "", apps: { store: true, tracker: true } } }); n++; } catch (e) {}
+        try { await api("/users", { method: "POST", body: { name: missing[i].rep, email, password: "temp-" + Math.random().toString(36).slice(2, 10) + "A1", role: "rep", rate: "0", pin: missing[i].pin || "", apps: { store: false, tracker: true } } }); n++; } catch (e) {}
       }
       toast(`Added ${n} login${n === 1 ? "" : "s"}`); staff();
     };
