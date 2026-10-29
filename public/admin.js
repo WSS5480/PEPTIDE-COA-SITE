@@ -975,8 +975,8 @@ async function inventory() {
   const counts = { low: items.filter((p) => status(p) === "low").length, out: items.filter((p) => status(p) === "out").length, untracked: items.filter((p) => p.stock === null).length, expiring: items.filter((p) => soon(p.next_expiry)).length };
   const weeksLeft = (p) => (p.stock > 0 && p.sold_30d > 0 ? Math.round((p.stock / p.sold_30d) * 30 / 7) : null);
   const lastAt = stats && stats.count ? stats.count.lastAt : null, dueDays = stats && stats.count ? stats.count.dueDays : 7;
-  pane().innerHTML = `<header><h1>Inventory</h1><div class="row2"><button class="btn solid" id="rcvBtn">Receive shipment</button><a class="btn" href="/api/admin/inventory.csv" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></div></header>
-    ${invTabs()}
+  pane().innerHTML = `<header><h1>Inventory</h1><div class="row2"><button class="btn solid" id="rcvBtn">Receive shipment</button><button class="btn" id="qtyUp" type="button">Upload quantities</button><a class="btn" href="/api/admin/inventory.csv" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></div></header>
+    ${invTabs()}<div id="qtyBox"></div>
     ${countDue(lastAt, dueDays) ? `<div class="panel" style="border-color:var(--blue)"><strong>Weekly count is due.</strong><span class="muted">${lastAt ? `Last count ${when(lastAt)}, ${agoText(lastAt)}.` : "No physical count has been posted yet — do the first one to set what's on the shelf."}</span><div><button class="btn solid" type="button" data-invtab="count">Open count sheet</button></div></div>` : ""}
     <dl class="kpis">
       <div class="kpi"><dt>Products tracked</dt><dd>${tracked.length}</dd></div>
@@ -1056,6 +1056,7 @@ async function inventory() {
     panel.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   document.getElementById("rcvBtn").onclick = () => receiveForm(null);
+  document.getElementById("qtyUp").onclick = () => qtyUploadBox(items);
   document.getElementById("invQ").oninput = draw;
   pane().onclick = async (e) => {
     const f = e.target.closest("[data-invf]");
@@ -1289,7 +1290,7 @@ const HEADER_ALIASES = { name: ["name", "product", "productname", "peptide", "it
 const normH = (h) => String(h || "").toLowerCase().replace(/[^a-z0-9$/]/g, "");
 function loadSheetJS() {
   if (window.XLSX) return Promise.resolve();
-  return new Promise((ok, no) => { const sc = document.createElement("script"); sc.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; sc.onload = ok; sc.onerror = () => no(new Error("Couldn't load the spreadsheet reader")); document.head.appendChild(sc); });
+  return new Promise((ok, no) => { const sc = document.createElement("script"); sc.src = "/xlsx.full.min.js?v=0.18.5"; sc.onload = ok; sc.onerror = () => no(new Error("Couldn't load the spreadsheet reader")); document.head.appendChild(sc); });
 }
 function downloadTemplate(list) {
   const cell = (v) => { const x = String(v ?? ""); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
@@ -1338,6 +1339,71 @@ function importBox(list) {
         if (r.problems.length) document.getElementById("impBox").innerHTML = `<div class="panel"><h2>Some rows were skipped</h2><ul class="muted">${r.problems.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`;
         drawNav();
       };
+    } catch (x) { prev.innerHTML = `<div class="err">${esc(x.message || "Couldn't read that file.")}</div>`; }
+  };
+}
+
+/* ---------- upload quantities: a CSV / Excel file of Name, Size, Qty → count sheet or shipment ---------- */
+function qtyUploadBox(items) {
+  const box = document.getElementById("qtyBox"); if (!box) return;
+  if (box.innerHTML) { box.innerHTML = ""; return; }
+  const label = (p) => `${p.name} ${p.strength}`.trim();
+  box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Upload quantities</h2>
+    <p class="muted">A CSV or Excel file with a header row: <strong>Name</strong>, <strong>Size</strong>, <strong>Qty</strong> (optional: Lot, Expires, Cost each, Manufacturer). Names and sizes must match the products list — download the template to get them exactly right, type the quantities, and upload it back. "On the shelf" means every vial physically there, including ones already held by open orders.</p>
+    <div class="grid2"><div class="field"><label class="eyebrow" for="qtyMode">What the quantities mean</label><select id="qtyMode"><option value="count">Set what's on the shelf (posts a count sheet)</option><option value="receive">Add to stock (receive a shipment)</option></select></div>
+      <div class="field"><label class="eyebrow" for="qtyNote">Note (optional)</label><input id="qtyNote" placeholder="e.g. Weekly count · Oct 29"></div></div>
+    <div class="row2"><button class="btn" type="button" id="qtyTpl">Download template with current stock</button><label class="btn solid" style="display:inline-grid;place-items:center;cursor:pointer">Choose file<input type="file" id="qtyFile" accept=".xlsx,.xls,.csv,text/csv" hidden></label></div>
+    <div id="qtyPrev"></div></div>`;
+  document.getElementById("qtyTpl").onclick = () => {
+    const cell = (v) => { const x = String(v ?? ""); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
+    const lines = ["Name,Size,Manufacturer,Qty,Lot,Expires,Cost each"]; items.forEach((p) => lines.push([p.name, p.strength, p.manufacturer, p.stock === null ? "" : p.stock + (p.committed || 0), "", "", ""].map(cell).join(",")));
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" })); a.download = "quantities.csv"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+  document.getElementById("qtyFile").onchange = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const prev = document.getElementById("qtyPrev"); prev.innerHTML = `<p class="muted">Reading ${esc(file.name)}…</p>`;
+    try {
+      await loadSheetJS();
+      const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true, raw: true }); // raw: CSV text stays exactly as typed
+      const asText = (v) => v instanceof Date ? `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}` : String(v ?? ""); // dates stay the day that was typed
+      const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: true }).map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, asText(v)])));
+      if (!raw.length) { prev.innerHTML = `<div class="err">That file has no rows under the header.</div>`; return; }
+      const heads = Object.keys(raw[0]);
+      const AL = { name: HEADER_ALIASES.name, strength: HEADER_ALIASES.strength, manufacturer: HEADER_ALIASES.manufacturer, qty: ["qty", "quantity", "count", "counted", "onhand", "onshelf", "stock", "units", "vials", "received", "amount"], lot: ["lot", "lotnumber", "batch"], expires: ["expires", "expiry", "expiration", "expdate", "exp"], cost: ["cost", "costeach", "unitcost", "ourcost", "cost$"] };
+      const map = {}; heads.forEach((h) => { const n = normH(h); const k = Object.keys(AL).find((key) => AL[key].includes(n)); if (k && !map[k]) map[k] = h; });
+      if (!map.name || !map.qty) { prev.innerHTML = `<div class="err">Need a Name column and a Qty column. Columns found: ${heads.map(esc).join(", ")}</div>`; return; }
+      const sk = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/mg$/, "");
+      const rows = raw.map((r, i) => ({ row: i + 2, name: String(r[map.name] ?? "").trim(), strength: map.strength ? String(r[map.strength] ?? "").trim() : "", manufacturer: map.manufacturer ? String(r[map.manufacturer] ?? "").trim() : "", qty: String(r[map.qty] ?? "").trim(), lot: map.lot ? String(r[map.lot] ?? "").trim() : "", expires: map.expires ? String(r[map.expires] ?? "").trim() : "", cost: map.cost ? String(r[map.cost] ?? "").trim() : "" })).filter((r) => r.name);
+      const match = (r) => { let c = items.filter((p) => p.name.toLowerCase() === r.name.toLowerCase()); if (r.strength) c = c.filter((p) => sk(p.strength) === sk(r.strength)); if (c.length > 1 && r.manufacturer) c = c.filter((p) => nrm(p.manufacturer) === nrm(r.manufacturer)); return c.length === 1 ? c[0] : c.length > 1 ? "many" : null; };
+      const seen = new Set(), lines = [], problems = [];
+      for (const r of rows) {
+        const m = match(r); const q = r.qty === "" ? null : Number(String(r.qty).replace(/[^0-9.-]/g, ""));
+        if (!m) { problems.push(`Row ${r.row}: no product called "${r.name}${r.strength ? " " + r.strength : ""}"`); continue; }
+        if (m === "many") { problems.push(`Row ${r.row}: "${r.name} ${r.strength}" matches more than one product — add the Manufacturer column`); continue; }
+        if (q === null || !isFinite(q)) { problems.push(`Row ${r.row}: ${label(m)} — Qty is blank, skipped`); continue; }
+        if (q < 0 || Math.round(q) !== q) { problems.push(`Row ${r.row}: ${label(m)} — Qty "${r.qty}" must be a whole number`); continue; }
+        if (seen.has(m.id)) { problems.push(`Row ${r.row}: ${label(m)} is in the file twice — second one ignored`); continue; }
+        seen.add(m.id); lines.push({ p: m, qty: q, lot: r.lot, expires: r.expires, cost: r.cost });
+      }
+      const draw = () => {
+        const mode = document.getElementById("qtyMode").value;
+        prev.innerHTML = `<p><strong>${lines.length} product${lines.length === 1 ? "" : "s"} matched</strong>${problems.length ? `, ${problems.length} row${problems.length === 1 ? "" : "s"} skipped` : ""}.</p>
+          ${lines.length ? `<div class="tblwrap" style="max-height:24rem;overflow:auto"><table class="tbl"><tr><th>Product</th><th class="num">On shelf now</th><th class="num">${mode === "count" ? "Counted" : "Receiving"}</th><th class="num">${mode === "count" ? "Change" : "New on shelf"}</th>${mode === "receive" ? "<th>Lot</th><th>Expires</th><th class=\"num\">Cost each</th>" : ""}</tr>
+            ${lines.map((l) => { const cur = l.p.stock === null ? null : l.p.stock + (l.p.committed || 0); const diff = mode === "count" ? (cur === null ? null : l.qty - cur) : null; return `<tr><td>${esc(label(l.p))}${l.p.manufacturer ? `<div class="muted" style="font-size:.72rem">${esc(l.p.manufacturer)}</div>` : ""}</td><td class="num">${cur === null ? '<span class="muted">not tracked</span>' : cur}</td><td class="num"><strong>${l.qty}</strong></td><td class="num">${mode === "count" ? (diff === null ? "opening count" : diff === 0 ? "—" : (diff > 0 ? "+" : "") + diff) : (cur === null ? l.qty : cur + l.qty)}</td>${mode === "receive" ? `<td>${esc(l.lot)}</td><td>${esc(l.expires)}</td><td class="num">${esc(l.cost)}</td>` : ""}</tr>`; }).join("")}</table></div>` : ""}
+          ${problems.length ? `<details style="margin-top:.6rem"><summary class="muted" style="cursor:pointer">Skipped rows</summary><ul class="muted">${problems.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
+          ${lines.length ? `<div class="row2" style="margin-top:.6rem"><button class="btn solid" type="button" id="qtyGo">${mode === "count" ? "Post count sheet" : "Receive into stock"} (${lines.length})</button><button class="btn" type="button" id="qtyCancel">Cancel</button></div>` : ""}`;
+        if (document.getElementById("qtyCancel")) document.getElementById("qtyCancel").onclick = () => { box.innerHTML = ""; };
+        if (document.getElementById("qtyGo")) document.getElementById("qtyGo").onclick = async () => {
+          const note = document.getElementById("qtyNote").value || `Uploaded from ${file.name}`;
+          const b = document.getElementById("qtyGo"); b.disabled = true;
+          try {
+            if (mode === "count") { const r = await api("/inventory/counts", { method: "POST", body: { note, lines: lines.map((l) => ({ productId: l.p.id, counted: l.qty })) } }); toast(`Count posted: ${r.varied ?? lines.length} changed`); invTab = "counts"; }
+            else { const r = await api("/inventory/receive", { method: "POST", body: { note, ref: file.name, lines: lines.map((l) => ({ productId: l.p.id, qty: l.qty, lot: l.lot, expires: l.expires, costEach: l.cost })) } }); toast(`Received ${r.lines} line${r.lines === 1 ? "" : "s"} into stock`); }
+            stats = null; await inventory();
+          } catch (x) { b.disabled = false; }
+        };
+      };
+      draw(); document.getElementById("qtyMode").onchange = draw;
     } catch (x) { prev.innerHTML = `<div class="err">${esc(x.message || "Couldn't read that file.")}</div>`; }
   };
 }
