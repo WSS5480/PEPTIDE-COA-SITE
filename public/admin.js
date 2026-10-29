@@ -1823,70 +1823,94 @@ function geo() {
   pane().innerHTML = `<header><h1>Geofencing</h1></header>
     ${HUB.linked ? `<p class="muted">Visit geofencing lives in the case tracker; this is its card. Changes save there.</p><iframe class="hubframe" title="Visit geofencing" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=geo-card")}" style="width:100%;height:calc(100vh - 9rem);min-height:32rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<p class="muted">The case tracker isn't linked to this store yet.</p>`}`;
 }
-/* ---------- how to: how the whole thing works, in plain words ---------- */
+/* ---------- how to: how the whole thing works, in plain words — written for the reader's own role ---------- */
 function howto() {
   const TAG = { store: '<span class="pill st-confirmed" style="margin-left:.5rem;font-size:.66rem;vertical-align:middle">Peptide store</span>', tracker: '<span class="pill st-delivered" style="margin-left:.5rem;font-size:.66rem;vertical-align:middle">Case tracker</span>', both: '<span class="pill st-shipped" style="margin-left:.5rem;font-size:.66rem;vertical-align:middle">Both apps</span>' };
-  const sec = (title, body, app = "both") => `<div class="panel"><h2>${title}${TAG[app]}</h2>${body}</div>`;
-  const ul = (items) => `<ul class="muted" style="margin:.2rem 0 0 1.2rem;display:grid;gap:.35rem">${items.map((x) => `<li>${x}</li>`).join("")}</ul>`;
+  const who = isOwner() ? "owner" : isRep() ? "rep" : "staff";
   const b = (x) => `<strong>${x}</strong>`;
-  const rep = isRep();
-  pane().innerHTML = `<header><h1>How to</h1></header>
-    <p class="muted">Two apps, one login: the ${b("Peptide store")} (orders, customers, products, inventory, commissions) and the ${b("Case tracker")} (surgical cases, quotas, visits). Each section is tagged with the app it belongs to: ${TAG.store.replace("margin-left:.5rem;", "")} ${TAG.tracker.replace("margin-left:.5rem;", "")} ${TAG.both.replace("margin-left:.5rem;", "")}. Click a heading to open it. ${rep ? "You're a sales rep, so some of the admin pages below won't apply to you." : ""}</p>
-    ${sec("Getting around", ul([
-      `${b("Two rows of switches")} under the logo. Top row: which app you're in (Peptide store / Case tracker). Second row: which view (Admin, Store, Rep, Tracker). The one you're in is green. They all keep your login — no second sign-in.`,
-      `${b("Above the line")} in the menu is this app's own work. ${b("Below the line")} is the same on every page of both apps: Team logins, Email & approvals, Geofencing, Apps & downloads, How to, My account.`,
-      `${b("Panels start collapsed.")} Click a heading to open it; it stays open on this device until you close it. Alt+Shift+C opens or folds everything on a page. The ${b("« »")} button at the top of the menu hides and shows the menu.`,
-      `${b("Phones:")} each app installs from Apps & downloads (Add to Home Screen / Install). Everything works the same on a phone, with the menu behind the Menu button.`
-    ]), "both")}
-    ${sec("Signing in", ul([
-      `${b("Email + password")} or ${b("Name + PIN")} (the toggle on the sign-in screen). PINs are set under Team logins or My account. The same login works on the store, the rep app and the case tracker.`,
-      `${b("Store PIN")} (Site settings → Site PIN) is for walking into the storefront as the office: prices show, and Open Admin / Rep app buttons appear. Customers get their own PINs under Customers.`,
-      `${b("Case tracker COO PIN")} still works as a back door on the tracker's own sign-in page; from there the store won't know who you are, so use your email login for the one-login experience.`
-    ]), "both")}
-    ${sec("Orders", ul([
+  const ul = (items) => `<ul class="muted" style="margin:.2rem 0 0 1.2rem;display:grid;gap:.35rem">${items.map((x) => `<li>${x}</li>`).join("")}</ul>`;
+  const sec = (title, app, items) => `<div class="panel"><h2>${title}${TAG[app]}</h2>${ul(items)}</div>`;
+  const S = [];
+  // ---- getting around (everyone, worded for the role)
+  S.push(sec("Getting around", "both", [
+    `${b("Two rows of switches")} under the logo. Top row: which app you're in (Peptide store / Case tracker). Second row: which view (${who === "rep" ? "Store, Rep, Tracker — Admin is for admins" : "Admin, Store, Rep, Tracker"}). The one you're in is green. They all keep your login — no second sign-in.`,
+    who === "rep" ? `${b("Below the line")} in the menu is the same on every page of both apps: Apps & downloads, How to, My account.` : `${b("Above the line")} in the menu is this app's own work. ${b("Below the line")} is the same on every page of both apps: ${who === "owner" ? "Team logins, Email & approvals, Geofencing, " : ""}Apps & downloads, How to, My account.`,
+    `${b("Panels start collapsed.")} Click a heading to open it; it stays open on this device until you close it. Alt+Shift+C opens or folds everything on a page. The ${b("« »")} button at the top of the menu hides and shows the menu.`,
+    `${b("Phones:")} each app installs from Apps & downloads (Add to Home Screen / Install). Everything works the same on a phone, with the menu behind the Menu button.`
+  ]));
+  S.push(sec("Signing in", "both", [
+    `${b("Email + password")} or ${b("Name + PIN")} (the toggle on the sign-in screen). Your PIN is under My account${who === "owner" ? " (or set by an admin under Team logins)" : ""}. The same login works on the store, the rep app and the case tracker — the PIN also opens the storefront as the office.`,
+    who === "rep" ? `On the case tracker's own sign-in page, pick your name and type the same PIN.` : `${b("Store PIN")} (Site settings → Site PIN) lets anyone in the office into the storefront; customers get their own PINs under Customers. The tracker's COO PIN is a back door for the tracker only.`
+  ]));
+  // ---- store side
+  if (who === "rep") {
+    S.push(sec("Your customers & orders", "store", [
+      `${b("Customers")}: add your customers (name, address, email optional). Orders from your customers earn your commission whether you place them or they order on the store themselves. Ask the office to give a customer a PIN or special pricing.`,
+      `${b("New order")}: pick the customer, add products, send. The office confirms the total, marks it paid and ships it; you'll see the status change under Orders.`,
+      `${b("Orders")}: every order from your customers with its status — New → Confirmed → Paid → Shipped / Delivered. You can add a note or send a card-payment link; the office changes the order itself.`
+    ]));
+    S.push(sec("Your commission", "store", [
+      `You earn your rate on the product total after any discount, before shipping. ${b("Pending")} until the office marks the order paid → ${b("Earned")} → ${b("Paid")} when the office pays it out. Cancelled orders earn nothing.`,
+      `${b("Commissions")} shows every order line with its status, this month's totals, and your payouts.`
+    ]));
+  } else {
+    S.push(sec("Orders", "store", [
       `Orders arrive from the storefront, the rep app, or ${b("New order")} here. Flow: ${b("New")} → ${b("Confirmed")} (you've sent the total and how to pay) → ${b("Paid")} → ${b("Shipped")} (carrier + tracking) or ${b("Delivered")}. Card payments through Stripe arrive already paid.`,
-      `Open an order to ${b("Edit")} (lines, quantities, address, phone — totals recalculate and an "order updated" email goes out) or ${b("Delete")} it (admins only; stock goes back). Every status change can email the customer.`,
+      `Open an order to ${b("Edit")} (lines, quantities, address, phone — totals recalculate and an "order updated" email goes out)${who === "owner" ? ` or ${b("Delete")} it (stock goes back)` : ""}. Every status change can email the customer.`,
       `${b("Stock")} comes off when an order is placed and goes back if it's cancelled; stock held by unshipped orders shows as "In orders".`
-    ]), "store")}
-    ${sec("Customers & pricing", ul([
+    ]));
+    S.push(sec("Customers & pricing", "store", [
       `Add a customer with a name, address and (optional) email. Give them a ${b("PIN")} so they can sign in and see their pricing; revoke it any time.`,
-      `${b("Markup")} per customer sets their price from cost (the store default is under Products & prices → Pricing). Assign a ${b("Sales rep")} so their orders earn commission.`,
-      `${b("Discount codes")} come off the product subtotal before shipping; commissions are paid on the discounted amount.`
-    ]), "store")}
-    ${sec("Products, descriptions & lab reports", ul([
-      `${b("Products & prices")}: name, size, category, manufacturer, cost (never shown on the store), price, stock, max per order, sort, active. ${b("Import from file")} takes a CSV/Excel; download the current list as the template first.`,
+      `${b("Markup")} per customer sets their price from cost${who === "owner" ? " (the store default is under Products & prices → Pricing)" : ""}. Assign a ${b("Sales rep")} so their orders earn commission.`,
+      who === "owner" ? `${b("Discount codes")} come off the product subtotal before shipping; commissions are paid on the discounted amount.` : `Discount codes are set by an admin; they come off the product subtotal before shipping.`
+    ]));
+    S.push(sec("Products, descriptions & lab reports", "store", [
+      `${b("Products & prices")}: name, size, category, manufacturer${who === "owner" ? ", cost (never shown on the store), price" : ""}, stock, max per order, sort, active. ${b("Import from file")} takes a CSV/Excel; download the current list as the template first.`,
       `${b("Descriptions")}: first line is what's in the vial (e.g. "BPC-157 10 mg + TB-500 10 mg"); each line starting with "-" is a benefit bullet on the store card.`,
-      `${b("Lab reports")} attach to a product automatically when the peptide name, size and manufacturer match; the dashboard warns about active products with none.`
-    ]), "store")}
-    ${sec("Inventory", ul([
+      `${b("Lab reports")}: choose the report file first and the form fills itself (PDF text, or reading the picture); check it against the document, then Save. A report attaches to a product when the peptide name, size and manufacturer match.`
+    ]));
+    S.push(sec("Inventory", "store", [
       `${b("Stock")} tab: on shelf, in orders, available, weeks left (from the last 30 days of sales), low / out / expiring. Low means at or below the reorder point (5 unless set).`,
-      `${b("Receive shipment")} adds stock with lot, expiry and cost each (cost averages into the product cost). ${b("Adjust")} for damaged, expired, lost, samples, returns.`,
-      `${b("Count sheet")} (weekly): type what's physically on the shelf; posting it creates a ${b("Reconciliation")} with expected vs counted, the variance and its value at cost. ${b("Upload quantities")} does the same from a CSV/Excel file — or adds to stock as a shipment — with a preview before anything posts.`,
+      `${b("Receive shipment")} adds stock with lot, expiry${who === "owner" ? " and cost each (cost averages into the product cost)" : ""}. ${b("Adjust")} for damaged, expired, lost, samples, returns.`,
+      `${b("Count sheet")} (weekly): type what's physically on the shelf; posting it creates a ${b("Reconciliation")} with expected vs counted and the variance. ${b("Upload quantities")} does the same from a CSV/Excel file — or adds to stock as a shipment — with a preview before anything posts.`,
       `${b("Activity log")}: every stock movement with who, when, why and the reference.`
-    ]), "store")}
-    ${sec("Sales reps & commissions", ul([
+    ]));
+    if (who === "owner") S.push(sec("Sales reps & commissions", "store", [
       `Reps use the ${b("Rep app")}: their own customers, orders and commission. Every order from one of their customers earns their rate on the product total after discount, before shipping — whether they placed it or the customer did.`,
       `${b("Pending")} until the order is paid → ${b("Earned")} → ${b("Paid")} when you include it in a payout (Commissions → pick the earned lines → Pay out). Cancelled orders are void.`,
       `${b("Combined / Peptide store / Case tracker")} on the Commissions page: the combined view lines up each rep's store commission with their case-tracker commission for the month; goals and targets stay separate per app.`,
       `${b("Admins in the rep app:")} a "Viewing as" picker shows the app exactly as that rep sees it.`
-    ]), "store")}
-    ${sec("Case tracker (360 Medical)", ul([
-      `Reps log ${b("cases")} (surgeon, facility, product, amount); completed / PO / invoiced / paid cases count toward quota. The tracker shows pace to quota, run-rate projection, the quarter, carried shortfalls and the commission plan (rate above a floor, draw or base salary).`,
-      `${b("Target visits")} are verified by the phone's location inside the check-in window; leaving early is noticed. Switches are under ${b("Geofencing")} below the line; each facility can have its own radius.`,
-      `When a rep adds a ${b("facility or surgeon")}, the COO gets an approval email with a one-tap Approve button (Email & approvals controls it).`,
-      `Tracker Admin: reps and plans, visits, surgeons, facilities, price book, alert settings, close a month, weekly digest, backup.`
-    ]), "tracker")}
-    ${sec("Team logins (one list of people)", ul([
-      `Add a person once: name, email, role (${b("Admin")} = everything; ${b("Manager")} = orders, customers, products, inventory, settings, no costs or logins; ${b("Sales rep")} = their own customers, orders, commission), optional PIN, and which apps they get: ${b("Peptide store")} and/or ${b("Case tracker")}.`,
-      `Tick Case tracker and they appear in the tracker automatically (reps get a plan row to fill in). Untick to switch them off there. Reps that exist only in the tracker show up here to import in one click.`,
-      `Changing someone's role or password signs them out everywhere. Turning a login off ends their access right away.`
-    ]), "both")}
-    ${sec("Email & approvals, Apps, Geofencing, My account", ul([
-      `${b("Email & approvals")}: the store's order emails and sending account (Microsoft 365 app), the COO address, and the tracker's approval emails (on/off, test, previews) — one page for both apps.`,
-      `${b("Apps & downloads")}: every app with open / install links.`,
-      `${b("Geofencing")}: the tracker's visit-verification switches (admins only).`,
-      `${b("My account")}: your password and PIN.`
-    ]), "both")}`;
+    ]));
+  }
+  // ---- tracker side
+  if (who === "rep") S.push(sec("Case tracker (360 Medical)", "tracker", [
+    `${b("Log a case")}: surgeon, facility, product, amount, status. Completed / PO / invoiced / paid cases count toward your quota; scheduled ones show as booked ahead.`,
+    `Your page shows ${b("pace to quota")}, the run-rate projection, the quarter, any carried shortfall and your ${b("commission plan")} (rate above a floor, draw or base salary) with this month's estimate.`,
+    `${b("Target visits")}: open the app when you arrive — inside the check-in window your location is checked against the facility and the visit is verified. Keep the app open during the visit; leaving early is noticed.`,
+    `Adding a ${b("facility or surgeon")} sends the COO an approval; until it's approved, visits there can't be verified.`,
+    `${b("Calendar / Upcoming")}: your planned visits and cases; "Add to my phone calendar" subscribes your phone to them.`
+  ]));
+  else S.push(sec("Case tracker (360 Medical)", "tracker", [
+    `Reps log ${b("cases")} (surgeon, facility, product, amount); completed / PO / invoiced / paid cases count toward quota. The tracker shows pace to quota, run-rate projection, the quarter, carried shortfalls and the commission plan (rate above a floor, draw or base salary).`,
+    `${b("Target visits")} are verified by the phone's location inside the check-in window; leaving early is noticed.${who === "owner" ? ` Switches are under ${b("Geofencing")} below the line; each facility can have its own radius.` : ""}`,
+    `When a rep adds a ${b("facility or surgeon")}, the COO gets an approval email with a one-tap Approve button${who === "owner" ? " (Email & approvals controls it)" : ""}.`,
+    `Tracker Admin: reps and plans, visits, surgeons, facilities, price book, alert settings, close a month, weekly digest, backup.`
+  ]));
+  // ---- shared pages
+  if (who === "owner") S.push(sec("Team logins (one list of people)", "both", [
+    `Add a person once: name, email, role (${b("Admin")} = everything; ${b("Manager")} = orders, customers, products, inventory, settings, no costs or logins; ${b("Sales rep")} = their own customers, orders, commission), optional PIN, and which apps they get: ${b("Peptide store")} and/or ${b("Case tracker")}.`,
+    `Tick Case tracker and they appear in the tracker automatically (reps get a plan row to fill in). Untick to switch them off there. Reps that exist only in the tracker show up here to import in one click.`,
+    `Changing someone's role or password signs them out everywhere. Turning a login off ends their access right away.`
+  ]));
+  S.push(sec(who === "owner" ? "Email & approvals, Apps, Geofencing, My account" : "Apps & My account", "both", [
+    ...(who === "owner" ? [`${b("Email & approvals")}: the store's order emails and sending account (Microsoft 365 app), the COO address, and the tracker's approval emails (on/off, test, previews) — one page for both apps.`, `${b("Geofencing")}: the tracker's visit-verification switches.`] : []),
+    `${b("Apps & downloads")}: every app with open / install links.`,
+    `${b("My account")}: your password and PIN.`
+  ]));
+  const roleName = who === "owner" ? "an admin" : who === "rep" ? "a sales rep" : "a manager";
+  pane().innerHTML = `<header><h1>How to</h1></header>
+    <p class="muted">Two apps, one login: the ${b("Peptide store")} and the ${b("Case tracker")}. This guide is written for ${b(roleName)} — it only covers what you can do. Each section is tagged with the app it belongs to: ${TAG.store.replace("margin-left:.5rem;", "")} ${TAG.tracker.replace("margin-left:.5rem;", "")} ${TAG.both.replace("margin-left:.5rem;", "")}. Click a heading to open it.</p>
+    ${S.join("")}`;
 }
 /* ---------- apps & downloads: every app in one place ---------- */
 function apps() {
