@@ -96,7 +96,7 @@ const owner = (req, res, next) => (req.user.role === "owner" ? next() : bad(res,
 /* ---------- site PIN ---------- */
 // When the owner turns the PIN on, nothing on the store (pages, products, lab reports, orders)
 // is served until the visitor enters it. The admin, its login and the files it needs stay open.
-const PIN_OPEN = [/^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/api\/stripe\//, /^\/pay\//,
+const PIN_OPEN = [/^\/api\/hub\//, /^\/sso$/, /^\/(admin|rep)\/(sso|tracker|go\/tracker)$/, /^\/go\/tracker$/, /^\/api\/rep-list$/, /^\/xlsx\.full\.min\.js$/, /^\/collapse\.js$/, /^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/api\/stripe\//, /^\/pay\//,
   /^\/store\.css$/, /^\/install\.js$/, /^\/refresh\.js$/, /^\/sw\.js$/, /^\/manifest\.webmanifest$/, /^\/vial\.js$/, /^\/vial-logo$/, /^\/site-logo$/, /^\/vial-photo$/, /^\/vial-photo\.jpg$/, /^\/brand-(logo|mark|vial-logo)\.png$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
 let pinCache = { at: 0, on: false, hash: "", secret: "", customerPins: 0 };
 async function pinState() {
