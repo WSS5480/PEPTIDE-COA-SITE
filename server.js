@@ -146,7 +146,7 @@ app.post("/api/pin", limit("pin", 10, 15 * 60 * 1000), wrap(async (req, res) => 
   if (st.hash && (await bcrypt.compare(pin, st.hash))) { res.append("Set-Cookie", passCookie(pinToken(st))); return res.json({ ok: true }); }
   // a customer's own PIN unlocks the site and signs them into their account
   const { rows: [c] } = await q("select id, pin_version from customers where access_pin_key = $1 and active", [customerPinKey(st, pin)]);
-  if (!c) return bad(res, "Wrong PIN.", 401);
+  if (!c) { const u = await teamByPin(pin); if (!u) return bad(res, "Wrong PIN.", 401); await teamSignIn(res, u); if (st.hash) res.append("Set-Cookie", passCookie(pinToken(st))); return res.json({ ok: true }); }
   await q("update customers set pin_used_at = now() where id = $1", [c.id]);
   res.append("Set-Cookie", passCookie(customerPass(st, c.id, c.pin_version)));
   await startCustomerSession(res, c.id);
@@ -665,6 +665,18 @@ app.post("/api/pin-request", jsonOnly, limit("pinreq", 5, 60 * 60 * 1000), wrap(
   }
   res.json({ ok: true, id: r.id });
 }));
+// a team PIN (Team logins / My account) at the storefront: signs that person in as the office AND into the admin / rep app
+async function teamByPin(pin) {
+  if (!pin || pin.length < 4) return null;
+  const { rows } = await q("select * from users where active and pin_hash is not null");
+  for (const u of rows) if (appsOf(u).store && (await bcrypt.compare(pin, u.pin_hash))) return u;
+  return null;
+}
+async function teamSignIn(res, u) {
+  const token = crypto.randomBytes(32).toString("hex");
+  await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '14 days')", [token, u.id]);
+  res.append("Set-Cookie", `sid=${token}; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=${14 * 86400}`);
+}
 // Customers sign in with the PIN the store gave them (set under admin → Customers). It also satisfies the site lock.
 app.post("/api/account/pin", jsonOnly, limit("cpin", 10, 15 * 60 * 1000), wrap(async (req, res) => {
   const pin = String(req.body?.pin || "").replace(/\D/g, "").slice(0, 12);
@@ -677,7 +689,13 @@ app.post("/api/account/pin", jsonOnly, limit("cpin", 10, 15 * 60 * 1000), wrap(a
     return res.json({ ok: true, house: true });
   }
   const { rows: [c] } = await q("select id, pin_version from customers where access_pin_key = $1 and active", [customerPinKey(st, pin)]);
-  if (!c) return bad(res, "That PIN isn't right. Contact us if you need a new one.", 401);
+  if (!c) {
+    const u = await teamByPin(pin); // a team member's own PIN: the office, signed into the admin / rep app as well
+    if (!u) return bad(res, "That PIN isn't right. Contact us if you need a new one.", 401);
+    await teamSignIn(res, u);
+    if (st.hash) res.append("Set-Cookie", `spin=${pinToken(st)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`);
+    return res.json({ ok: true, house: true, team: { name: u.name, role: u.role } });
+  }
   await q("update customers set pin_used_at = now() where id = $1", [c.id]);
   res.append("Set-Cookie", `spin=${customerPass(st, c.id, c.pin_version)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`);
   res.append("Set-Cookie", HOUSE_COOKIE("", 0));
