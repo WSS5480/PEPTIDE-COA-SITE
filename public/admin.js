@@ -1443,9 +1443,10 @@ async function reports() {
     // pick the file → the fields fill themselves from the document (empty boxes only; check them against the report)
     $("rimg").onchange = async () => {
       const file = $("rimg").files[0]; if (!file) return;
-      if (!OK_TYPES.includes(file.type)) return;
       let note = document.getElementById("rfill"); if (!note) { note = document.createElement("p"); note.id = "rfill"; note.className = "muted"; $("rimg").closest(".field").appendChild(note); }
-      note.textContent = `Reading ${file.name}…`;
+      if (!OK_TYPES.includes(file.type)) { note.innerHTML = `<span class="err" style="display:inline-block">That file is ${esc(file.type || file.name.split(".").pop() || "an unknown type")} — use a PDF, JPG or PNG.${/heic|heif/i.test(file.type + file.name) ? " iPhone photos come as HEIC: share the photo as a JPEG (or set Settings → Camera → Formats → Most Compatible), or scan the report into a PDF." : ""}</span>`; return; }
+      if (file.size > 10 * 1024 * 1024) { note.innerHTML = `<span class="err" style="display:inline-block">That file is over 10 MB — use a smaller picture or PDF.</span>`; return; }
+      note.textContent = `Reading ${file.name}… (10–20 seconds the first time)`;
       try {
         const r = await api("/reports/extract", { method: "POST", body: { imageData: await readFile(file) } });
         if (!r.ok) { note.textContent = r.note || "Couldn't read that file."; return; }
