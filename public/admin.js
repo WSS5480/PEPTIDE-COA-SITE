@@ -1956,7 +1956,7 @@ async function staff() {
       <div class="row2"><button class="btn solid" id="nuAdd">Add login</button><span class="muted">Send them the email and temporary password; they can change it under My account.</span></div></div>
     ${HUB.linked && HUB.apps && HUB.apps.tracker ? `<div class="panel" id="plansPanel"><h2>Case tracker plans</h2>
       <p class="muted">Quota, commission plan, pay and territory for each rep with the Case tracker ticked above. Names, PINs and on/off come from the logins table; add or remove reps up there. Team quotas are set here.</p>
-      <iframe class="hubframe" title="Reps and plans" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=reps-card")}" style="width:100%;height:40rem;min-height:24rem;border:0;border-radius:14px;background:var(--card)"></iframe></div>` : ""}`;
+      ${HOSTABLE ? `<iframe class="hubframe" title="Reps and plans" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=reps-card")}" style="width:100%;height:40rem;min-height:24rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<a class="btn solid" href="${switchHref("/admin")}"${FRAMED ? ' target="_top"' : ""}>Open reps and plans in the case tracker ↗</a><p class="muted" style="margin-top:.4rem">This browser doesn't show the tracker inside the page.</p>`}</div>` : ""}`;
   document.getElementById("nu-r").onchange = () => { document.getElementById("nu-rateWrap").hidden = document.getElementById("nu-r").value !== "rep"; };
   api("/hub/tracker-reps").then((r) => {
     const box = document.getElementById("trackerImport"); if (!box) return;
@@ -1979,7 +1979,7 @@ async function staff() {
   document.getElementById("ut").onclick = async (e) => {
     if (e.target.closest("[data-del]")) {
       const tr = e.target.closest("tr"), nm = tr.querySelector('[data-k="name"]').value;
-      if (!confirm(`Delete ${nm}'s login for good? Their customers and orders stay (unassigned). To keep them on file, untick Active instead.`)) return;
+      if (!confirm(`Delete ${nm}'s login for good? Their customers stay (unassigned). A rep with orders on record can't be deleted — untick Active instead.`)) return;
       await api("/users/" + tr.dataset.id, { method: "DELETE" }); toast("Login deleted"); staff(); return;
     }
     if (!e.target.closest("[data-save]")) return;

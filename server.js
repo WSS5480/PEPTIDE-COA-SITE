@@ -514,7 +514,7 @@ async function notifyOrder(orderId, kind, extra = {}) {
   const { rows: [o] } = await q("select * from orders where id = $1", [orderId]);
   if (!o) return;
   const { rows: items } = await q("select name, strength, unit_cents, qty from order_items where order_id = $1 order by id", [orderId]);
-  const rep = o.rep_id ? (await q("select name, email from users where id = $1", [o.rep_id])).rows[0] : null;
+  const rep = o.rep_id ? (await q("select name, email from users where id = $1 and active", [o.rep_id])).rows[0] : null;
   const $ = (c) => "$" + ((c || 0) / 100).toFixed(2);
   const a = o.address || {};
   const addrLines = [o.name, a.line1, a.line2, `${a.city || ""}, ${a.state || ""} ${a.zip || ""}`].filter((x) => x && x.trim() !== ",");
@@ -565,9 +565,9 @@ async function notifyOrder(orderId, kind, extra = {}) {
   }
   // the customer's sales rep: every order and every change on it, with their commission on it
   const repFor = rep && rep.email ? rep : o.customer_id ? (await q("select u.name, u.email from customers c join users u on u.id = c.rep_id where c.id = $1 and u.active", [o.customer_id])).rows[0] : null;
-  if (s.repEmailOn !== false && repFor && isEmail(repFor.email) && kind !== "unpaid") {
+  if (!extra.noRep && s.repEmailOn !== false && repFor && isEmail(repFor.email) && kind !== "unpaid") {
     const comm = o.rep_id && o.commission_rate !== null && o.commission_rate !== undefined ? Math.round((o.subtotal_cents - o.discount_cents) * o.commission_rate / 100) : null;
-    const commLine = kind === "cancelled" ? "No commission (cancelled)." : comm !== null ? `Your commission on this order: ${$(comm)}${paid ? " (earned — the order is paid)" : " (pending until the order is paid)"}` : "";
+    const commLine = kind === "cancelled" || o.status === "cancelled" ? "No commission (cancelled)." : comm !== null ? `Your commission on this order: ${$(comm)}${paid ? " (earned — the order is paid)" : " (pending until the order is paid)"}` : "";
     const head = kind === "paid" ? "Paid" : kind === "updated" ? "Updated" : kind === "cancelled" ? "Cancelled" : kind === "shipped" ? (o.status === "delivered" ? "Delivered" : "Shipped") : "New";
     const subject = `${head} order ${o.number} · ${o.name} · ${$(o.total_cents)}`;
     const intro = kind === "paid" ? `${o.name} paid ${$(o.paid_cents ?? o.total_cents)} — your commission on this order is now earned.`
@@ -804,7 +804,7 @@ app.post("/api/admin/login", limit("login", 10, 15 * 60 * 1000), wrap(async (req
 }));
 // PIN quick sign-in: pick your name, type your PIN (set by an admin under Team logins, or by you under My account)
 app.get("/api/admin/pin-names", wrap(async (req, res) => { // the admin sign-in lists admins + managers; the rep app (?reps=1) lists everyone with a PIN
-  const { rows } = await q(`select id, name from users where active and pin_hash is not null ${req.query.reps === "1" ? "" : "and role <> 'rep'"} order by name`); res.json({ names: rows }); }));
+  const { rows } = await q(`select id, name from users where active and pin_hash is not null ${req.query.reps === "1" ? "and coalesce((apps->>'store')::boolean, true)" : "and role <> 'rep'"} order by name`); res.json({ names: rows }); }));
 app.post("/api/admin/login-pin", limit("loginpin", 10, 15 * 60 * 1000), wrap(async (req, res) => {
   const id = intOrNull(req.body?.id), pin = String(req.body?.pin || "").replace(/\D/g, "").slice(0, 12);
   const { rows: [u] } = await q("select * from users where id = $1 and active and pin_hash is not null", [id]);
@@ -917,7 +917,7 @@ admin.post("/orders/:id/paylink", wrap(async (req, res) => {
 admin.post("/orders/:id/email", wrap(async (req, res) => {
   const { rows: [o] } = await q("select paid_at from orders where id = $1", [intOrNull(req.params.id)]);
   if (!o) return bad(res, "Not found", 404);
-  const results = await notifyOrder(intOrNull(req.params.id), o.paid_at ? "paid" : "new");
+  const results = await notifyOrder(intOrNull(req.params.id), o.paid_at ? "paid" : "new", { noRep: true });
   const failed = (results || []).filter((r) => !r.ok);
   if (!results || !results.length) return bad(res, "Order emails are turned off, or no address is set, under Site settings → Order emails.");
   if (failed.length) return bad(res, failed[0].error);
@@ -2021,8 +2021,8 @@ admin.delete("/users/:id", owner, wrap(async (req, res) => {
   const { rows: [u] } = await q("select id, name, role from users where id = $1", [id]);
   if (!u) return bad(res, "Login not found", 404);
   if (id === req.user.id) return bad(res, "You can't delete your own login");
-  const owed = (await q("select count(*)::int n from orders where rep_id = $1 and payout_id is null and status in ('paid','shipped','delivered')", [id])).rows[0].n;
-  if (u.role === "rep" && owed) return bad(res, `${u.name} still has ${owed} paid order${owed === 1 ? "" : "s"} with commission not paid out. Pay it out (or set them inactive) first.`);
+  const n = (await q("select count(*)::int n from orders where rep_id = $1 and status <> 'cancelled'", [id])).rows[0].n;
+  if (n) return bad(res, `${u.name} has ${n} order${n === 1 ? "" : "s"} on record, and deleting the login would drop them from Commissions. Untick Active instead — that signs them out and keeps the history.`);
   await q("delete from users where id = $1", [id]); // sessions cascade; customers.rep_id / orders.rep_id go null
   pokeTracker(); res.json({ ok: true });
 }));
@@ -2118,7 +2118,7 @@ app.get(["/sso", "/admin/sso", "/rep/sso"], wrap(async (req, res) => { // in-sco
   const email = String(t.email || "").toLowerCase();
   let { rows: [u] } = email ? await q("select * from users where lower(email) = $1 and active", [email]) : { rows: [] };
   // the tracker's own owner login (COO PIN) has no store email: it is the same office, so it comes in as the store's admin account
-  if (!u && t.role === "owner") ({ rows: [u] } = await q("select * from users where role = 'owner' and active order by id limit 1"));
+  if (!u && !email && t.coo === true) ({ rows: [u] } = await q("select * from users where role = 'owner' and active order by id limit 1")); // only the bare COO-PIN session, never a token that carried an email
   const miss = (why, name) => land("/admin?" + (/[?&]embed=1/.test(next) ? "embed=1&" : "") + "sso=" + why + "&name=" + encodeURIComponent(name || "") + (next.includes("#") ? next.slice(next.indexOf("#")) : "")); // keep the embed + page so a hosted pane shows the message, not a whole admin
   if (!u) return miss("nouser", t.name);
   if (!appsOf(u).store) return miss("noapp", u.name);
