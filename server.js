@@ -1484,6 +1484,16 @@ function fileFrom(data) {
   return { type: m[1], buf };
 }
 const imageFrom = (b) => fileFrom(b.imageData);
+// read a lab report file and suggest the form fields (PDF text layer, or OCR for images)
+admin.post("/reports/extract", owner, wrap(async (req, res) => {
+  const img = imageFrom(req.body || {}); if (!img) return bad(res, "Send the report file first.");
+  try {
+    const { extractText, parseCoa } = require("./server/coa-extract");
+    const { text, how } = await extractText(img.buf, img.type);
+    if (!text) return res.json({ ok: false, how, fields: {}, note: how === "pdf without a text layer" ? "This PDF is a scan with no text layer — save it as a JPG/PNG and upload that for auto-fill, or type the fields." : "Couldn't read any text from that file." });
+    res.json({ ok: true, how, fields: parseCoa(text) });
+  } catch (e) { console.error("COA extract:", e.message); res.json({ ok: false, fields: {}, note: "Couldn't read that file: " + e.message }); }
+}));
 admin.post("/reports", owner, wrap(async (req, res) => {
   const f = reportFields(req.body || {}); if (!f.product) return bad(res, "Peptide name is required");
   const img = imageFrom(req.body || {});

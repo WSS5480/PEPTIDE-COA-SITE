@@ -1425,6 +1425,8 @@ async function reports() {
     r = r || { results: [["", ""], ["Purity", ""]], lab: "Janoshik", active: true };
     const f = (k, label, v, extra = "") => `<div class="field"><label class="eyebrow">${label}</label><input data-k="${k}" value="${esc(v)}" ${extra}${ro()}></div>`;
     document.getElementById("rform").innerHTML = `<div class="panel"><h2>${r.id ? "Edit report" : "New report"}</h2>
+      <p class="muted">Choose the report file first — the boxes below fill themselves from it (check them against the document, then Save).</p>
+      <div class="field"><label class="eyebrow">Report file (PDF, JPG or PNG, under 10 MB)${r.image ? ` — leave empty to keep the current one (<a href="${esc(r.image)}" target="_blank" rel="noopener">open current</a>)` : ""}</label><input type="file" id="rimg" accept="application/pdf,image/jpeg,image/png,image/webp"${ro()}></div>
       <div class="grid2">${f("product", "Peptide (as listed)", r.product)}${f("strength", "Size, e.g. 10 mg", r.strength)}${f("sample", "Sample line", r.sample)}
       ${f("task", "Task number", r.task)}${f("key", "Unique key", r.key)}${f("verifyUrl", "Verify link (https)", r.verifyUrl)}
       ${f("lab", "Lab", r.lab)}${f("client", "Client", r.client)}${f("manufacturer", "Manufacturer", r.manufacturer)}${f("batch", "Batch", r.batch)}
@@ -1432,13 +1434,30 @@ async function reports() {
       ${f("testsRequested", "Tests requested", r.testsRequested)}</div>
       <div class="field"><label class="eyebrow">Results rows (name, value)</label><div id="rres" class="stack">${(r.results || []).map(([n, v]) => `<div class="row2"><input value="${esc(n)}" placeholder="BPC-157 or Purity" style="flex:1;height:2.4rem;padding:0 .7rem;border:1px solid var(--line-strong);border-radius:8px"${ro()}><input value="${esc(v)}" placeholder="10.95 mg" style="flex:1;height:2.4rem;padding:0 .7rem;border:1px solid var(--line-strong);border-radius:8px"${ro()}></div>`).join("")}</div>
       ${isOwner() ? `<button class="linkbtn" type="button" id="addRow" style="justify-self:start">+ Add a results row</button>` : ""}</div>
-      <div class="field"><label class="eyebrow">Report file (PDF, JPG or PNG, under 10 MB)${r.image ? ` — leave empty to keep the current one (<a href="${esc(r.image)}" target="_blank" rel="noopener">open current</a>)` : ""}</label><input type="file" id="rimg" accept="application/pdf,image/jpeg,image/png,image/webp"${ro()}></div>
       <label class="chk"><input type="checkbox" id="ract"${r.active ? " checked" : ""}${ro()}> Show on the site</label>
       ${isOwner() ? `<div class="row2"><button class="btn solid" id="rsave">Save report</button>${r.id ? `<button class="btn" id="rdel">Delete</button>` : ""}<button class="btn" id="rcancel">Cancel</button></div>` : ""}</div>`;
     const $ = (x) => document.getElementById(x);
     if (!isOwner()) return;
     $("addRow").onclick = () => $("rres").insertAdjacentHTML("beforeend", `<div class="row2"><input placeholder="Name" style="flex:1;height:2.4rem;padding:0 .7rem;border:1px solid var(--line-strong);border-radius:8px"><input placeholder="Value" style="flex:1;height:2.4rem;padding:0 .7rem;border:1px solid var(--line-strong);border-radius:8px"></div>`);
     $("rcancel").onclick = () => { $("rform").innerHTML = ""; };
+    // pick the file → the fields fill themselves from the document (empty boxes only; check them against the report)
+    $("rimg").onchange = async () => {
+      const file = $("rimg").files[0]; if (!file) return;
+      if (!OK_TYPES.includes(file.type)) return;
+      let note = document.getElementById("rfill"); if (!note) { note = document.createElement("p"); note.id = "rfill"; note.className = "muted"; $("rimg").closest(".field").appendChild(note); }
+      note.textContent = `Reading ${file.name}…`;
+      try {
+        const r = await api("/reports/extract", { method: "POST", body: { imageData: await readFile(file) } });
+        if (!r.ok) { note.textContent = r.note || "Couldn't read that file."; return; }
+        const f = r.fields || {}; let filled = 0;
+        document.querySelectorAll("#rform [data-k]").forEach((i) => { const k = i.dataset.k; if (f[k] && !i.value.trim()) { i.value = f[k]; filled++; } });
+        if (f.results && f.results.length) {
+          const rows = [...$("rres").children], blank = rows.every((d) => !(d.querySelectorAll("input")[1] || {}).value);
+          if (blank) { $("rres").innerHTML = ""; f.results.forEach(([n, v]) => $("rres").insertAdjacentHTML("beforeend", `<div class="row2"><input value="${esc(n)}" placeholder="BPC-157 or Purity" style="flex:1;height:2.4rem;padding:0 .7rem;border:1px solid var(--line-strong);border-radius:8px"><input value="${esc(v)}" placeholder="10.95 mg or 99.8%" style="flex:1;height:2.4rem;padding:0 .7rem;border:1px solid var(--line-strong);border-radius:8px"></div>`)); filled += f.results.length; }
+        }
+        note.innerHTML = filled ? `<strong>Filled ${filled} field${filled === 1 ? "" : "s"} from the file</strong> (${r.how === "ocr" ? "read from the picture" : "from the PDF text"}). Check them against the document — the unique key and numbers especially — then Save.` : "Nothing new to fill in from that file (boxes that already had text were left alone).";
+      } catch (x) { note.textContent = "Couldn't read that file: " + (x.message || ""); }
+    };
     if ($("rdel")) $("rdel").onclick = async () => { if (!confirm("Delete this lab report?")) return; await api("/reports/" + r.id, { method: "DELETE" }); reports(); };
     $("rsave").onclick = async () => {
       const body = { active: $("ract").checked, results: [...$("rres").children].map((d) => [...d.querySelectorAll("input")].map((i) => i.value.trim())).filter(([n]) => n) };
