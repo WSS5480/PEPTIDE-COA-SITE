@@ -1943,7 +1943,7 @@ async function staff() {
       <td style="white-space:nowrap"><label class="chk" style="display:block"><input type="checkbox" data-app="store"${!u.apps || u.apps.store !== false ? " checked" : ""}> Peptide store</label><label class="chk" style="display:block"><input type="checkbox" data-app="tracker"${u.apps && u.apps.tracker ? " checked" : ""}> Case tracker</label></td>
       <td><input data-k="pin" inputmode="numeric" placeholder="${u.pin_set ? "Set · type to change" : "4–10 digits"}" style="width:7rem" title="Name + PIN sign-in for both apps"></td>
       <td><input type="checkbox" data-k="active"${u.active ? " checked" : ""}${u.id === me.id ? " disabled" : ""}></td>
-      <td><input data-k="password" type="password" placeholder="Leave blank to keep" autocomplete="new-password" style="min-width:9rem"></td><td><button class="btn" data-save>Save</button></td></tr>`).join("")}</tbody></table></div>
+      <td><input data-k="password" type="password" placeholder="Leave blank to keep" autocomplete="new-password" style="min-width:9rem"></td><td style="white-space:nowrap"><button class="btn" data-save>Save</button>${u.id === me.id ? "" : ` <button class="btn danger" data-del title="Delete this login for good">Delete</button>`}</td></tr>`).join("")}</tbody></table></div>
     <div class="panel"><h2>Add a login</h2><div class="grid2">
       <div class="field"><label class="eyebrow" for="nu-n">Name</label><input id="nu-n"></div>
       <div class="field"><label class="eyebrow" for="nu-e">Email (their login)</label><input id="nu-e" type="email"></div>
@@ -1974,6 +1974,11 @@ async function staff() {
   }).catch(() => {});
   document.getElementById("ut").onchange = (e) => { if (e.target.matches('[data-k="role"]')) { const tr = e.target.closest("tr"), rate = tr.querySelector('[data-k="rate"]'); rate.disabled = e.target.value !== "rep"; if (e.target.value === "rep" && !rate.value) rate.value = "0"; } };
   document.getElementById("ut").onclick = async (e) => {
+    if (e.target.closest("[data-del]")) {
+      const tr = e.target.closest("tr"), nm = tr.querySelector('[data-k="name"]').value;
+      if (!confirm(`Delete ${nm}'s login for good? Their customers and orders stay (unassigned). To keep them on file, untick Active instead.`)) return;
+      await api("/users/" + tr.dataset.id, { method: "DELETE" }); toast("Login deleted"); staff(); return;
+    }
     if (!e.target.closest("[data-save]")) return;
     const tr = e.target.closest("tr"), body = {};
     tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body.active = i.checked; else if (i.dataset.k === "rate") { if (!i.disabled && i.value.trim() !== "") body.rate = i.value.trim(); } else if (i.dataset.k === "pin") { if (i.value.trim()) body.pin = i.value.trim(); } else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });

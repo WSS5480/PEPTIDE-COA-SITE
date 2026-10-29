@@ -2015,6 +2015,17 @@ admin.post("/users", owner, wrap(async (req, res) => {
     pokeTracker(); res.json({ ok: true, id: u.id });
   } catch (e) { return bad(res, "That email already has a login"); }
 }));
+// delete a login for good: their customers and past orders stay (the rep link is cleared), unpaid earned commission blocks it
+admin.delete("/users/:id", owner, wrap(async (req, res) => {
+  const id = intOrNull(req.params.id);
+  const { rows: [u] } = await q("select id, name, role from users where id = $1", [id]);
+  if (!u) return bad(res, "Login not found", 404);
+  if (id === req.user.id) return bad(res, "You can't delete your own login");
+  const owed = (await q("select count(*)::int n from orders where rep_id = $1 and payout_id is null and status in ('paid','shipped','delivered')", [id])).rows[0].n;
+  if (u.role === "rep" && owed) return bad(res, `${u.name} still has ${owed} paid order${owed === 1 ? "" : "s"} with commission not paid out. Pay it out (or set them inactive) first.`);
+  await q("delete from users where id = $1", [id]); // sessions cascade; customers.rep_id / orders.rep_id go null
+  pokeTracker(); res.json({ ok: true });
+}));
 admin.patch("/users/:id", owner, wrap(async (req, res) => {
   const id = intOrNull(req.params.id), b = req.body || {};
   const { rows: [u] } = await q("select id, role, commission_rate from users where id = $1", [id]);
