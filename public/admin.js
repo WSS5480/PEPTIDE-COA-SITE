@@ -1629,6 +1629,7 @@ async function settings(part = "site") {
       <div class="grid2">${t("orderEmail", "Send every order to", "You get a message for each new order and each card payment")}${t("cooEmail", "COO approval emails (case tracker) to", "Where the case tracker sends its facility / surgeon approvals; it uses the sending account below")}</div>
       <label class="chk"><input type="checkbox" id="s-orderEmailOn"${s.orderEmailOn ? " checked" : ""}${ro()}> Email me every order</label>
       <label class="chk"><input type="checkbox" id="s-customerEmailOn"${s.customerEmailOn ? " checked" : ""}${ro()}> Email the customer a confirmation (and a receipt when they pay by card)</label>
+      <label class="chk"><input type="checkbox" id="s-repEmailOn"${s.repEmailOn !== false ? " checked" : ""}${ro()}> Email the customer's sales rep every order and update (with their commission on it)</label>
       <h2 style="font-size:1.05rem;margin-top:.4rem">Sending account</h2>
       <p class="muted">How the store sends. <strong>Microsoft 365 app</strong> is the one to use here: no mailbox password, unaffected by MFA, and it can send straight from the shared noreply@ address. (The store's host blocks plain mail-server connections on its free plan, so the "mailbox login" option only works on a paid host plan and without MFA.)</p>
       <div class="grid2">
@@ -1739,7 +1740,7 @@ async function settings(part = "site") {
     const v = (k) => document.getElementById("s-" + k) || { value: Array.isArray(s[k]) ? s[k].join("\n") : (s[k] ?? ""), checked: !!s[k] }; // email fields live on the Email & approvals page: keep what's saved
     const body = {};
     ["brand", "tagline", "contact", "distributorOf", "brandUrl", "paymentInstructions", "priceNote", "shippingLabel", "shippingNote", "fedexAccount", "deliveryLabel", "deliveryNote", "orderEmail", "cooEmail"].forEach((k) => { body[k] = v(k).value; });
-    ["storeOpen", "pricesRequireLogin", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn"].forEach((k) => { body[k] = v(k).checked; });
+    ["storeOpen", "pricesRequireLogin", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn", "repEmailOn"].forEach((k) => { body[k] = v(k).checked; });
     body.minAge = v("minAge").value;
     const cents = (id) => Math.max(0, Math.round(parseFloat(String(v(id).value).replace(/[$,]/g, "") || 0) * 100));
     body.minOrderCents = cents("minOrder"); body.shippingCents = cents("shippingAmt"); body.shippingFreeOverCents = cents("shippingFree");
@@ -1765,7 +1766,7 @@ async function settings(part = "site") {
     const p = prov.value;
     return { mailMode: p === "resend" ? "resend" : p === "graph" ? "graph" : p ? "smtp" : "", mailHost: v("mailHost").value, mailPort: v("mailPort").value, mailUser: v("mailUser").value, mailPass: v("mailPass").value, mailFrom: v("mailFrom").value, resendKey: v("resendKey").value,
       graphTenant: v("graphTenant").value, graphClient: v("graphClient").value, graphSecret: v("graphSecret").value,
-      orderEmail: v("orderEmail").value, cooEmail: v("cooEmail").value, orderEmailOn: v("orderEmailOn").checked, customerEmailOn: v("customerEmailOn").checked };
+      orderEmail: v("orderEmail").value, cooEmail: v("cooEmail").value, orderEmailOn: v("orderEmailOn").checked, customerEmailOn: v("customerEmailOn").checked, repEmailOn: v("repEmailOn").checked };
   };
   if (document.getElementById("mailSave")) document.getElementById("mailSave").onclick = async () => {
     const b = mailBody();

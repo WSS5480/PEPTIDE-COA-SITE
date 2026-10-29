@@ -322,6 +322,7 @@ const DEFAULT_SETTINGS = {
   cooEmail: "", // the case tracker's approval emails go here (managed from this admin)
   orderEmailOn: true,
   customerEmailOn: true,
+  repEmailOn: true, // the customer's sales rep gets every order and update too
   // The account the store sends from (set under Site settings → Order emails). mailMode "" = use the host's settings, if any.
   mailMode: "",            // "" | "smtp" | "resend"
   mailHost: "smtp.office365.com",

@@ -533,7 +533,7 @@ async function notifyOrder(orderId, kind, extra = {}) {
   const changes = Array.isArray(extra.changes) ? extra.changes.filter(Boolean) : [];
   const by = extra.who || "the office";
   const paidDiff = paid && (o.paid_cents ?? o.total_cents) !== o.total_cents ? `Paid ${$(o.paid_cents ?? o.total_cents)} by card; the total is now ${$(o.total_cents)} (${o.total_cents > (o.paid_cents ?? 0) ? "balance due " + $(o.total_cents - (o.paid_cents ?? 0)) : "refund " + $((o.paid_cents ?? 0) - o.total_cents)}).` : "";
-  if (s.orderEmailOn && isEmail(s.orderEmail || "") && kind !== "shipped") {
+  if (!extra.repOnly && s.orderEmailOn && isEmail(s.orderEmail || "") && kind !== "shipped") {
     const head = kind === "paid" ? "PAID" : kind === "unpaid" ? "UNPAID card" : kind === "updated" ? "UPDATED" : kind === "cancelled" ? "CANCELLED" : "New";
     const subject = `${head} order ${o.number} · ${$(o.total_cents)} · ${o.name} · ${delivery ? "Delivery" : "Ship"}`;
     const title = kind === "paid" ? `Payment received · order ${o.number}` : kind === "unpaid" ? `Card payment not finished · order ${o.number}` : kind === "updated" ? `Order ${o.number} updated` : kind === "cancelled" ? `Order ${o.number} cancelled` : `New order ${o.number}`;
@@ -563,7 +563,38 @@ async function notifyOrder(orderId, kind, extra = {}) {
     if (!r.ok) console.error(`Order email to ${s.orderEmail} failed: ${r.error}`);
     results.push(r);
   }
-  if (s.customerEmailOn && isEmail(o.email) && kind !== "unpaid") {
+  // the customer's sales rep: every order and every change on it, with their commission on it
+  const repFor = rep && rep.email ? rep : o.customer_id ? (await q("select u.name, u.email from customers c join users u on u.id = c.rep_id where c.id = $1 and u.active", [o.customer_id])).rows[0] : null;
+  if (s.repEmailOn !== false && repFor && isEmail(repFor.email) && kind !== "unpaid") {
+    const comm = o.rep_id && o.commission_rate !== null && o.commission_rate !== undefined ? Math.round((o.subtotal_cents - o.discount_cents) * o.commission_rate / 100) : null;
+    const commLine = kind === "cancelled" ? "No commission (cancelled)." : comm !== null ? `Your commission on this order: ${$(comm)}${paid ? " (earned — the order is paid)" : " (pending until the order is paid)"}` : "";
+    const head = kind === "paid" ? "Paid" : kind === "updated" ? "Updated" : kind === "cancelled" ? "Cancelled" : kind === "shipped" ? (o.status === "delivered" ? "Delivered" : "Shipped") : "New";
+    const subject = `${head} order ${o.number} · ${o.name} · ${$(o.total_cents)}`;
+    const intro = kind === "paid" ? `${o.name} paid ${$(o.paid_cents ?? o.total_cents)} — your commission on this order is now earned.`
+      : kind === "updated" ? `${by} updated ${o.name}'s order. Here is how it stands now.`
+      : kind === "cancelled" ? `${by} cancelled ${o.name}'s order.`
+      : kind === "shipped" ? `${o.name}'s order ${o.status === "delivered" ? "was delivered" : "has shipped"}.`
+      : /^Rep/.test(o.placed_by || "") ? `The order you placed for ${o.name} is in.` : `${o.name} placed an order on the store.`;
+    const replink = BASE_URL ? `${BASE_URL}/rep#orders` : "";
+    const text = [`Hi ${repFor.name},`, "", intro, "", `Order number: ${o.number}`, `Customer: ${o.name}${o.phone ? ` · ${o.phone}` : ""}`, changes.length ? `
+What changed:
+${changes.map((c) => "- " + c).join("\n")}` : "", "", "ITEMS:", ...lines, "", ...totalsText, "", commLine, replink ? `
+Open the rep app: ${replink}` : "", "", `— ${s.brand}`].filter((x) => x !== "").join("\n");
+    const html = emailHtml(s, {
+      eyebrow: "Your customer", kicker: head + " order", title: `Order ${o.number}`, preheader: `${o.name} · ${$(o.total_cents)}`,
+      badge: kind === "paid" ? { text: "Paid", tone: "ok" } : kind === "cancelled" ? { text: "Cancelled", tone: "bad" } : kind === "updated" ? { text: "Updated", tone: "warn" } : kind === "shipped" ? { text: head, tone: "ok" } : { text: "New order", tone: "ok" },
+      intro: `Hi ${escHtml(repFor.name)}, ${escHtml(intro.charAt(0).toLowerCase() + intro.slice(1))}`,
+      facts: [["Customer", `${escHtml(o.name)}${o.phone ? ` · ${escHtml(o.phone)}` : ""}`], ["Status", escHtml(o.status)], ...(commLine ? [["Commission", escHtml(commLine)]] : [])],
+      address: { label: delivery ? "Deliver to" : "Ship to", lines: addrLines }, items, totals: totalRows,
+      note: changes.length ? { label: kind === "cancelled" ? "Reason" : "What changed", text: changes.join(" · ") } : null,
+      button: replink && kind !== "cancelled" ? { text: "Open the rep app", url: replink } : null,
+      footer: `Sent by the ${escHtml(s.brand)} store because ${escHtml(o.name)} is your customer. An admin can turn these off under Email & approvals.`
+    });
+    const r = await mail.send({ to: repFor.email, subject, text, html }, s);
+    if (!r.ok) console.error(`Rep order email to ${repFor.email} failed: ${r.error}`);
+    results.push(r);
+  }
+  if (!extra.repOnly && s.customerEmailOn && isEmail(o.email) && kind !== "unpaid") {
     const byRep = /^Rep/.test(o.placed_by || "");
     const delivered = kind === "shipped" && o.status === "delivered";
     const track = trackingUrl(o.carrier, o.tracking);
@@ -954,6 +985,11 @@ admin.patch("/orders/:id", wrap(async (req, res) => {
   // "Email the customer about this update": shipped/delivered get the shipping email, anything else the "order updated" one
   const visible = log.filter((t) => t !== "Internal note updated");
   let emailed = null;
+  if (!b.notify && visible.length && b.status && b.status !== o.status) {
+    // the customer isn't being emailed, but the rep still hears about a status change on their customer's order
+    const rk = ["shipped", "delivered"].includes(b.status) ? "shipped" : b.status === "paid" ? "paid" : b.status === "cancelled" ? "cancelled" : "updated";
+    notifyOrder(id, rk, { changes: visible, who: req.user.name || req.user.email, repOnly: true }).catch((e) => console.error("Rep order email failed:", e.message));
+  }
   if (b.notify && visible.length) {
     const kind = b.status && ["shipped", "delivered"].includes(b.status) && b.status !== o.status ? "shipped" : "updated";
     const results = await notifyOrder(id, kind, { changes: visible, who: req.user.name || req.user.email });
@@ -2068,9 +2104,12 @@ app.get(["/sso", "/admin/sso", "/rep/sso"], wrap(async (req, res) => { // in-sco
   const land = (to) => res.type("html").send(`<!doctype html><meta charset="utf-8"><title>Signing in…</title><meta http-equiv="refresh" content="0;url=${escHtml(to)}"><script>location.replace(${JSON.stringify(to)})</script>`);
   if (!t || !t.sso) return land("/admin?sso=expired");
   const email = String(t.email || "").toLowerCase();
-  const { rows: [u] } = email ? await q("select * from users where lower(email) = $1 and active", [email]) : { rows: [] };
-  if (!u) return land("/admin?sso=nouser&name=" + encodeURIComponent(t.name || ""));
-  if (!appsOf(u).store) return land("/admin?sso=noapp&name=" + encodeURIComponent(u.name || ""));
+  let { rows: [u] } = email ? await q("select * from users where lower(email) = $1 and active", [email]) : { rows: [] };
+  // the tracker's own owner login (COO PIN) has no store email: it is the same office, so it comes in as the store's admin account
+  if (!u && t.role === "owner") ({ rows: [u] } = await q("select * from users where role = 'owner' and active order by id limit 1"));
+  const miss = (why, name) => land("/admin?" + (/[?&]embed=1/.test(next) ? "embed=1&" : "") + "sso=" + why + "&name=" + encodeURIComponent(name || "") + (next.includes("#") ? next.slice(next.indexOf("#")) : "")); // keep the embed + page so a hosted pane shows the message, not a whole admin
+  if (!u) return miss("nouser", t.name);
+  if (!appsOf(u).store) return miss("noapp", u.name);
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '1 day')", [token, u.id]); // hop-in sessions are short; the switch mints a fresh one each time
   res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=${14 * 86400}`);
