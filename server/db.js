@@ -305,6 +305,9 @@ const DEFAULT_SETTINGS = {
   vialLogoV: 1,   // 1 = the bundled brand mark; uploads bump it
   siteLogoV: 1,   // header logo: 1 = bundled brand logo, 0 = show the store name as text
   bannerScroll: true,
+  bannerTone: "navy",   // navy | teal | gold | red
+  bannerUntil: "",      // YYYY-MM-DD: the banner stops on its own after this day ("" = runs until halted)
+  bannerLink: "",       // optional: tapping the banner goes here
   heroEyebrow: "Third-party tested",
   headline: "Research peptides with the lab report on every vial",
   storeOpen: true,

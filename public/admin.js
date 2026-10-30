@@ -73,7 +73,7 @@ function drawLogin(msg) {
 // [key, label, who]: "all" = owner, staff and sales reps · "team" = owner and staff · "owner" · "ownerrep" = owner and reps. "line" draws the divider:
 // sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
 const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["line"],
-  ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["line2"],
+  ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["promo", "Promo banner", "team"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["line2"],
   // below the second line: the things you reach from either app (the case tracker links here too)
   ["staff", "Team logins", "owner"], ["setup", "Email & approvals", "owner"], ["geo", "Geofencing", "owner"], ["apps", "Apps & downloads", "all"], ["howto", "How to", "all"], ["account", "My account", "all"]];
 const canSee = (who) => who === "all" || (who === "owner" && isOwner()) || (who === "team" && !isRep()) || (who === "ownerrep" && (isOwner() || isRep()));
@@ -105,7 +105,7 @@ async function go(v, id, opts = {}) {
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  await ({ dashboard, orders, neworder, fill, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps, geo, howto }[v] || dashboard)();
+  await ({ dashboard, orders, neworder, fill, promo, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps, geo, howto }[v] || dashboard)();
   if (v === "dashboard" && document.getElementById("hubKpi")) fillHubKpi();
   if (!opts.keepScroll) window.scrollTo(0, 0);
 }
@@ -170,6 +170,39 @@ function fillHubKpi() {
 }
 /* ---------- orders ---------- */
 let oFilter = { status: "", q: "" };
+/* ---------- promo banner: admins and managers ---------- */
+async function promo() {
+  if (isRep()) return dashboard();
+  const $ = (x) => document.getElementById(x);
+  const b = await api("/banner");
+  const TONES = [["navy", "Navy", "#0f1b33", "#fff"], ["teal", "Teal", "#0f7c8c", "#fff"], ["gold", "Gold", "#f4c542", "#2b2100"], ["red", "Red", "#b42318", "#fff"]];
+  const live = b.on && b.text && (!b.until || b.until >= new Date().toLocaleDateString("en-CA"));
+  pane().innerHTML = `<header><h1>Promo banner</h1></header>
+    <div class="panel" data-nofold><div class="row2" style="justify-content:space-between;align-items:center"><h2 style="margin:0">Status: ${live ? '<span class="pill st-shipped">Running</span>' : b.on && b.until ? '<span class="pill st-cancelled">Ended</span>' : '<span class="pill">Off</span>'}</h2>
+      ${live ? '<button class="btn danger" type="button" id="bnHalt">Halt banner</button>' : '<button class="btn solid" type="button" id="bnGo">Start banner</button>'}</div>
+      <p class="muted">The strip across the top of every store page. Admins and managers can change or stop it any time; changes show on the store right away.</p></div>
+    <div class="panel" data-nofold><h2>Banner</h2>
+      <div class="field"><label class="eyebrow" for="bnText">Banner text</label><input id="bnText" maxlength="300" value="${esc(b.text)}" placeholder="e.g. 15% off BPC-157 this week · code FALL15"></div>
+      <div class="row2" style="flex-wrap:wrap;align-items:end">
+        <div class="field"><span class="eyebrow">Color</span><div class="seg" id="bnTone">${TONES.map(([k, l, bg, fg]) => `<button type="button" data-tone="${k}"${b.tone === k ? ' class="on"' : ""} style="background:${bg};color:${fg}">${l}</button>`).join("")}</div></div>
+        <label class="chk"><input type="checkbox" id="bnScroll"${b.scroll ? " checked" : ""}> Scroll the text</label>
+        <div class="field" style="max-width:11rem"><label class="eyebrow" for="bnUntil">Run until (optional)</label><input id="bnUntil" type="date" value="${esc(b.until)}"></div>
+        <div class="field" style="min-width:14rem;flex:1"><label class="eyebrow" for="bnLink">Link when tapped (optional)</label><input id="bnLink" value="${esc(b.link)}" placeholder="/ or https://…"></div></div>
+      <p class="eyebrow" style="margin-top:.8rem">Preview</p><div id="bnPrev" style="border-radius:10px;overflow:hidden"></div>
+      <div class="row2" style="margin-top:.8rem"><button class="btn solid" type="button" id="bnSave">Save${live ? "" : " (stays off)"}</button><span class="muted">Leave "Run until" blank to keep it up until you halt it.</span></div></div>`;
+  let tone = b.tone || "navy";
+  const vals = () => ({ text: $("bnText").value.trim(), scroll: $("bnScroll").checked, tone, until: $("bnUntil").value, link: $("bnLink").value.trim() });
+  const prev = () => { const v = vals(), [, , bg, fg] = TONES.find((t) => t[0] === v.tone) || TONES[0], txt = v.text || "Your banner text";
+    $("bnPrev").innerHTML = `<div style="background:${bg};color:${fg};font-size:.84rem;font-weight:600;padding:.5rem 1rem;white-space:nowrap;overflow:hidden">${v.scroll ? `<div style="display:inline-block;animation:marquee 18s linear infinite">${(`<span style="padding:0 2rem">${esc(txt)}</span>`).repeat(4)}</div>` : `<div style="text-align:center;white-space:normal">${esc(txt)}</div>`}</div>`; };
+  prev();
+  if (!document.getElementById("mqkf")) { const st = document.createElement("style"); st.id = "mqkf"; st.textContent = "@keyframes marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}"; document.head.appendChild(st); }
+  pane().oninput = prev;
+  $("bnTone").onclick = (e) => { const t = e.target.closest("[data-tone]"); if (!t) return; tone = t.dataset.tone; $("bnTone").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === t)); prev(); };
+  const save = async (on, msg) => { try { await api("/banner", { method: "PUT", body: { ...vals(), on } }); toast(msg); paneDirty = false; promo(); } catch (e) {} };
+  $("bnSave").onclick = () => save(live, live ? "Banner updated" : "Saved (banner is off)");
+  if ($("bnGo")) $("bnGo").onclick = () => { if (!vals().text) { $("bnText").focus(); return toast("Type the banner text first"); } if (vals().until && vals().until < new Date().toLocaleDateString("en-CA")) return toast("The Run until date has passed"); save(true, "Banner is live on the store"); };
+  if ($("bnHalt")) $("bnHalt").onclick = () => save(false, "Banner halted");
+}
 /* ---------- fill orders: admins and managers pick, pack and ship ---------- */
 let fillTab = "tofill";
 async function fill() {
@@ -1833,7 +1866,7 @@ async function settings(part = "site") {
     const cents = (id) => Math.max(0, Math.round(parseFloat(String(v(id).value).replace(/[$,]/g, "") || 0) * 100));
     body.minOrderCents = cents("minOrder"); body.shippingCents = cents("shippingAmt"); body.shippingFreeOverCents = cents("shippingFree");
     ["footerNotice", "disclaimers", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"].forEach((k) => { body[k] = v(k).value.split("\n").map((x) => x.trim()).filter(Boolean); });
-    body.announcementOn = false;
+    // the promo banner has its own page (Promo banner); Site settings leaves it alone
     if (!v("shippingOn").checked && !v("deliveryOn").checked && !confirm("Neither shipping nor delivery is offered: checkout will say shipping is confirmed with the order. Save anyway?")) return;
     await api("/settings", { method: "PUT", body }); toast("Settings saved"); paneDirty = false;
   };

@@ -21,7 +21,10 @@ let cat = "";
 let coaOnly = !!store.get("coaOnly");
 /* top banner: plain, or scrolling right to left when bannerScroll is on */
 function banner(el, S) {
-  el.hidden = false;
+  if (!el) return;
+  if (!S.announcementOn || !S.announcement) { el.hidden = true; el.innerHTML = ""; return; }
+  el.hidden = false; el.className = "announce tone-" + (S.bannerTone || "navy");
+  if (S.bannerLink) { el.classList.add("linked"); el.onclick = () => { location.href = S.bannerLink; }; el.setAttribute("role", "link"); el.tabIndex = 0; } else { el.onclick = null; el.removeAttribute("role"); }
   if (!S.bannerScroll) { el.textContent = S.announcement; return; }
   const item = `<span>${esc(S.announcement)}</span>`;
   el.classList.add("scroll");
@@ -526,6 +529,7 @@ let first = true;
 async function load() {
   const res = await fetch("/api/store"); const j = await res.json();
   S = j.settings; PRODUCTS = j.products; REPORTS = j.reports; FUL = j.fulfillment || []; DOCS = j.documents || [];
+  banner(document.getElementById("announce"), S);
   PRICING = j.pricing || null; HIDDEN = !!j.pricesHidden;
   if (first) {
     first = false;
