@@ -513,17 +513,17 @@ async function customers() {
     document.getElementById("pinHide").onclick = () => { document.getElementById("pinShow").innerHTML = ""; };
     window.scrollTo(0, 0);
   };
-  const askPin = (name) => new Promise((done) => {
-    document.getElementById("pinShow").innerHTML = `<div class="panel"><h2>PIN for ${esc(name)}</h2>
-      <div class="row2" style="align-items:end"><div class="field" style="max-width:16rem"><label class="eyebrow" for="pinIn">Type a 6 to 8 digit PIN, or leave blank to make one up</label><input id="pinIn" inputmode="numeric" maxlength="8" autocomplete="off"></div>
+  const askPin = (name, err) => new Promise((done) => {
+    document.getElementById("pinShow").innerHTML = `<div class="panel"><h2>PIN for ${esc(name)}</h2>${err ? `<p class="err" style="color:#b91c1c;font-weight:600">${esc(err)}</p>` : ""}
+      <div class="row2" style="align-items:end"><div class="field" style="max-width:16rem"><label class="eyebrow" for="pinIn">Type a 4 to 8 digit PIN, or leave blank to make one up</label><input id="pinIn" inputmode="numeric" maxlength="8" autocomplete="off"${err ? ' style="border-color:#b91c1c"' : ""}></div>
       <button class="btn solid" type="button" id="pinOk">Save PIN</button><button class="btn" type="button" id="pinNo">Cancel</button></div></div>`;
     window.scrollTo(0, 0); document.getElementById("pinIn").focus();
     document.getElementById("pinOk").onclick = () => done(document.getElementById("pinIn").value.trim());
     document.getElementById("pinNo").onclick = () => { document.getElementById("pinShow").innerHTML = ""; done(null); };
   });
-  const givePin = async (id, name) => {
-    const typed = await askPin(name); if (typed === null) return;
-    if (typed && !/^\d{6,8}$/.test(typed)) { toast("Use 6 to 8 digits"); return givePin(id, name); }
+  const givePin = async (id, name, err) => {
+    const typed = await askPin(name, err); if (typed === null) return;
+    if (typed && !/^\d{4,8}$/.test(typed)) { return givePin(id, name, "A customer PIN is 4 to 8 digits — " + typed.length + " typed. Try again."); }
     try { const r = await api(`/customers/${id}/pin`, { method: "POST", body: { pin: typed } }); showPin(name, r.pin); load(); } catch (e) { /* toast shown */ }
   };
   let t; document.getElementById("cq").oninput = (e) => { clearTimeout(t); t = setTimeout(() => { term = e.target.value; load(); }, 250); };
@@ -560,7 +560,7 @@ async function customers() {
       <div class="grid2">${f("nc-1", "Street address")}${f("nc-2", "Apt, suite")}${f("nc-c", "City")}${f("nc-s", "State")}${f("nc-z", "ZIP")}</div>
       <div class="grid2"${isRep() ? " hidden" : ""}><div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-rep">Sales rep (for commission)</label><select id="nc-rep"><option value="">— none —</option>${activeReps.map((r) => `<option value="${r.id}">${esc(r.name)} · ${r.commission_rate}%</option>`).join("")}</select></div>
       <div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-mk">Markup over our cost</label><div class="row2" style="flex-wrap:nowrap"><select id="nc-mk" style="flex:1"><option value="">Store prices</option>${MK.map((m) => `<option value="${m}">+${m}%</option>`).join("")}<option value="custom">Custom…</option></select><input id="nc-mkc" inputmode="decimal" placeholder="%" style="width:5rem" hidden></div></div></div>
-      <label class="chk"${isRep() ? " hidden" : ""}><input type="checkbox" id="nc-pin"${isRep() ? "" : " checked"}> Give them a PIN now</label>
+      <div class="row2" style="align-items:end"${isRep() ? " hidden" : ""}><label class="chk"><input type="checkbox" id="nc-pin" checked> Give them a PIN now</label><div class="field" style="max-width:14rem"><label class="eyebrow" for="nc-pinval">Their PIN · 4 to 8 digits (blank = make one up)</label><input id="nc-pinval" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="e.g. 4455"></div></div>
       <div class="row2"><button class="btn solid" type="button" id="ncSave">Add customer</button><button class="btn" type="button" id="ncCancel">Cancel</button></div></div>`;
     document.getElementById("ncCancel").onclick = () => { box.innerHTML = ""; };
     document.getElementById("nc-mk").onchange = (e) => { const c = document.getElementById("nc-mkc"); c.hidden = e.target.value !== "custom"; if (!c.hidden) c.focus(); };
@@ -568,10 +568,12 @@ async function customers() {
       const g = (x) => document.getElementById(x).value;
       const mk = g("nc-mk") === "custom" ? g("nc-mkc") : g("nc-mk");
       if (g("nc-mk") === "custom" && !(parseFloat(mk) >= 0)) return toast("Enter the custom markup as a percent, like 35");
-      const r = await api("/customers", { method: "POST", body: { name: g("nc-n"), email: g("nc-e"), phone: g("nc-p"), repId: g("nc-rep") || null, markup: mk, address: { line1: g("nc-1"), line2: g("nc-2"), city: g("nc-c"), state: g("nc-s"), zip: g("nc-z") } } });
-      const wantPin = document.getElementById("nc-pin").checked, name = g("nc-n");
+      const wantPin = !isRep() && document.getElementById("nc-pin").checked, name = g("nc-n"), typedPin = wantPin ? g("nc-pinval").trim() : "";
+      if (typedPin && !/^\d{4,8}$/.test(typedPin)) { const i = document.getElementById("nc-pinval"); i.focus(); i.style.borderColor = "#b91c1c"; return toast("Customer PINs are 4 to 8 digits"); }
+      const r = await api("/customers", { method: "POST", body: { name: g("nc-n"), email: g("nc-e"), phone: g("nc-p"), repId: g("nc-rep") || null, markup: mk, address: { line1: g("nc-1"), line2: g("nc-2"), city: g("nc-c"), state: g("nc-s"), zip: g("nc-z") }, givePin: wantPin, pin: typedPin } });
       box.innerHTML = ""; toast("Customer added"); await load();
-      if (wantPin) givePin(r.id, name);
+      if (r.pin) showPin(name, r.pin); // saved in the same step: nothing else to tap
+      else if (r.pinError) { toast(r.pinError); givePin(r.id, name); }
     };
   };
   document.getElementById("ct").onclick = async (e) => {

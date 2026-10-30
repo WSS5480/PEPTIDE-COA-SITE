@@ -1248,22 +1248,30 @@ admin.post("/customers", (req, res, next) => (isRep(req) ? next() : owner(req, r
   const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash, rep_id, markup) values ($1,$2,$3,$4,$5,$6,$7) returning id",
     [email || null, str(b.name, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId, b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup)]);
   if (email) await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
-  res.json({ ok: true, id: c.id });
+  let pin = null;
+  if (!isRep(req) && b.givePin) { try { pin = await assignCustomerPin(c.id, b.pin); } catch (e) { return res.json({ ok: true, id: c.id, pinError: e.message }); } } // the customer is saved either way; the PIN can be given from their row
+  res.json({ ok: true, id: c.id, pin });
 }));
-admin.post("/customers/:id/pin", owner, wrap(async (req, res) => {
-  const id = intOrNull(req.params.id), st = await pinState();
-  let pin = String(req.body?.pin || "").trim();
-  const taken = async (p) => (await q("select 1 from customers where access_pin_key = $1 and id <> $2", [customerPinKey(st, p), id])).rows.length > 0 || (st.hash && (await bcrypt.compare(p, st.hash)));
+// give a customer a PIN (typed, 4 to 8 digits, or made up): returns the pin or throws a message
+async function assignCustomerPin(id, wanted) {
+  const st = await pinState();
+  let pin = String(wanted || "").replace(/\D/g, "");
+  const taken = async (p) => (await q("select 1 from customers where access_pin_key = $1 and id <> $2", [customerPinKey(st, p), id])).rows.length > 0 || (st.hash && (await bcrypt.compare(p, st.hash))) || !!(await teamByPin(p));
   if (pin) {
-    if (!/^\d{6,8}$/.test(pin)) return bad(res, "Customer PINs must be 6 to 8 digits.");
-    if (await taken(pin)) return bad(res, "That PIN is already in use. Pick another.");
+    if (!/^\d{4,8}$/.test(pin)) throw new Error("Customer PINs are 4 to 8 digits.");
+    if (await taken(pin)) throw new Error("That PIN is already in use (another customer, the store PIN or a team login). Pick another.");
   } else {
     do { pin = String(crypto.randomInt(100000, 1000000)); } while (await taken(pin));
   }
   const { rowCount } = await q("update customers set access_pin_key = $1, pin_version = pin_version + 1, pin_set_at = now() where id = $2", [customerPinKey(st, pin), id]);
-  if (!rowCount) return bad(res, "Customer not found", 404);
+  if (!rowCount) throw new Error("Customer not found");
   await q("delete from customer_sessions where customer_id = $1", [id]);
   pinCache.at = 0;
+  return pin;
+}
+admin.post("/customers/:id/pin", owner, wrap(async (req, res) => {
+  const id = intOrNull(req.params.id);
+  let pin; try { pin = await assignCustomerPin(id, req.body?.pin); } catch (e) { return bad(res, e.message, e.message === "Customer not found" ? 404 : 400); }
   res.json({ ok: true, pin }); // shown once to the owner so it can be given to the customer
 }));
 admin.delete("/customers/:id/pin", owner, wrap(async (req, res) => {
