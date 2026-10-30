@@ -167,7 +167,7 @@ app.post("/api/pin", limit("pin", 10, 15 * 60 * 1000), wrap(async (req, res) => 
   if (st.hash && (await bcrypt.compare(pin, st.hash))) { await endCustomerSession(req, res); res.append("Set-Cookie", passCookie(pinToken(st))); return res.json({ ok: true }); }
   // a customer's own PIN unlocks the site and signs them into their account
   const { rows: [c] } = await q("select id, pin_version from customers where access_pin_key = $1 and active", [customerPinKey(st, pin)]);
-  if (!c) { const u = await teamByPin(pin); if (!u) return bad(res, "Wrong PIN.", 401); await endCustomerSession(req, res); await teamSignIn(res, u); if (st.hash) res.append("Set-Cookie", passCookie(pinToken(st))); return res.json({ ok: true }); }
+  if (!c) { const u = await teamByPin(pin); if (!u) return bad(res, "Wrong PIN.", 401); await endCustomerSession(req, res); await teamSignIn(res, u); res.append("Set-Cookie", HOUSE_COOKIE(houseTok(st), 30 * 86400)); if (st.hash) res.append("Set-Cookie", passCookie(pinToken(st))); return res.json({ ok: true }); }
   await q("update customers set pin_used_at = now() where id = $1", [c.id]);
   res.append("Set-Cookie", passCookie(customerPass(st, c.id, c.pin_version)));
   await startCustomerSession(res, c.id);
@@ -694,13 +694,14 @@ Open the rep app: ${replink}` : "", "", `— ${s.brand}`].filter((x) => x !== ""
 /* ---------- customer accounts ---------- */
 // The store's own shared PIN (Site settings → Site PIN, SITE_PIN on the host) also works in the "Sign in for pricing" box:
 // it signs the office in without a customer account — store prices, cart open, name and email asked at checkout.
+const houseTok = (st) => (st.hash ? pinToken(st) : hmac(st.secret, "house-office"));
 const HOUSE_COOKIE = (v, age) => `hpin=${v}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${SECURE ? "; Secure" : ""}`;
 async function houseFrom(req) {
   const ck = parseCookies(req.headers.cookie), t = ck.hpin;
-  if (!t && ck.sid) { const { rows } = await q("select 1 from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [ck.sid]); if (rows.length) return true; } // signed in to the admin / rep app = the office
+  // only a sign-in made in the store itself counts (shared PIN or a team PIN typed there); being signed in to the admin / rep app
+  // or the tracker no longer signs the store in by itself, so "Sign out" in the store sticks
   if (!t) return false;
-  const st = await pinState();
-  return !!st.hash && sameStr(t, pinToken(st));
+  return sameStr(t, houseTok(await pinState()));
 }
 async function customerFrom(req) {
   const token = parseCookies(req.headers.cookie).cid;
@@ -782,7 +783,7 @@ app.post("/api/account/pin", jsonOnly, limit("cpin", 10, 15 * 60 * 1000), wrap(a
   if (!c) {
     const u = await teamByPin(pin); // a team member's own PIN: the office, signed into the admin / rep app as well
     if (!u) return bad(res, "That PIN isn't right. Contact us if you need a new one.", 401);
-    await endCustomerSession(req, res); await teamSignIn(res, u);
+    await endCustomerSession(req, res); await teamSignIn(res, u); res.append("Set-Cookie", HOUSE_COOKIE(houseTok(st), 30 * 86400));
     if (st.hash) res.append("Set-Cookie", `spin=${pinToken(st)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`);
     return res.json({ ok: true, house: true, team: { name: u.name, role: u.role } });
   }
