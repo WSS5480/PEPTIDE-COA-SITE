@@ -428,7 +428,7 @@ async function promo() {
   if (isRep()) return dashboard();
   const $ = (x) => document.getElementById(x);
   const b = await api("/banner");
-  const TONES = [["navy", "Navy", "#0f1b33", "#fff"], ["teal", "Teal", "#0f7c8c", "#fff"], ["gold", "Gold", "#f4c542", "#2b2100"], ["red", "Red", "#b42318", "#fff"]];
+  const TONES = [["navy", "360 Medical blue", "#0b4d96", "#fff"], ["teal", "Teal", "#0f7c8c", "#fff"], ["gold", "Gold", "#f4c542", "#2b2100"], ["red", "Red", "#b42318", "#fff"]];
   const live = b.on && b.text && (!b.until || b.until >= new Date().toLocaleDateString("en-CA"));
   pane().innerHTML = `<header><h1>Promo banner</h1></header>
     <div class="panel" data-nofold><div class="row2" style="justify-content:space-between;align-items:center"><h2 style="margin:0">Status: ${live ? '<span class="pill st-shipped">Running</span>' : b.on && b.until ? '<span class="pill st-cancelled">Ended</span>' : '<span class="pill">Off</span>'}</h2>
