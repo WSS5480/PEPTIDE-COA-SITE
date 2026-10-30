@@ -29,6 +29,7 @@ function banner(el, S) {
   const item = `<span>${esc(S.announcement)}</span>`;
   el.classList.add("scroll");
   el.innerHTML = `<div class="mq">${item.repeat(6)}</div><div class="mq" aria-hidden="true">${item.repeat(6)}</div>`;
+  el.querySelectorAll(".mq").forEach((m) => { m.style.animationDuration = (S.bannerSpeed || 30) + "s"; });
   el.setAttribute("aria-label", S.announcement);
 }
 let S = {}, PRODUCTS = [], REPORTS = [], FUL = [], DOCS = [];

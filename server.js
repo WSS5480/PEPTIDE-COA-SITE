@@ -48,7 +48,7 @@ function publicSettings(s) {
   const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy",
     "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote", "pricesRequireLogin", "showSoldOut"];
   // card payments only work once the Stripe key is on the host, so the store is told the effective state
-  const out = { ...Object.fromEntries(keys.map((k) => [k, s[k]])), cardPayments: !!(s.cardPayments && stripe), bannerTone: s.bannerTone || "navy", bannerLink: s.bannerLink || "" };
+  const out = { ...Object.fromEntries(keys.map((k) => [k, s[k]])), cardPayments: !!(s.cardPayments && stripe), bannerTone: s.bannerTone || "navy", bannerLink: s.bannerLink || "", bannerSpeed: Math.min(90, Math.max(6, Number(s.bannerSpeed) || 30)) };
   // the promo banner stops on its own after its end date (Central time)
   if (s.bannerUntil && new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) > s.bannerUntil) out.announcementOn = false;
   return out;
@@ -972,14 +972,14 @@ admin.post("/orders/:id/email", wrap(async (req, res) => {
   res.json({ ok: true, sent: results.length });
 }));
 /* ---------- promo banner (admins and managers) ---------- */
-admin.get("/banner", wrap(async (req, res) => { const s = await getSettings(); res.json({ text: s.announcement || "", on: !!s.announcementOn, scroll: s.bannerScroll !== false, tone: s.bannerTone || "navy", until: s.bannerUntil || "", link: s.bannerLink || "" }); }));
+admin.get("/banner", wrap(async (req, res) => { const s = await getSettings(); res.json({ text: s.announcement || "", on: !!s.announcementOn, scroll: s.bannerScroll !== false, tone: s.bannerTone || "navy", until: s.bannerUntil || "", link: s.bannerLink || "", speed: Math.min(90, Math.max(6, Number(s.bannerSpeed) || 30)) }); }));
 admin.put("/banner", wrap(async (req, res) => {
   const b = req.body || {}, up = async (k, v) => q("insert into settings(key,value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]);
   const text = str(b.text, 300), link = str(b.link, 300), until = /^\d{4}-\d{2}-\d{2}$/.test(String(b.until || "")) ? String(b.until) : "";
   if (b.on && !text) return bad(res, "Type the banner text first.");
   if (link && !/^(https?:\/\/|\/)/i.test(link)) return bad(res, "The link should start with https:// or / (a page on this store).");
   await up("announcement", text); await up("announcementOn", !!b.on); await up("bannerScroll", b.scroll !== false);
-  await up("bannerTone", ["navy", "teal", "gold", "red"].includes(b.tone) ? b.tone : "navy"); await up("bannerUntil", until); await up("bannerLink", link);
+  await up("bannerTone", ["navy", "teal", "gold", "red"].includes(b.tone) ? b.tone : "navy"); await up("bannerUntil", until); await up("bannerLink", link); await up("bannerSpeed", Math.min(90, Math.max(6, Math.round(Number(b.speed) || 30))));
   console.log(`Promo banner ${b.on ? "on" : "off"} by ${req.user.email}: ${text}`);
   res.json({ ok: true });
 }));
