@@ -690,7 +690,12 @@ async function customers() {
     ${isRep() ? `<p class="muted">Customers assigned to you. Orders they place (or you place for them) earn your commission. Ask the office to give them a PIN or special pricing.</p>` : `<p class="muted">Give a customer their own PIN to let them into the site. Their PIN works only for them: it unlocks the store and signs them into their account. Changing or revoking it, or turning the account off, ends their access right away. Turn the lock on under Site settings → Site PIN.</p>
     <p class="muted"><strong>Markup:</strong> a customer with a markup pays our cost plus that percent on every product that has a cost (products without a cost stay at the store price). They see their prices as soon as they sign in; sales reps see them when they place that customer's order. "Store prices" = the normal Products &amp; prices list.</p>`}
     <div id="cNew"></div><div id="pinShow"></div><div id="pinReq"></div>
-    <div class="filters"><input id="cq" type="search" placeholder="Search customers"></div>
+    <div class="filters" style="flex-wrap:wrap;gap:.5rem"><input id="cq" type="search" placeholder="Search customers">
+      ${isRep() ? "" : `<select id="cRep"><option value="">All reps</option><option value="none">No rep</option></select>`}
+      <select id="cMonth" title="Month the customer was added"><option value="">Added: any month</option></select>
+      <select id="cBuy"><option value="">Any orders</option><option value="buyers">Have ordered</option><option value="none">Never ordered</option><option value="open">Owes a balance</option></select>
+      <select id="cSort">${[["created", "Newest added"], ["spend", "Total spend"], ["orders", "Total orders"], ["paid", "Paid total"], ["open", "Open balance"], ["last", "Last order"], ["name", "Name A–Z"]].map(([k, l]) => `<option value="${k}">Sort: ${l}</option>`).join("")}</select></div>
+    <p class="muted" id="cSum"></p>
     <div class="tblwrap" id="ct"><p class="muted">Loading…</p></div>`;
   let term = "";
   const { reps: repList } = isRep() ? { reps: [] } : await api("/reps").catch(() => ({ reps: [] }));
@@ -712,16 +717,43 @@ async function customers() {
          <div class="row2" style="flex-wrap:nowrap;margin-top:.3rem"><button class="btn" data-pin="set">Change</button><button class="btn" data-pin="revoke">Revoke</button></div>`
       : `<button class="btn" data-pin="set">Give PIN</button>`;
   };
+  const F = (() => { try { return JSON.parse(localStorage.getItem("custView") || "{}"); } catch (e) { return {}; } })();
+  const st = { rep: F.rep || "", month: F.month || "", buy: F.buy || "", sort: F.sort || "created", dir: F.dir || "" };
+  const ym = (d) => new Date(d).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }).slice(0, 7);
+  const ymName = (k) => { const [y, m] = k.split("-"); return new Date(+y, +m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" }); };
+  const SORTS = { created: (c) => new Date(c.created_at).getTime(), spend: (c) => c.total_cents, orders: (c) => c.orders, paid: (c) => c.spent_cents, open: (c) => c.open_cents, last: (c) => (c.last_order ? new Date(c.last_order).getTime() : 0), name: (c) => (c.name || c.email || "").toLowerCase() };
+  const view = (all) => {
+    let l = all.filter((c) => (!st.rep || (st.rep === "none" ? !c.rep_id : String(c.rep_id) === st.rep)) && (!st.month || ym(c.created_at) === st.month)
+      && (!st.buy || (st.buy === "buyers" ? c.orders > 0 : st.buy === "none" ? !c.orders : c.open_cents > 0)));
+    const key = SORTS[st.sort] || SORTS.created, asc = st.dir ? st.dir === "asc" : st.sort === "name";
+    l.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * (asc ? 1 : -1); });
+    return l;
+  };
+  const th = (k, label, cls = "") => `<th class="sortable${cls}" data-csort="${k}" style="cursor:pointer">${label}${st.sort === k ? (((st.dir ? st.dir === "asc" : k === "name") ? " ▲" : " ▼")) : ""}</th>`;
   const load = async () => {
-    const { customers: list } = await api("/customers?q=" + encodeURIComponent(term));
-    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Markup</th><th>Sales rep</th><th>Site PIN</th><th>Joined</th><th class="num">Orders</th><th class="num">Paid total</th><th>Last order</th><th>Active</th><th></th></tr>
+    const { customers: all } = await api("/customers?q=" + encodeURIComponent(term));
+    // filter options from what's on file
+    const ms = document.getElementById("cMonth"), months = [...new Set(all.map((c) => ym(c.created_at)))].sort().reverse();
+    ms.innerHTML = `<option value="">Added: any month</option>` + months.map((m) => `<option value="${m}"${st.month === m ? " selected" : ""}>Added ${ymName(m)}</option>`).join("");
+    const rs = document.getElementById("cRep"); if (rs) rs.innerHTML = `<option value="">All reps</option><option value="none"${st.rep === "none" ? " selected" : ""}>No rep</option>` + repList.map((r) => `<option value="${r.id}"${st.rep === String(r.id) ? " selected" : ""}>${esc(r.name)}${r.active ? "" : " (off)"}</option>`).join("");
+    document.getElementById("cBuy").value = st.buy; document.getElementById("cSort").value = st.sort;
+    const list = view(all);
+    document.getElementById("cSum").textContent = list.length ? `${list.length} customer${list.length === 1 ? "" : "s"}${list.length !== all.length ? ` of ${all.length}` : ""} · ${list.reduce((t, c) => t + c.orders, 0)} orders · ${money(list.reduce((t, c) => t + c.total_cents, 0))} total spend · ${money(list.reduce((t, c) => t + c.spent_cents, 0))} paid · ${money(list.reduce((t, c) => t + c.open_cents, 0))} open` : "";
+    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr>${th("name", "Name")}<th>Email</th><th>Phone</th><th>Markup</th><th>Sales rep</th><th>Site PIN</th>${th("created", "Joined")}${th("orders", "Orders", " num")}${th("spend", "Total spend", " num")}${th("paid", "Paid total", " num")}${th("open", "Open", " num")}${th("last", "Last order")}<th>Active</th><th></th></tr>
       ${list.map((c) => `<tr data-cid="${c.id}" data-cname="${esc(c.name || c.email)}"><td>${esc(c.name)}</td><td>${c.email ? `<a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a>` : `<a href="#" data-cust-orders="${esc(c.name)}" class="muted">no email</a>`}</td><td>${esc(c.phone)}</td>
         <td>${markupCell(c)}</td><td>${repCell(c)}</td><td>${pinCell(c)}</td><td>${when(c.created_at)}</td>
-        <td class="num">${c.orders}</td><td class="num">${money(c.spent_cents)}</td><td>${c.last_order ? when(c.last_order) : ""}</td>
+        <td class="num">${c.orders}</td><td class="num"><strong>${money(c.total_cents)}</strong></td><td class="num">${money(c.spent_cents)}</td><td class="num">${c.open_cents ? money(c.open_cents) : "—"}</td><td>${c.last_order ? when(c.last_order) : ""}</td>
         <td><input type="checkbox" data-cact${c.active ? " checked" : ""}${ro()}></td>
         ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-corder>New order</button><button class="btn" data-cedit>Edit</button><button class="btn" data-cdel>Delete</button></td>` : isRep() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-corder>New order</button><button class="btn" data-cedit>Edit</button></td>` : `<td><button class="btn" data-corder>New order</button></td>`}</tr>`).join("")}</table>` : `<p class="muted">No customers yet.${isOwner() || isRep() ? " Use Add customer to set one up." : ""}</p>`;
     lastList = list;
   };
+  const save = () => { try { localStorage.setItem("custView", JSON.stringify(st)); } catch (e) {} };
+  document.getElementById("cMonth").onchange = (e) => { st.month = e.target.value; save(); load(); };
+  document.getElementById("cBuy").onchange = (e) => { st.buy = e.target.value; save(); load(); };
+  document.getElementById("cSort").onchange = (e) => { st.sort = e.target.value; st.dir = ""; save(); load(); };
+  if (document.getElementById("cRep")) document.getElementById("cRep").onchange = (e) => { st.rep = e.target.value; save(); load(); };
+  document.getElementById("ct").addEventListener("click", (e) => { const h = e.target.closest("[data-csort]"); if (!h) return; const k = h.dataset.csort;
+    if (st.sort === k) st.dir = (st.dir ? st.dir === "asc" : k === "name") ? "desc" : "asc"; else { st.sort = k; st.dir = ""; } save(); load(); });
   let lastList = [];
   const editForm = (c) => {
     const a = c.address || {};

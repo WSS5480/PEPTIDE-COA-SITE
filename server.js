@@ -1403,10 +1403,12 @@ admin.post("/pin-requests/:id/dismiss", owner, wrap(async (req, res) => {
 admin.get("/customers", wrap(async (req, res) => {
   const term = str(req.query.q, 80).toLowerCase();
   const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.active, c.created_at, c.markup, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.rep_id, (select name from users where id = c.rep_id) rep_name,
-      count(o.id)::int orders, coalesce(sum(o.total_cents) filter (where o.status in ('paid','shipped','delivered')), 0)::int spent_cents, max(o.created_at) last_order
+      count(o.id) filter (where o.status <> 'cancelled')::int orders, coalesce(sum(o.total_cents) filter (where o.status in ('paid','shipped','delivered')), 0)::int spent_cents,
+      coalesce(sum(o.total_cents) filter (where o.status <> 'cancelled'), 0)::int total_cents, coalesce(sum(o.total_cents) filter (where o.status <> 'cancelled' and o.paid_at is null), 0)::int open_cents,
+      max(o.created_at) filter (where o.status <> 'cancelled') last_order
     from customers c left join orders o on o.customer_id = c.id
     where ($1 = '' or lower(c.name) like '%' || $1 || '%' or lower(c.email) like '%' || $1 || '%') ${isRep(req) ? "and c.rep_id = $2" : ""}
-    group by c.id order by c.created_at desc limit 500`, isRep(req) ? [term, req.user.id] : [term]);
+    group by c.id order by c.created_at desc limit 3000`, isRep(req) ? [term, req.user.id] : [term]);
   res.json({ customers: rows });
 }));
 admin.post("/customers", (req, res, next) => (isRep(req) ? next() : owner(req, res, next)), wrap(async (req, res) => {
