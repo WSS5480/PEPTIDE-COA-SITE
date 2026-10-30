@@ -531,10 +531,18 @@ async function fill() {
 }
 async function orders() {
   if (orderId) return orderDetail(orderId);
-  pane().innerHTML = `<header><h1>Orders</h1><a class="btn" href="/api/admin/orders.csv" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></header>
+  pane().innerHTML = `<header><h1>Orders</h1><div class="row2"><a class="btn" href="/api/admin/orders.csv" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a>${isOwner() ? '<button class="btn danger" type="button" id="delAllOrders" title="Clear out test orders">Delete all orders</button>' : ""}</div></header>
     <div class="filters"><select id="of"><option value="">All statuses</option>${STATUSES.map((s) => `<option${oFilter.status === s ? " selected" : ""}>${s}</option>`).join("")}</select>
       <input id="oq" type="search" placeholder="Name, email, order # or tracking" value="${esc(oFilter.q)}"></div>
     <div class="tblwrap" id="ot"><p class="muted">Loading…</p></div>`;
+  const dao = document.getElementById("delAllOrders");
+  if (dao) dao.onclick = async () => {
+    const typed = prompt("This deletes EVERY order: invoices, AR, commissions and payouts on them go too, and it can't be undone. Use it to clear out test orders.\n\nType DELETE to confirm.");
+    if (typed === null) return; if (typed.trim() !== "DELETE") return toast("Nothing deleted. Type DELETE exactly.");
+    const restock = confirm("Put the stock from these orders back on the shelf?\n\nOK = yes (the test orders never really shipped)\nCancel = no, leave stock as it is");
+    const r = await api("/orders/delete-all", { method: "POST", body: { confirm: "DELETE", restock } });
+    toast(`Deleted ${r.deleted} order${r.deleted === 1 ? "" : "s"}${r.restocked ? "; stock put back" : ""}`); drawNav(); orders();
+  };
   const load = async () => {
     const qs = new URLSearchParams(oFilter).toString();
     const { orders: list } = await api("/orders?" + qs);
@@ -2221,6 +2229,9 @@ async function settings(part = "site") {
       <label class="chk"><input type="checkbox" id="s-showSoldOut"${s.showSoldOut ? " checked" : ""}${ro()}> Show "Sold out" and block orders when stock is 0</label>
       <p class="muted">Off (the default): the store never says sold out — orders still go through and the product's Available count goes negative (backordered) so you know what to ship later. Use the <strong>Store note</strong> column under Products to say something like "Sold out — ships in 2 weeks" on a product when you choose to.</p>
       <label class="chk"><input type="checkbox" id="s-pricesRequireLogin"${s.pricesRequireLogin ? " checked" : ""}${ro()}> Show prices and the cart only after a customer signs in with their PIN (each customer sees their own pricing)</label>
+      <div style="margin:-.2rem 0 .4rem 1.6rem;display:flex;flex-wrap:wrap;gap:.4rem .8rem;align-items:center"><label class="chk" style="margin:0"><input type="checkbox" id="s-guestPricesOn"${s.guestPricesOn ? " checked" : ""}${ro()}> Visitors who aren't signed in still see prices and can order, at</label>
+        <span style="white-space:nowrap"><input id="s-guestMarkup" value="${esc(s.guestMarkup ?? 0)}" inputmode="decimal" style="width:5rem;display:inline-block"${ro()}> % above the store price</span></div>
+      <p class="muted" style="margin-top:0">Signed-in customers keep their own pricing. Example: store price $100 at +20% shows $120 to anyone not signed in.</p>
       <div class="grid2">${t("brand", "Store name", "Shown top left and in the footer")}${t("tagline", "Tagline (optional)")}${t("contact", "Contact for customers", "Phone, text or email")}
       ${t("distributorOf", "Brand you distribute", 'Shows "Authorized ___ distributor"')}${t("brandUrl", "Brand's website (https)")}</div>
       <div class="grid2">${t("priceNote", "Note under products")}
@@ -2295,7 +2306,8 @@ async function settings(part = "site") {
     const v = (k) => document.getElementById("s-" + k) || { value: Array.isArray(s[k]) ? s[k].join("\n") : (s[k] ?? ""), checked: !!s[k] }; // email fields live on the Email & approvals page: keep what's saved
     const body = {};
     ["brand", "tagline", "contact", "distributorOf", "brandUrl", "paymentInstructions", "priceNote", "shippingLabel", "shippingNote", "fedexAccount", "deliveryLabel", "deliveryNote", "orderEmail", "cooEmail"].forEach((k) => { body[k] = v(k).value; });
-    ["storeOpen", "pricesRequireLogin", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn", "repEmailOn", "lowStockEmailOn", "showSoldOut"].forEach((k) => { body[k] = v(k).checked; });
+    ["storeOpen", "pricesRequireLogin", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn", "repEmailOn", "lowStockEmailOn", "showSoldOut", "guestPricesOn"].forEach((k) => { body[k] = v(k).checked; });
+    body.guestMarkup = v("guestMarkup").value;
     body.lowStockAt = v("lowStockAt").value;
     body.minAge = v("minAge").value; body.custIdleMin = v("custIdleMin").value; body.staffIdleMin = v("staffIdleMin").value; body.custCloseOut = v("custCloseOut").checked;
     const cents = (id) => Math.max(0, Math.round(parseFloat(String(v(id).value).replace(/[$,]/g, "") || 0) * 100));

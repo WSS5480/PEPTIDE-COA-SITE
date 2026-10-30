@@ -323,6 +323,8 @@ const DEFAULT_SETTINGS = {
   headline: "Research peptides with the lab report on every vial",
   storeOpen: true,
   pricesRequireLogin: true,   // prices (and the cart) show only once a customer signs in with their PIN
+  guestPricesOn: false,      // …unless this is on: visitors who aren't signed in see prices (and can order) at the store price plus guestMarkup %
+  guestMarkup: 0,
   minAge: 21,
   showSoldOut: false,   // the store never says "sold out" unless this is on; orders are taken and stock can go negative (backordered)
   lowStockEmailOn: true, lowStockAt: 5, // email the admins as soon as a product drops below this many

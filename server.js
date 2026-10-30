@@ -55,6 +55,8 @@ function publicSettings(s) {
 }
 // Customer pricing: a customer with a markup pays cost + markup on every product that has a cost; otherwise the store price.
 const markupOf = (v) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 && n <= 1000 ? Math.round(n * 100) / 100 : null; };
+// visitors who aren't signed in (Site settings → guest prices): the store price plus a markup, rounded to the cent
+const guestPrice = (cents, up) => (cents === null || cents === undefined || !up ? cents : Math.round(cents * (1 + up / 100)));
 const priceFor = (p, markup) => (markup !== null && markup !== undefined && p.cost_cents !== null && p.cost_cents !== undefined ? Math.round(p.cost_cents * (1 + Number(markup) / 100)) : p.price_cents);
 // The two ways to get an order, as the store, the rep app and order creation see them.
 function fulfillmentOptions(s) {
@@ -237,8 +239,9 @@ app.get("/api/store", wrap(async (req, res) => {
   // a signed-in customer with their own markup sees their prices; our cost never leaves the server.
   // With "prices only after sign-in" on, guests get the catalog without prices.
   const markup = cust && cust.markup !== null ? Number(cust.markup) : null;
-  const hide = !!s.pricesRequireLogin && !cust && !house;
-  const out = products.map(({ cost_cents, ...p }) => ({ ...p, price_cents: hide ? null : priceFor({ ...p, cost_cents }, markup) }));
+  const guest = !cust && !house, guestUp = guest && s.guestPricesOn ? Math.max(0, Number(s.guestMarkup) || 0) : 0;
+  const hide = !!s.pricesRequireLogin && guest && !s.guestPricesOn;
+  const out = products.map(({ cost_cents, ...p }) => ({ ...p, price_cents: hide ? null : guestPrice(priceFor({ ...p, cost_cents }, markup), guestUp) }));
   res.set("Cache-Control", "no-store");
   res.json({ settings: publicSettings(s), products: out, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents, pricing: markup !== null ? { markup } : null, pricesHidden: hide, signedIn: !!cust || !!(house && !cust), house: !!(house && !cust) });
 }));
@@ -296,7 +299,7 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
   const address = { line1: str(a.line1, 160), line2: str(a.line2, 160), city: str(a.city, 80), state: str(a.state, 40), zip: str(a.zip, 20), country: str(a.country || "US", 40) };
   const signedIn = await customerFrom(req);
   const house = !signedIn && (await houseFrom(req));
-  if (s.pricesRequireLogin && !signedIn && !house) return bad(res, "Please sign in with your PIN to order.");
+  if (s.pricesRequireLogin && !signedIn && !house && !s.guestPricesOn) return bad(res, "Please sign in with your PIN to order.");
   if (!name) return bad(res, "Enter your name.");
   if (email ? !isEmail(email) : !signedIn) return bad(res, email ? "That email doesn't look right." : "Enter your email.");
   if (!address.line1 || !address.city || !address.state || !address.zip) return bad(res, "Enter a full shipping address.");
@@ -310,7 +313,7 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
   const payCard = b.pay === "card";
   if (payCard && !(s.cardPayments && stripe)) return bad(res, "Card payments aren't available right now. Please submit the order as a request instead.");
   try {
-    const r = await createOrder({ name, email, phone, address, items, fulfillment: b.fulfillment, payMethod: payCard ? "card" : "request", discountCode: b.discountCode, markup, note: b.note, customerId: cust ? cust.id : null, repId: cust ? cust.rep_id : null,
+    const r = await createOrder({ name, email, phone, address, items, fulfillment: b.fulfillment, payMethod: payCard ? "card" : "request", discountCode: b.discountCode, markup, guestUp: !signedIn && !house && s.guestPricesOn ? Math.max(0, Number(s.guestMarkup) || 0) : 0, note: b.note, customerId: cust ? cust.id : null, repId: cust ? cust.rep_id : null,
       placedBy: "Customer", event: `Order placed; customer confirmed research use and age${payCard ? "; paying by card" : ""}`, settings: s });
     if (payCard) {
       // the customer pays on Stripe's page; the order is marked paid when they come back (and by the webhook)
@@ -324,7 +327,7 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
 
 // Creates an order in one transaction: checks price, limits and stock, takes the stock, records the rep and their rate.
 // fulfillment: "ship" (charged) or "delivery" (free), from Site settings.
-async function createOrder({ name, email, phone, address, items, fulfillment, payMethod = "request", discountCode, markup = null, note, customerId, repId, placedBy, event, settings }) {
+async function createOrder({ name, email, phone, address, items, fulfillment, payMethod = "request", discountCode, markup = null, guestUp = 0, note, customerId, repId, placedBy, event, settings }) {
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -333,7 +336,7 @@ async function createOrder({ name, email, phone, address, items, fulfillment, pa
       const qty = Math.max(1, Math.min(999, intOrNull(it.qty) || 1));
       const { rows: [p] } = await client.query("select id, name, strength, manufacturer, price_cents, cost_cents, stock, max_per_order from products where id = $1 and active for update", [intOrNull(it.id)]);
       if (!p) throw new Error("An item in the order is no longer available. Remove it and try again.");
-      p.price_cents = priceFor(p, markup); // the customer's own price when they have a markup
+      p.price_cents = guestPrice(priceFor(p, markup), guestUp); // the customer's own price when they have a markup; a visitor's guest price
       if (p.price_cents === null) throw new Error(`${p.name} ${p.strength} has no price yet. Remove it or set a price first.`);
       if (p.max_per_order && qty > p.max_per_order) throw new Error(`${p.name} ${p.strength} is limited to ${p.max_per_order} per order.`);
       if (p.stock !== null && qty > p.stock && (await getSettings()).showSoldOut) throw new Error(p.stock > 0 ? `Only ${p.stock} of ${p.name} ${p.strength} left.` : `${p.name} ${p.strength} is sold out.`); // otherwise it's a backorder: stock goes negative and the admins hear about it
@@ -1395,6 +1398,29 @@ admin.post("/orders/:id/edit", wrap(async (req, res) => {
   finally { client.release(); }
 }));
 // Delete an order for good (owner). Stock goes back, a limited discount code gets its use back; optionally the customer and store are told first.
+// clear out test orders: every order (and the commission payouts made on them) goes; optionally their stock goes back on the shelf
+admin.post("/orders/delete-all", owner, wrap(async (req, res) => {
+  if (String(req.body?.confirm || "") !== "DELETE") return bad(res, "Type DELETE to confirm.");
+  const restock = req.body?.restock !== false, who = req.user.name || req.user.email;
+  const client = await pool.connect(); let n = 0;
+  try {
+    await client.query("begin");
+    const { rows: list } = await client.query("select id, number, status, discount_code from orders order by id");
+    for (const o of list) {
+      if (restock && o.status !== "cancelled") {
+        const { rows: its } = await client.query("select i.product_id, i.qty from order_items i join products p on p.id = i.product_id where i.order_id = $1 and p.stock is not null", [o.id]);
+        for (const it of its) await moveStock(client, it.product_id, it.qty, { reason: "Order deleted", ref: o.number, who, note: "Test orders cleared" });
+      }
+      n++;
+    }
+    await client.query("delete from orders");
+    await client.query("delete from commission_payouts");
+    await client.query("update discount_codes set used = 0");
+    await client.query("commit");
+    console.log(`All ${n} orders deleted by ${who} (restock: ${restock})`);
+  } catch (e) { await client.query("rollback").catch(() => {}); throw e; } finally { client.release(); }
+  res.json({ ok: true, deleted: n, restocked: restock });
+}));
 admin.delete("/orders/:id", owner, wrap(async (req, res) => {
   const id = intOrNull(req.params.id), who = req.user.name || req.user.email;
   const { rows: [o] } = await q("select * from orders where id = $1", [id]);
@@ -2268,6 +2294,7 @@ admin.put("/settings", owner, wrap(async (req, res) => {
     if (k === "custIdleMin" || k === "staffIdleMin") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 43200) return bad(res, "Idle sign-out: enter minutes (0 = never, up to 43200)."); }
     if (k === "custCloseOut" || k === "showSoldOut" || k === "lowStockEmailOn") v = !!v;
     if (k === "invoiceTermsDays") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 365) return bad(res, "Invoice terms: days from 0 to 365."); }
+    if (k === "guestMarkup") { v = Number(String(v).replace(/[%\s]/g, "")); if (!isFinite(v) || v < 0 || v > 500) return bad(res, "Visitor markup: enter a percent between 0 and 500."); v = Math.round(v * 100) / 100; }
     if (k === "lowStockAt") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 100000) return bad(res, "Low-stock alert: enter a whole number."); }
     if (k === "mailFrom" && v && !/^[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+$/.test(String(v).trim()) && !/^[^<>]+<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>$/.test(String(v).trim())) return bad(res, 'The From address should look like "Name <you@domain.com>" or just the address.');
     if (k === "perks") {
