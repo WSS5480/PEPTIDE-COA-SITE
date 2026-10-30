@@ -1969,16 +1969,21 @@ async function staff() {
     if (!r.ok) { box.innerHTML = `<p class="muted">Case tracker: ${esc(r.error)}</p>`; return; }
     const missing = (r.reps || []).filter((t) => !users.some((u) => u.name.trim().toLowerCase() === String(t.rep).trim().toLowerCase()));
     if (!missing.length) return;
-    box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><strong>${missing.length} rep${missing.length === 1 ? " exists" : "s exist"} only in the case tracker:</strong> <span class="muted">${missing.map((t) => esc(t.rep)).join(", ")}.</span> Add them here so there is one roster. Each gets a login with the Case tracker ticked and the same PIN they use today; fix the email if they have a real one (it's only needed for email + password sign-in).
-      <div class="grid2" style="margin-top:.5rem">${missing.map((t, i) => `<div class="field"><label class="eyebrow">${esc(t.rep)} · email for their login</label><input data-imp="${i}" type="email" value="${esc(String(t.rep).toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, ""))}@360medical.net"></div>`).join("")}</div>
-      <div><button class="btn solid" type="button" id="impReps">Add these logins</button></div></div>`;
-    document.getElementById("impReps").onclick = async () => {
-      let n = 0;
-      for (let i = 0; i < missing.length; i++) {
-        const email = (document.querySelector(`[data-imp="${i}"]`).value || "").trim(); if (!email) continue;
-        try { await api("/users", { method: "POST", body: { name: missing[i].rep, email, password: "temp-" + Math.random().toString(36).slice(2, 10) + "A1", role: "rep", rate: "0", pin: missing[i].pin || "", apps: { store: false, tracker: true } } }); n++; } catch (e) {}
-      }
-      toast(`Added ${n} login${n === 1 ? "" : "s"}`); staff();
+    box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2 style="margin-top:0">In the case tracker only</h2>
+      <p class="muted">These reps were set up in the tracker before Team logins existed. <strong>Add</strong> gives them one login for both apps (Case tracker ticked, same PIN they use today; the email is only for email + password sign-in — change it if they have a real one). <strong>Remove</strong> takes them out of the tracker's rep list; their logged cases stay.</p>
+      <div class="tblwrap"><table class="tbl compact"><thead><tr><th>Name</th><th>Email for their login</th><th></th></tr></thead><tbody>
+      ${missing.map((t, i) => `<tr><td><strong>${esc(t.rep)}</strong>${t.active === false ? ' <span class="muted">(off)</span>' : ""}</td><td><input data-imp="${i}" type="email" style="min-width:16rem" value="${esc(String(t.rep).toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, ""))}@360medical.net"></td>
+        <td style="white-space:nowrap"><button class="btn solid" type="button" data-impadd="${i}">Add login</button> <button class="btn danger" type="button" data-imprm="${i}" title="Remove from the tracker's rep list (their cases stay)">Remove</button></td></tr>`).join("")}</tbody></table></div>
+      ${missing.length > 1 ? `<div style="margin-top:.5rem"><button class="btn" type="button" id="impReps">Add all ${missing.length}</button></div>` : ""}</div>`;
+    const addOne = async (i) => {
+      const email = (document.querySelector(`[data-imp="${i}"]`).value || "").trim(); if (!email) { toast("Enter an email for " + missing[i].rep); return false; }
+      try { await api("/users", { method: "POST", body: { name: missing[i].rep, email, password: "temp-" + Math.random().toString(36).slice(2, 10) + "A1", role: "rep", rate: "0", pin: missing[i].pin || "", apps: { store: false, tracker: true } } }); return true; } catch (e) { return false; }
+    };
+    box.onclick = async (e) => {
+      const a = e.target.closest("[data-impadd]"), r = e.target.closest("[data-imprm]");
+      if (a) { if (await addOne(+a.dataset.impadd)) { toast("Login added"); staff(); } return; }
+      if (r) { const t = missing[+r.dataset.imprm]; if (!confirm(`Remove ${t.rep} from the case tracker's rep list? Their logged cases stay.`)) return; try { await api("/hub/tracker-reps/" + encodeURIComponent(t.rep), { method: "DELETE" }); toast("Removed from the tracker"); staff(); } catch (e) {} return; }
+      if (e.target.id === "impReps") { let n = 0; for (let i = 0; i < missing.length; i++) if (await addOne(i)) n++; toast(`Added ${n} login${n === 1 ? "" : "s"}`); staff(); }
     };
   }).catch(() => {});
   document.getElementById("ut").onchange = (e) => { if (e.target.matches('[data-k="role"]')) { const tr = e.target.closest("tr"), rate = tr.querySelector('[data-k="rate"]'); rate.disabled = e.target.value !== "rep"; if (e.target.value === "rep" && !rate.value) rate.value = "0"; } };

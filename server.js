@@ -2200,6 +2200,12 @@ admin.get("/hub/preview-url", owner, (req, res) => {
 admin.get("/hub/tracker-reps", owner, wrap(async (req, res) => {
   try { res.json({ ok: true, ...(await trackerGet("/api/hub/reps")) }); } catch (e) { res.json({ ok: false, error: e.message, reps: [] }); }
 }));
+admin.delete("/hub/tracker-reps/:rep", owner, wrap(async (req, res) => {
+  try {
+    const r = await fetch(`${TRACKER_URL}/api/hub/rep-remove`, { method: "POST", headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify({ rep: String(req.params.rep || "") }), signal: AbortSignal.timeout(12000) });
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `The case tracker answered ${r.status}`); res.json({ ok: true });
+  } catch (e) { bad(res, e.message); }
+}));
 app.use("/api/admin", admin);
 
 /* ---------- sales rep app (/rep): a rep sees and works only their own customers and orders ---------- */
