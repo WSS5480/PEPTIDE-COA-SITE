@@ -948,13 +948,11 @@ admin.get("/stats", wrap(async (req, res) => {
   const { rows: [pr] } = await q("select count(*)::int n from pin_requests where status = 'new'");
   const { rows: [tf] } = await q("select count(*)::int n from orders where status in ('new','confirmed','paid') and filled_at is null");
   const { rows: [lc] } = await q("select max(at) at, count(*)::int n from stock_counts");
-  const terms = Number((await getSettings()).invoiceTermsDays ?? 30);
-  const { rows: [od] } = await q(`select count(*)::int n, coalesce(sum(total_cents),0)::bigint cents from orders where status <> 'cancelled' and paid_at is null and created_at < now() - (coalesce(terms_days, $1) || ' days')::interval`, [terms]);
   // on-shelf value at cost: what's physically there (available + held in unshipped orders) × cost each
   const { rows: [sv] } = await q(`select coalesce(sum(greatest(0, p.stock + c.held) * p.cost_cents), 0)::bigint cents, coalesce(sum(greatest(0, p.stock + c.held)), 0)::int units, count(*)::int tracked
     from products p cross join lateral (select coalesce((select sum(i.qty) from order_items i join orders o on o.id = i.order_id where i.product_id = p.id and o.status in ${OPEN_ORDER}), 0)::int held) c
     where p.stock is not null`);
-  res.json({ byStatus: Object.fromEntries(byStatus.map((r) => [r.status, r.n])), month: m, lowStock: low, unpriced: np.n, pinRequests: pr.n, toFill: tf.n, overdue: { n: od.n, cents: Number(od.cents) },
+  res.json({ byStatus: Object.fromEntries(byStatus.map((r) => [r.status, r.n])), month: m, lowStock: low, unpriced: np.n, pinRequests: pr.n, toFill: tf.n,
     count: { lastAt: lc.at, done: lc.n, dueDays: COUNT_DUE_DAYS }, stockValue: req.user.role === "owner" ? { cents: Number(sv.cents), units: sv.units, tracked: sv.tracked } : null });
 }));
 

@@ -35,19 +35,6 @@
 .side .sref:hover { background: rgba(255,255,255,.1); }
 .side .sref-row { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: -.4rem; } .side .sref-row .sref { margin-top: 0; text-decoration: none; }
 .side .who button { justify-self: start; display: inline-flex; align-items: center; gap: .3rem; padding: .35rem .7rem; background: none; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; color: #fff; font-size: .8rem; cursor: pointer; }
-.pwrap { min-width: 0; }
-#pills { display: none !important; } /* the left menu does the job */
-#pillsX { position: sticky; top: 0; z-index: 25; display: flex; flex-wrap: wrap; gap: 6px; padding: .7rem clamp(1rem, 3vw, 2rem) .5rem; background: var(--ground, var(--bg, #f3f5f9)); }
-#pills a { flex: none; padding: 7px 12px; border-radius: 999px; background: var(--card, #fff); border: 1px solid var(--line, #dde3ec); color: var(--ink, #111); font-size: .8125rem; font-weight: 600; text-decoration: none; white-space: nowrap; display: inline-flex; gap: .35rem; align-items: center; }
-#pills a.on { background: var(--blue, #1d6fd8); border-color: var(--blue, #1d6fd8); color: #fff; }
-#pills a .badge { min-width: 1.2rem; padding: 0 .3rem; background: var(--navy, #0f1b33); color: #fff; border-radius: 999px; font-size: .68rem; text-align: center; }
-#pills a.on .badge { background: #fff; color: var(--navy, #0f1b33); }
-@media (max-width: 760px) { #pills { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-inline: 1rem; } #pills::-webkit-scrollbar { display: none; } }
-body.embed #pills { display: none; }
-.side nav .navgrp-h { margin-top: .35rem; font-size: .72rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; opacity: .8; }
-.side nav .navgrp-h.open { opacity: 1; }
-.side nav .navgrp-items { display: grid; gap: .2rem; padding-left: .5rem; }
-.side nav .navgrp-items[hidden] { display: none; }
 .pane { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.1rem; align-content: start; padding: clamp(1rem, 3vw, 2rem); min-width: 0; }
 .pane > * { min-width: 0; max-width: 100%; }
 .pane > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem 1rem; }
@@ -141,7 +128,7 @@ body.embed #pills { display: none; }
 <div id="app"></div>
 <script src="/refresh.js?v=2"></script>
 <script src="/vial.js?v=1793299629"></script>
-<script src="/collapse.js?v=13" defer></script><script src="/admin.js?v=1793396667"></script>
+<script src="/collapse.js?v=12" defer></script><script src="/admin.js?v=1793396716"></script>
 <script src="/install.js?v=1793299629"></script>
 </body>
 </html>
