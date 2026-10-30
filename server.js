@@ -612,7 +612,8 @@ async function notifyOrder(orderId, kind, extra = {}) {
   // the customer's sales rep: every order and every change on it, with their commission on it
   const repFor = rep && rep.email ? rep : o.customer_id ? (await q("select u.name, u.email from customers c join users u on u.id = c.rep_id where c.id = $1 and u.active", [o.customer_id])).rows[0] : null;
   if (!extra.noRep && s.repEmailOn !== false && repFor && isEmail(repFor.email) && kind !== "unpaid") {
-    const comm = o.rep_id && o.commission_rate !== null && o.commission_rate !== undefined ? Math.round((o.subtotal_cents - o.discount_cents) * o.commission_rate / 100) : null;
+    let comm = o.rep_id && o.commission_rate !== null && o.commission_rate !== undefined ? Math.round((o.subtotal_cents - o.discount_cents) * o.commission_rate / 100) : null;
+    if (o.rep_id) { const [t] = await applyTiers([{ ...o, commission_cents: comm }]); if (t.tiered) comm = t.commission_cents; } // on the tiered plan: this order's share at the month's tier so far
     const commLine = kind === "cancelled" || o.status === "cancelled" ? "No commission (cancelled)." : comm !== null ? `Your commission on this order: ${$(comm)}${paid ? " (earned — the order is paid)" : " (pending until the order is paid)"}` : "";
     const head = kind === "paid" ? "Paid" : kind === "updated" ? "Updated" : kind === "cancelled" ? "Cancelled" : kind === "shipped" ? (o.status === "delivered" ? "Delivered" : "Shipped") : "New";
     const subject = `${head} order ${o.number} · ${o.name} · ${$(o.total_cents)}`;
@@ -831,15 +832,44 @@ app.patch("/api/account", jsonOnly, wrap(async (req, res) => {
 // pending: not paid by the customer yet · earned: paid/shipped/delivered, not paid out · paid: in a payout · void: cancelled
 const COMM_SQL = `select o.id, o.number, o.created_at, o.status, o.name customer, o.subtotal_cents, o.discount_cents, o.commission_rate, o.payout_id, o.rep_id,
     u.name rep_name, u.email rep_email, p.paid_at payout_date,
-    round((o.subtotal_cents - o.discount_cents) * coalesce(o.commission_rate, 0) / 100.0)::int commission_cents,
+    coalesce(o.comm_paid_cents, round((o.subtotal_cents - o.discount_cents) * coalesce(o.commission_rate, 0) / 100.0)::int) commission_cents,
     case when o.status = 'cancelled' then 'void' when o.payout_id is not null then 'paid' when o.status in ('paid','shipped','delivered') then 'earned' else 'pending' end comm_status
   from orders o join users u on u.id = o.rep_id left join commission_payouts p on p.id = o.payout_id`;
+/* tiered commission plan (Commissions → Commission plan): a rep's sales in a calendar month (Central time, cancelled
+   orders left out) pick the rate. "whole": every dollar that month earns the tier reached. "bracket": each slice earns its own rate.
+   Each order's share of the month's commission is proportional to its sales, so pending / earned / paid out keep working per order. */
+async function commPlan() {
+  const p = (await getSettings()).commTiers || {};
+  const tiers = (Array.isArray(p.tiers) ? p.tiers : []).map((t) => ({ from: Math.max(0, Math.round(Number(t.from) || 0)), rate: Math.max(0, Math.min(100, Math.round((Number(t.rate) || 0) * 100) / 100)) })).sort((a, b) => a.from - b.from);
+  return { on: !!p.on && tiers.length > 0, mode: p.mode === "bracket" ? "bracket" : "whole", tiers };
+}
+const tierRate = (plan, cents) => plan.tiers.reduce((r, t) => (cents >= t.from * 100 ? t.rate : r), plan.tiers.length ? plan.tiers[0].rate : 0);
+const tierComm = (plan, cents) => {
+  if (plan.mode === "whole") return Math.round((cents * tierRate(plan, cents)) / 100);
+  return Math.round(plan.tiers.reduce((tot, t, i) => { const lo = t.from * 100, hi = i + 1 < plan.tiers.length ? plan.tiers[i + 1].from * 100 : Infinity; return cents > lo ? tot + ((Math.min(cents, hi) - lo) * t.rate) / 100 : tot; }, 0));
+};
+const chiMonth = (d) => new Date(d).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }).slice(0, 7);
+async function applyTiers(rows, db = pool) {
+  const plan = await commPlan(); if (!plan.on || !rows.length) return rows;
+  const repIds = [...new Set(rows.map((r) => r.rep_id).filter(Boolean))]; if (!repIds.length) return rows;
+  const { rows: opt } = await db.query("select id from users where id = any($1) and comm_tiered", [repIds]); const on = new Set(opt.map((x) => x.id)); if (!on.size) return rows;
+  const { rows: m } = await db.query(`select rep_id, to_char(created_at at time zone 'America/Chicago', 'YYYY-MM') ym, sum(subtotal_cents - discount_cents)::bigint net from orders where status <> 'cancelled' and rep_id = any($1) group by 1, 2`, [[...on]]);
+  const tot = new Map(m.map((x) => [`${x.rep_id}|${x.ym}`, Number(x.net)]));
+  for (const r of rows) {
+    if (!on.has(r.rep_id) || r.payout_id) continue; // already paid out: stays what was paid
+    const net = r.subtotal_cents - r.discount_cents, T = tot.get(`${r.rep_id}|${chiMonth(r.created_at)}`) || 0;
+    const monthComm = tierComm(plan, T), eff = T ? monthComm / T : tierRate(plan, 0) / 100;
+    r.commission_cents = Math.round(net * eff); r.commission_rate = Math.round(eff * 10000) / 100; r.tiered = true; r.month_sales_cents = T;
+  }
+  return rows;
+}
 async function commissionRows({ repId, from, to, status }) {
   const where = [], args = [];
   if (repId) { args.push(repId); where.push(`o.rep_id = $${args.length}`); }
   if (/^\d{4}-\d{2}-\d{2}$/.test(from || "")) { args.push(from); where.push(`o.created_at >= $${args.length}::date`); }
   if (/^\d{4}-\d{2}-\d{2}$/.test(to || "")) { args.push(to); where.push(`o.created_at < $${args.length}::date + 1`); }
   const { rows } = await q(`${COMM_SQL} ${where.length ? "where " + where.join(" and ") : ""} order by o.created_at desc limit 2000`, args);
+  await applyTiers(rows);
   return ["pending", "earned", "paid", "void"].includes(status) ? rows.filter((r) => r.comm_status === status) : rows;
 }
 const commTotals = (rows) => rows.reduce((t, r) => { t[r.comm_status] = (t[r.comm_status] || 0) + r.commission_cents; t.sales += r.comm_status === "void" ? 0 : r.subtotal_cents - r.discount_cents; return t; }, { sales: 0, pending: 0, earned: 0, paid: 0, void: 0 });
@@ -1822,6 +1852,23 @@ admin.get("/commissions", wrap(async (req, res) => {
   const { rows: payouts } = await q(`select p.*, u.name rep_name from commission_payouts p left join users u on u.id = p.rep_id ${isRep(req) ? "where p.rep_id = $1" : ""} order by p.paid_at desc limit 200`, isRep(req) ? [req.user.id] : []);
   res.json({ rows, totals: commTotals(rows), payouts });
 }));
+admin.get("/commissions/plan", owner, wrap(async (req, res) => {
+  const plan = await commPlan(), raw = (await getSettings()).commTiers || {};
+  const { rows: reps } = await q("select id, name, commission_rate, comm_tiered, active from users where role = 'rep' order by active desc, name");
+  res.json({ on: !!raw.on, mode: plan.mode, tiers: plan.tiers.length ? plan.tiers : [{ from: 0, rate: 10 }, { from: 5000, rate: 15 }, { from: 7500, rate: 20 }], reps });
+}));
+admin.put("/commissions/plan", owner, wrap(async (req, res) => {
+  const b = req.body || {};
+  const tiers = (Array.isArray(b.tiers) ? b.tiers : []).slice(0, 12).map((t) => ({ from: Math.round(Number(String(t.from).replace(/[$,\s]/g, ""))), rate: Number(String(t.rate).replace(/[%\s]/g, "")) }));
+  if (tiers.some((t) => !isFinite(t.from) || t.from < 0 || !isFinite(t.rate) || t.rate < 0 || t.rate > 100)) return bad(res, "Each tier needs a starting dollar amount and a rate from 0 to 100%.");
+  if (new Set(tiers.map((t) => t.from)).size !== tiers.length) return bad(res, "Two tiers start at the same amount.");
+  if (b.on && !tiers.length) return bad(res, "Add at least one tier.");
+  tiers.sort((a, c) => a.from - c.from); if (tiers.length && tiers[0].from !== 0) tiers.unshift({ from: 0, rate: 0 });
+  await q("insert into settings(key,value) values ('commTiers',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify({ on: !!b.on, mode: b.mode === "bracket" ? "bracket" : "whole", tiers })]);
+  if (Array.isArray(b.reps)) for (const r of b.reps) await q("update users set comm_tiered = $1 where id = $2 and role = 'rep'", [!!r.tiered, intOrNull(r.id)]);
+  console.log(`Commission plan ${b.on ? "on" : "off"} (${b.mode}) by ${req.user.email}: ${tiers.map((t) => `$${t.from}+ ${t.rate}%`).join(", ")}`);
+  res.json({ ok: true });
+}));
 admin.post("/commissions/payout", owner, wrap(async (req, res) => {
   const b = req.body || {}, repId = intOrNull(b.repId);
   const ids = (Array.isArray(b.orderIds) ? b.orderIds : []).map(intOrNull).filter(Boolean);
@@ -1829,19 +1876,20 @@ admin.post("/commissions/payout", owner, wrap(async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("begin");
-    const { rows } = await client.query(`select o.id, round((o.subtotal_cents - o.discount_cents) * coalesce(o.commission_rate,0) / 100.0)::int c from orders o
+    const { rows } = await client.query(`select o.id, o.rep_id, o.created_at, o.status, o.subtotal_cents, o.discount_cents, o.commission_rate, round((o.subtotal_cents - o.discount_cents) * coalesce(o.commission_rate,0) / 100.0)::int commission_cents from orders o
       where o.id = any($1) and o.rep_id = $2 and o.payout_id is null and o.status in ('paid','shipped','delivered') for update`, [ids, repId]);
+    await applyTiers(rows, client); rows.forEach((r) => { r.c = r.commission_cents; });
     if (!rows.length) throw new Error("None of those commissions are earned and unpaid.");
     const amount = rows.reduce((t, r) => t + r.c, 0);
     const { rows: [p] } = await client.query("insert into commission_payouts(rep_id, amount_cents, orders, note, who) values ($1,$2,$3,$4,$5) returning id", [repId, amount, rows.length, str(b.note, 300), req.user.name || req.user.email]);
-    await client.query("update orders set payout_id = $1 where id = any($2)", [p.id, rows.map((r) => r.id)]);
+    for (const r of rows) await client.query("update orders set payout_id = $1, comm_paid_cents = $2 where id = $3", [p.id, r.c, r.id]);
     await client.query("commit");
     res.json({ ok: true, amountCents: amount, orders: rows.length });
   } catch (e) { await client.query("rollback").catch(() => {}); bad(res, e.message); }
   finally { client.release(); }
 }));
 admin.delete("/commissions/payout/:id", owner, wrap(async (req, res) => {
-  await q("update orders set payout_id = null where payout_id = $1", [intOrNull(req.params.id)]);
+  await q("update orders set payout_id = null, comm_paid_cents = null where payout_id = $1", [intOrNull(req.params.id)]);
   await q("delete from commission_payouts where id = $1", [intOrNull(req.params.id)]);
   res.json({ ok: true });
 }));

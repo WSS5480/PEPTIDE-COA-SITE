@@ -162,6 +162,8 @@ alter table orders add column if not exists filled_at timestamptz;
 alter table orders add column if not exists filled_by text not null default '';
 alter table orders add column if not exists eta date;
 alter table orders add column if not exists terms_days int;
+alter table users add column if not exists comm_tiered boolean not null default true;
+alter table orders add column if not exists comm_paid_cents int; -- the commission actually paid out on this order (locked at payout)
 alter table orders add column if not exists pay_ref text not null default '';
 alter table discount_codes add column if not exists min_vials int not null default 0;
 alter table products add column if not exists low_alerted_at timestamptz;

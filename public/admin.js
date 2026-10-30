@@ -929,6 +929,46 @@ const commSwitch = () => HUB.linked ? `<div class="seg" style="display:inline-fl
 const wireCommSwitch = () => { document.querySelectorAll("[data-cv]").forEach((b) => { b.onclick = () => { commView = b.dataset.cv; localStorage.setItem("commView", commView); commissions(); }; }); };
 // the month the store rows use when the view is Combined / Case tracker
 const monthRange = (ym) => { const [y, m] = ym.split("-").map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate(); return { from: `${ym}-01`, to: `${ym}-${String(last).padStart(2, "0")}` }; };
+/* ---------- tiered commission plan (admins) ---------- */
+async function commPlanPanel(box, reload) {
+  const P = await api("/commissions/plan");
+  let tiers = P.tiers.map((t) => ({ ...t })), mode = P.mode, on = P.on;
+  const fmt$ = (n) => "$" + Number(n).toLocaleString("en-US");
+  const commFor = (cents) => { const T = [...tiers].filter((t) => t.from !== "" && isFinite(+t.from)).map((t) => ({ from: +t.from, rate: +t.rate || 0 })).sort((a, b) => a.from - b.from); if (!T.length) return 0;
+    if (mode === "whole") { const r = T.reduce((x, t) => (cents >= t.from * 100 ? t.rate : x), T[0].rate); return Math.round((cents * r) / 100); }
+    return Math.round(T.reduce((tot, t, i) => { const lo = t.from * 100, hi = i + 1 < T.length ? T[i + 1].from * 100 : Infinity; return cents > lo ? tot + ((Math.min(cents, hi) - lo) * t.rate) / 100 : tot; }, 0)); };
+  const draw = () => {
+    const sorted = tiers.map((t, i) => ({ ...t, i })).sort((a, b) => (+a.from || 0) - (+b.from || 0));
+    box.innerHTML = `<div class="panel" data-nofold style="border-color:${on ? "var(--blue)" : "var(--line)"}"><div class="row2" style="justify-content:space-between;align-items:center"><h2 style="margin:0">Commission plan · ${on ? '<span class="pill st-shipped">Tiered</span>' : '<span class="pill">Flat rate per rep</span>'}</h2>
+        <label class="chk"><input type="checkbox" id="tpOn"${on ? " checked" : ""}> Use tiered payouts</label></div>
+      <p class="muted">A rep's product sales for the calendar month (after discounts, before shipping; cancelled orders left out) decide the rate. ${on ? "" : "While this is off, each rep earns their own flat rate from Sales reps."}</p>
+      <div class="seg" style="margin:.4rem 0"><button type="button" data-tpmode="whole"${mode === "whole" ? ' class="on"' : ""}>Whole month at the tier reached</button><button type="button" data-tpmode="bracket"${mode === "bracket" ? ' class="on"' : ""}>Each slice at its own rate</button></div>
+      <p class="muted" style="margin-top:0">${mode === "whole" ? "Example: reach the $5,000 tier and every dollar that month earns that tier's rate." : "Example: the first $5,000 earns the first rate, the next slice the second rate, and so on (like tax brackets)."}</p>
+      <div class="tblwrap" style="max-width:34rem"><table class="tbl compact"><thead><tr><th>Monthly sales from</th><th>Up to</th><th class="num">Rate</th><th></th></tr></thead><tbody>
+        ${sorted.map((t, n) => `<tr><td><div class="row2" style="flex-wrap:nowrap;align-items:center">$<input data-tf="${t.i}" value="${esc(t.from)}" inputmode="numeric" style="width:7rem"${t.from === 0 && n === 0 ? " readonly title=\"The first tier starts at $0\"" : ""}></div></td>
+          <td class="muted">${n + 1 < sorted.length ? "under " + fmt$(sorted[n + 1].from) : "and up"}</td><td class="num"><div class="row2" style="flex-wrap:nowrap;align-items:center;justify-content:flex-end"><input data-tr="${t.i}" value="${esc(t.rate)}" inputmode="decimal" style="width:4.5rem;text-align:right">%</div></td>
+          <td>${n === 0 ? "" : `<button class="btn" type="button" data-tdel="${t.i}" title="Remove this tier">✕</button>`}</td></tr>`).join("")}</tbody></table></div>
+      <div class="row2" style="margin:.4rem 0"><button class="btn" type="button" id="tpAdd">+ Add tier</button></div>
+      <div class="row2" style="align-items:center;flex-wrap:wrap;gap:.5rem;margin:.4rem 0"><span class="muted">Try it: a month with sales of $</span><input id="tpTry" value="${esc(box.dataset.try || "6000")}" inputmode="numeric" style="width:7rem"><strong id="tpOut"></strong></div>
+      <details style="margin:.6rem 0"><summary>Which reps are on the plan (${P.reps.filter((r) => r.comm_tiered).length} of ${P.reps.length})</summary>
+        <p class="muted">Untick a rep to keep them on their own flat rate.</p>${P.reps.map((r) => `<label class="chk" style="display:block"><input type="checkbox" data-trep="${r.id}"${r.comm_tiered ? " checked" : ""}> ${esc(r.name)}${r.active ? "" : " (off)"} <span class="muted">· flat rate ${Number(r.commission_rate || 0)}%</span></label>`).join("")}</details>
+      <div class="row2"><button class="btn solid" type="button" id="tpSave">Save plan</button><span class="muted">Applies to every order's commission, including this month's; orders already paid out keep the payout amount.</span></div></div>`;
+    const tryIt = () => { const v = Math.round(parseFloat(String(document.getElementById("tpTry").value).replace(/[$,]/g, "")) * 100) || 0, c = commFor(v); box.dataset.try = document.getElementById("tpTry").value; document.getElementById("tpOut").textContent = `→ ${money(c)} commission${v ? ` (${((c / v) * 100).toFixed(1)}% overall)` : ""}`; };
+    tryIt();
+    box.oninput = (e) => { if (e.target.dataset.tf !== undefined) tiers[+e.target.dataset.tf].from = e.target.value.replace(/[$,\s]/g, ""); if (e.target.dataset.tr !== undefined) tiers[+e.target.dataset.tr].rate = e.target.value.replace(/[%\s]/g, ""); tryIt(); };
+    box.onchange = (e) => { if (e.target.dataset.tf !== undefined) draw(); if (e.target.id === "tpOn") { on = e.target.checked; draw(); } };
+    box.onclick = async (e) => {
+      const m = e.target.closest("[data-tpmode]"); if (m) { mode = m.dataset.tpmode; return draw(); }
+      const d = e.target.closest("[data-tdel]"); if (d) { tiers.splice(+d.dataset.tdel, 1); return draw(); }
+      if (e.target.id === "tpAdd") { const last = Math.max(0, ...tiers.map((t) => +t.from || 0)); tiers.push({ from: last + 2500, rate: (+tiers[tiers.length - 1]?.rate || 0) + 5 }); return draw(); }
+      if (e.target.id === "tpSave") {
+        const reps = [...box.querySelectorAll("[data-trep]")].map((c) => ({ id: +c.dataset.trep, tiered: c.checked }));
+        try { await api("/commissions/plan", { method: "PUT", body: { on, mode, tiers, reps } }); toast(on ? "Tiered plan saved — commissions updated" : "Plan saved (off: flat rates)"); paneDirty = false; reload(); } catch (x) {}
+      }
+    };
+  };
+  draw();
+}
 async function commissions() {
   if (!isOwner() && !isRep()) return dashboard();
   const $ = (x) => document.getElementById(x);
@@ -937,6 +977,7 @@ async function commissions() {
   const { reps: repList } = isRep() ? { reps: [] } : await api("/reps");
   pane().innerHTML = `<header><h1>${isRep() ? "My commissions" : "Commissions"}</h1><a class="btn" id="cmCsv" href="#" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></header>
     ${commSwitch()}
+    ${isOwner() ? '<div id="planBox"></div>' : ""}
     <div class="filters"><select id="cm-rep"${isRep() ? " hidden" : ""}><option value="">All reps</option>${repList.map((r) => `<option value="${r.id}"${String(r.id) === String(commFilter.rep) ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
       <input id="cm-from" type="date" value="${esc(commFilter.from)}"><input id="cm-to" type="date" value="${esc(commFilter.to)}">
       <select id="cm-st"><option value="">All statuses</option>${["pending", "earned", "paid", "void"].map((x) => `<option value="${x}"${commFilter.status === x ? " selected" : ""}>${x}</option>`).join("")}</select>
@@ -981,6 +1022,7 @@ async function commissions() {
   $("cm-month").onclick = () => { const d = new Date(); $("cm-from").value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; $("cm-to").value = ""; apply(); };
   $("cm-clear").onclick = () => { $("cm-rep").value = ""; $("cm-from").value = ""; $("cm-to").value = ""; $("cm-st").value = ""; apply(); };
   load();
+  if (isOwner() && document.getElementById("planBox")) commPlanPanel(document.getElementById("planBox"), load).catch(() => {});
 }
 
 /* Combined / Case tracker commissions: the tracker is asked for its month per rep (actual vs plan × rate), the store's rows for the
