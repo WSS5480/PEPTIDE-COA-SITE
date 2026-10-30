@@ -161,6 +161,8 @@ alter table products add column if not exists store_note text not null default '
 alter table orders add column if not exists filled_at timestamptz;
 alter table orders add column if not exists filled_by text not null default '';
 alter table orders add column if not exists eta date;
+alter table orders add column if not exists terms_days int;
+alter table orders add column if not exists pay_ref text not null default '';
 alter table discount_codes add column if not exists min_vials int not null default 0;
 alter table products add column if not exists low_alerted_at timestamptz;
 alter table products add column if not exists image bytea;
@@ -308,6 +310,7 @@ const DEFAULT_SETTINGS = {
   bannerScroll: true,
   bannerTone: "navy",
   bannerSpeed: 30,
+  invoiceTermsDays: 30, // invoices are due this many days after the order (0 = due on receipt)
   bannerSticky: true,   // the banner stays pinned at the top while the page scrolls      // seconds for the scrolling text to go once across (lower = faster)   // navy | teal | gold | red
   bannerUntil: "",      // YYYY-MM-DD: the banner stops on its own after this day ("" = runs until halted)
   bannerLink: "",       // optional: tapping the banner goes here

@@ -113,7 +113,7 @@ const owner = (req, res, next) => (req.user.role === "owner" ? next() : bad(res,
 /* ---------- site PIN ---------- */
 // When the owner turns the PIN on, nothing on the store (pages, products, lab reports, orders)
 // is served until the visitor enters it. The admin, its login and the files it needs stay open.
-const PIN_OPEN = [/^\/api\/hub\//, /^\/sso$/, /^\/(admin|rep)\/(sso|tracker|go\/tracker)$/, /^\/go\/tracker$/, /^\/api\/rep-list$/, /^\/xlsx\.full\.min\.js$/, /^\/collapse\.js$/, /^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/api\/stripe\//, /^\/pay\//,
+const PIN_OPEN = [/^\/api\/hub\//, /^\/invoice\/[A-Za-z0-9-]+$/, /^\/sso$/, /^\/(admin|rep)\/(sso|tracker|go\/tracker)$/, /^\/go\/tracker$/, /^\/api\/rep-list$/, /^\/xlsx\.full\.min\.js$/, /^\/collapse\.js$/, /^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/api\/stripe\//, /^\/pay\//,
   /^\/store\.css$/, /^\/install\.js$/, /^\/refresh\.js$/, /^\/sw\.js$/, /^\/manifest\.webmanifest$/, /^\/vial\.js$/, /^\/vial-logo$/, /^\/site-logo$/, /^\/vial-photo$/, /^\/vial-photo\.jpg$/, /^\/brand-(logo|mark|vial-logo)\.png$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
 let pinCache = { at: 0, on: false, hash: "", secret: "", customerPins: 0 };
 async function pinState() {
@@ -361,9 +361,9 @@ async function createOrder({ name, email, phone, address, items, fulfillment, pa
     const number = String(Date.now()).slice(-6) + crypto.randomInt(10, 99);
     const total = subtotal - discount + shipCents;
     const { rows: [o] } = await client.query(
-      `insert into orders(number,name,email,phone,address,shipping_method,shipping_cents,subtotal_cents,discount_cents,discount_code,total_cents,customer_note,customer_id,rep_id,commission_rate,placed_by,fulfillment,pay_method,price_markup)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) returning id`,
-      [number, name, email, phone, JSON.stringify(address), shipName, shipCents, subtotal, discount, codeUsed, total, str(note, 1000), customerId, repId, rate, placedBy, fulfil, payMethod === "card" ? "card" : "request", markup]);
+      `insert into orders(number,name,email,phone,address,shipping_method,shipping_cents,subtotal_cents,discount_cents,discount_code,total_cents,customer_note,customer_id,rep_id,commission_rate,placed_by,fulfillment,pay_method,price_markup,terms_days)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) returning id`,
+      [number, name, email, phone, JSON.stringify(address), shipName, shipCents, subtotal, discount, codeUsed, total, str(note, 1000), customerId, repId, rate, placedBy, fulfil, payMethod === "card" ? "card" : "request", markup, Math.max(0, Math.round(Number(settings.invoiceTermsDays ?? 30)) || 0)]); // the invoice terms in force when it was placed
     for (const { p, qty } of lines) {
       // the maker goes into the line name so orders show which one was bought
       await client.query("insert into order_items(order_id,product_id,name,strength,unit_cents,qty) values ($1,$2,$3,$4,$5,$6)", [o.id, p.id, p.manufacturer ? `${p.name} (${p.manufacturer})` : p.name, p.strength, p.price_cents, qty]);
@@ -662,6 +662,7 @@ Open the rep app: ${replink}` : "", "", `— ${s.brand}`].filter((x) => x !== ""
       changes.length && kind === "updated" ? `\nWHAT CHANGED:\n${changes.map((c) => "- " + c).join("\n")}` : changes.length && kind === "cancelled" ? `\nReason: ${changes.join("; ")}` : "", "",
       "ITEMS:", ...lines, "", ...totalsText, "", next, "",
       kind === "cancelled" ? "" : `You can check this order any time under "Check an order"${BASE_URL ? ` at ${BASE_URL}` : ""} with this email and your order number.`,
+      kind !== "cancelled" && BASE_URL ? `Invoice INV-${o.number}: ${await invoiceLink(o)}` : "",
       s.contact ? `\nQuestions? ${s.contact}` : "", "", `— ${s.brand}`
     ].join("\n");
     const html = emailHtml(s, {
@@ -670,7 +671,7 @@ Open the rep app: ${replink}` : "", "", `— ${s.brand}`].filter((x) => x !== ""
       title: `Order ${o.number}`, preheader: `Order ${o.number} · ${$(o.total_cents)}`,
       badge: kind === "paid" ? { text: "Paid", tone: "ok" } : kind === "updated" ? { text: "Updated", tone: "warn" } : kind === "shipped" ? { text: delivered ? "Delivered" : "Shipped", tone: "ok" } : kind === "cancelled" ? { text: "Cancelled", tone: "bad" } : { text: "Received", tone: "info" },
       intro: `Hi ${o.name}, ${intro.charAt(0).toLowerCase() + intro.slice(1)}`,
-      facts: [[delivery ? "Delivery" : "Shipping", escHtml(how) + (o.shipping_cents ? ` · ${$(o.shipping_cents)}` : " · free")], ...(kind === "shipped" && !delivered && o.eta ? [["Estimated arrival", escHtml(etaText(o.eta))]] : []), ...(o.tracking ? [["Tracking", track ? `<a href="${escHtml(track)}" style="color:${BLUE}">${escHtml(`${o.carrier || ""} ${o.tracking}`.trim())}</a>` : escHtml(`${o.carrier || ""} ${o.tracking}`.trim())]] : [])],
+      facts: [[delivery ? "Delivery" : "Shipping", escHtml(how) + (o.shipping_cents ? ` · ${$(o.shipping_cents)}` : " · free")], ...(kind !== "cancelled" && BASE_URL ? [["Invoice", `<a href="${escHtml(await invoiceLink(o))}" style="color:${BLUE}">View / print invoice INV-${escHtml(o.number)}</a>`]] : []), ...(kind === "shipped" && !delivered && o.eta ? [["Estimated arrival", escHtml(etaText(o.eta))]] : []), ...(o.tracking ? [["Tracking", track ? `<a href="${escHtml(track)}" style="color:${BLUE}">${escHtml(`${o.carrier || ""} ${o.tracking}`.trim())}</a>` : escHtml(`${o.carrier || ""} ${o.tracking}`.trim())]] : [])],
       address: { label: delivery ? "Delivering to" : "Shipping to", lines: addrLines }, items, totals: totalRows,
       note: changes.length && kind === "updated" ? { label: "What changed", text: changes.join(" · ") } : changes.length && kind === "cancelled" ? { label: "Reason", text: changes.join(" · ") } : null,
       after: `${escHtml(next)}${BASE_URL && kind !== "cancelled" ? `<br><br><span style="color:${INK2};font-size:13px">You can check this order any time under "Check an order" on our site with this email address and your order number.</span>` : ""}`,
@@ -895,7 +896,8 @@ admin.use(wrap(auth));
 // Sales reps get the top of the admin only (dashboard, orders, customers, commissions, their account), scoped to their own customers.
 const REP_OK = [[/^\/stats$/, "GET"], [/^\/orders(\.csv)?$/, "GET"], [/^\/orders\/\d+$/, "GET"], [/^\/orders\/\d+\/(note|paylink)$/, "POST"],
   [/^\/customers$/, "GET"], [/^\/customers$/, "POST"], [/^\/customers\/\d+$/, "PATCH"], [/^\/commissions(\.csv)?$/, "GET"],
-  [/^\/catalog$/, "GET"], [/^\/orders$/, "POST"], [/^\/hub\/commissions$/, "GET"]];
+  [/^\/catalog$/, "GET"], [/^\/orders$/, "POST"], [/^\/hub\/commissions$/, "GET"],
+  [/^\/ar$/, "GET"], [/^\/analytics$/, "GET"], [/^\/orders\/\d+\/invoice(-link)?$/, "GET"]];
 admin.use((req, res, next) => (req.user.role !== "rep" || REP_OK.some(([re, m]) => re.test(req.path) && m === req.method) ? next() : bad(res, "Sales reps can only see their own customers, orders and commissions.", 403)));
 const isRep = (req) => req.user.role === "rep";
 
@@ -975,6 +977,110 @@ admin.post("/orders/:id/email", wrap(async (req, res) => {
   if (!results || !results.length) return bad(res, "Order emails are turned off, or no address is set, under Site settings → Order emails.");
   if (failed.length) return bad(res, failed[0].error);
   res.json({ ok: true, sent: results.length });
+}));
+/* ---------- invoices ---------- */
+// every order is an invoice: INV-<order number>, due created + terms (the store's default when the order was placed)
+async function invoiceLink(o) { const st = await pinState(); return `${BASE_URL}/invoice/${encodeURIComponent(o.number)}?k=${hmac(st.secret, "inv:" + o.number).slice(0, 24)}`; }
+const termsOf = (o, s) => (o.terms_days ?? Number(s.invoiceTermsDays ?? 30));
+const dueOf = (o, s) => new Date(new Date(o.created_at).getTime() + termsOf(o, s) * 864e5);
+async function invoiceHtml(o, s) {
+  const { rows: items } = await q("select name, strength, unit_cents, qty from order_items where order_id = $1 order by id", [o.id]);
+  const rep = o.rep_id ? (await q("select name, email from users where id = $1", [o.rep_id])).rows[0] : null;
+  const $ = (c) => "$" + ((c || 0) / 100).toFixed(2), d = (x) => new Date(x).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+  const a = o.address || {}, paid = !!o.paid_at, terms = termsOf(o, s), due = dueOf(o, s), late = !paid && o.status !== "cancelled" && Date.now() > due.getTime();
+  const logo = s.siteLogoV ? `<img src="/site-logo?v=${encodeURIComponent(s.siteLogoV)}" alt="" style="height:44px">` : `<strong style="font-size:22px">${escHtml(s.brand)}</strong>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Invoice INV-${escHtml(o.number)} · ${escHtml(s.brand)}</title>
+<style>body{font:14px/1.45 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111;margin:0;background:#f3f5f9}.pg{max-width:820px;margin:24px auto;background:#fff;padding:36px 40px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+h1{font-size:28px;margin:0;letter-spacing:.04em}table{width:100%;border-collapse:collapse}.items th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#555;border-bottom:2px solid #111;padding:8px}.items td{padding:9px 8px;border-bottom:1px solid #e3e6ec}.n{text-align:right;white-space:nowrap}
+.grid{display:flex;gap:24px;flex-wrap:wrap;margin:24px 0}.grid>div{flex:1;min-width:200px}.lab{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#666;margin-bottom:4px}.tot td{padding:5px 8px}.tot .big td{font-size:18px;font-weight:700;border-top:2px solid #111;padding-top:10px}
+.stamp{display:inline-block;padding:4px 12px;border-radius:999px;font-weight:700;font-size:12px;letter-spacing:.08em}.paid{background:#dcfce7;color:#166534}.due{background:#fef3c7;color:#92400e}.late{background:#fee2e2;color:#991b1b}.void{background:#e5e7eb;color:#374151}
+.bar{max-width:820px;margin:16px auto 0;text-align:right}.bar button{font:600 14px system-ui;padding:8px 16px;border-radius:8px;border:1px solid #0f1b33;background:#0f1b33;color:#fff;cursor:pointer}
+.items th.n{text-align:right}@media print{body{background:#fff}.pg{box-shadow:none;margin:0;max-width:none;border-radius:0}.bar{display:none}}@media(max-width:600px){.pg{padding:20px 16px;margin:0;border-radius:0}}</style></head><body>
+<div class="bar"><button onclick="print()">Print / save as PDF</button></div><div class="pg">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap"><div>${logo}<div style="margin-top:6px;color:#555">${escHtml(s.contact || "")}</div></div>
+<div style="text-align:right"><h1>INVOICE</h1><div style="font-size:16px;font-weight:600">INV-${escHtml(o.number)}</div><div style="margin-top:6px">${o.status === "cancelled" ? '<span class="stamp void">VOID</span>' : paid ? '<span class="stamp paid">PAID</span>' : late ? '<span class="stamp late">PAST DUE</span>' : '<span class="stamp due">DUE</span>'}</div></div></div>
+<div class="grid"><div><div class="lab">Bill to</div><strong>${escHtml(o.name)}</strong><br>${[a.line1, a.line2, `${a.city || ""}, ${a.state || ""} ${a.zip || ""}`].filter((x) => x && x.trim() !== ",").map(escHtml).join("<br>")}<br>${escHtml(o.email || "")}${o.phone ? `<br>${escHtml(o.phone)}` : ""}</div>
+<div><table><tr><td class="lab">Invoice date</td><td class="n">${d(o.created_at)}</td></tr><tr><td class="lab">Terms</td><td class="n">${terms ? `Net ${terms}` : "Due on receipt"}</td></tr><tr><td class="lab">Due date</td><td class="n"><strong>${d(due)}</strong></td></tr><tr><td class="lab">Order</td><td class="n">${escHtml(o.number)}</td></tr>${rep ? `<tr><td class="lab">Sales rep</td><td class="n">${escHtml(rep.name)}</td></tr>` : ""}${paid ? `<tr><td class="lab">Paid</td><td class="n">${d(o.paid_at)}${o.pay_method && o.pay_method !== "request" ? ` · ${escHtml(o.pay_method)}` : ""}${o.pay_ref ? ` #${escHtml(o.pay_ref)}` : ""}</td></tr>` : ""}</table></div></div>
+<table class="items"><tr><th>Item</th><th class="n">Qty</th><th class="n">Unit price</th><th class="n">Amount</th></tr>${items.map((i) => `<tr><td>${escHtml(`${i.name} ${i.strength}`.trim())}</td><td class="n">${i.qty}</td><td class="n">${$(i.unit_cents)}</td><td class="n">${$(i.unit_cents * i.qty)}</td></tr>`).join("")}</table>
+<table class="tot" style="width:auto;margin:14px 0 0 auto"><tr><td>Subtotal</td><td class="n">${$(o.subtotal_cents)}</td></tr>${o.discount_cents ? `<tr><td>Discount${o.discount_code ? ` (${escHtml(o.discount_code)})` : ""}</td><td class="n">−${$(o.discount_cents)}</td></tr>` : ""}<tr><td>${escHtml(o.shipping_method || "Shipping")}</td><td class="n">${o.shipping_cents ? $(o.shipping_cents) : "Free"}</td></tr>
+<tr class="big"><td>Total</td><td class="n">${$(o.total_cents)}</td></tr>${paid ? `<tr><td>Paid</td><td class="n">−${$(o.paid_cents ?? o.total_cents)}</td></tr><tr><td><strong>Balance due</strong></td><td class="n"><strong>${$(Math.max(0, o.total_cents - (o.paid_cents ?? o.total_cents)))}</strong></td></tr>` : `<tr><td><strong>Balance due</strong></td><td class="n"><strong>${$(o.status === "cancelled" ? 0 : o.total_cents)}</strong></td></tr>`}</table>
+${!paid && s.paymentInstructions ? `<div style="margin-top:24px"><div class="lab">How to pay</div><div style="white-space:pre-line">${escHtml(s.paymentInstructions)}</div></div>` : ""}
+<p style="margin-top:28px;color:#666;font-size:12px">For laboratory research use only. Not for human consumption. Thank you for your business — ${escHtml(s.brand)}.</p></div></body></html>`;
+}
+app.get("/invoice/:number", wrap(async (req, res) => { // the customer's link from their emails (signed, no sign-in needed)
+  const n = String(req.params.number || ""), st = await pinState();
+  if (!/^[A-Za-z0-9-]{1,40}$/.test(n) || !sameStr(String(req.query.k || "").padEnd(24, "x").slice(0, 24), hmac(st.secret, "inv:" + n).slice(0, 24))) return res.status(404).type("text").send("Invoice not found.");
+  const { rows: [o] } = await q("select * from orders where number = $1", [n]); if (!o) return res.status(404).type("text").send("Invoice not found.");
+  res.set("Cache-Control", "no-store").type("html").send(await invoiceHtml(o, await getSettings()));
+}));
+admin.get("/orders/:id/invoice", wrap(async (req, res) => {
+  const { rows: [o] } = await q("select * from orders where id = $1", [intOrNull(req.params.id)]);
+  if (!o || (isRep(req) && o.rep_id !== req.user.id)) return bad(res, "Not found", 404);
+  res.set("Cache-Control", "no-store").type("html").send(await invoiceHtml(o, await getSettings()));
+}));
+admin.get("/orders/:id/invoice-link", wrap(async (req, res) => {
+  const { rows: [o] } = await q("select number, rep_id from orders where id = $1", [intOrNull(req.params.id)]);
+  if (!o || (isRep(req) && o.rep_id !== req.user.id)) return bad(res, "Not found", 404);
+  const st = await pinState(); res.json({ url: `${BASE_URL || originOf(req)}/invoice/${encodeURIComponent(o.number)}?k=${hmac(st.secret, "inv:" + o.number).slice(0, 24)}` });
+}));
+// record a payment received outside the card checkout (check, ACH, wire, cash, Zelle…): the invoice is paid
+admin.post("/orders/:id/payment", wrap(async (req, res) => {
+  const id = intOrNull(req.params.id), b = req.body || {}, who = req.user.name || req.user.email;
+  const { rows: [o] } = await q("select * from orders where id = $1", [id]);
+  if (!o) return bad(res, "Not found", 404);
+  if (o.status === "cancelled") return bad(res, "This order is cancelled.");
+  if (o.paid_at) return bad(res, "This invoice is already paid.");
+  const method = ["check", "ach", "wire", "cash", "zelle", "card", "other"].includes(b.method) ? b.method : "other";
+  const when = /^\d{4}-\d{2}-\d{2}$/.test(String(b.date || "")) ? new Date(b.date + "T12:00:00-06:00") : new Date();
+  const amount = centsOrNull(String(b.amount ?? "").replace(/[$,\s]/g, "")) ?? o.total_cents;
+  await q(`update orders set paid_at = $2, paid_cents = $3, pay_method = $4, pay_ref = $5, status = case when status in ('new','confirmed') then 'paid' else status end, updated_at = now() where id = $1`, [id, when, amount, method, str(b.ref, 80)]);
+  await q("insert into order_events(order_id, who, text) values ($1, $2, $3)", [id, who, `Payment recorded: $${(amount / 100).toFixed(2)} by ${method}${b.ref ? ` #${str(b.ref, 80)}` : ""}${amount !== o.total_cents ? ` (invoice total $${(o.total_cents / 100).toFixed(2)})` : ""}`]);
+  notifyOrder(id, "paid", { repOnly: true, who }).catch(() => {}); // the rep hears the commission is earned
+  res.json({ ok: true });
+}));
+// AR: open invoices with aging, and paid invoices (reps: their own)
+admin.get("/ar", wrap(async (req, res) => {
+  const s = await getSettings(), mine = isRep(req) ? "and o.rep_id = " + Number(req.user.id) : "";
+  const { rows } = await q(`select o.id, o.number, o.name, o.email, o.status, o.created_at, o.total_cents, o.paid_at, o.paid_cents, o.pay_method, o.pay_ref, o.terms_days, o.customer_id, o.rep_id, u.name rep_name
+    from orders o left join users u on u.id = o.rep_id where o.status <> 'cancelled' ${mine} and (o.paid_at is null or o.paid_at > now() - interval '400 days') order by o.created_at desc limit 5000`);
+  const now = Date.now();
+  const out = rows.map((o) => { const due = dueOf(o, s), past = Math.floor((now - due.getTime()) / 864e5);
+    return { id: o.id, number: o.number, customer: o.name, customer_id: o.customer_id, email: o.email, rep: o.rep_name || "", rep_id: o.rep_id, created_at: o.created_at, due: due.toISOString(), total_cents: o.total_cents,
+      paid_at: o.paid_at, paid_cents: o.paid_cents, pay_method: o.pay_method, pay_ref: o.pay_ref, open: !o.paid_at, days_past_due: o.paid_at ? null : past,
+      bucket: o.paid_at ? "paid" : past <= 0 ? "current" : past <= 30 ? "1-30" : past <= 60 ? "31-60" : past <= 90 ? "61-90" : "90+",
+      days_to_pay: o.paid_at ? Math.max(0, Math.round((new Date(o.paid_at) - new Date(o.created_at)) / 864e5)) : null }; });
+  res.json({ invoices: out, termsDays: Number(s.invoiceTermsDays ?? 30) });
+}));
+admin.put("/ar/terms", owner, wrap(async (req, res) => {
+  const v = Math.round(Number(req.body?.days)); if (!isFinite(v) || v < 0 || v > 365) return bad(res, "Days from 0 to 365.");
+  await q("insert into settings(key,value) values ('invoiceTermsDays',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(v)]); res.json({ ok: true });
+}));
+// analytics: sales trends, by rep, products and customers (reps: their own numbers)
+admin.get("/analytics", wrap(async (req, res) => {
+  const months = Math.min(36, Math.max(3, intOrNull(req.query.months) || 12));
+  const repId = isRep(req) ? req.user.id : intOrNull(req.query.rep);
+  const w = `o.status <> 'cancelled' and o.created_at >= date_trunc('month', (now() at time zone 'America/Chicago')) - interval '${months - 1} months'` + (repId ? ` and o.rep_id = ${Number(repId)}` : "");
+  const net = "(o.subtotal_cents - o.discount_cents)";
+  const [monthly, weekly, byRep, repMonthly, products, customers, totals] = await Promise.all([
+    q(`select to_char(o.created_at at time zone 'America/Chicago', 'YYYY-MM') ym, count(*)::int orders, sum(${net})::bigint sales, sum(o.total_cents)::bigint billed,
+         coalesce(sum(case when o.paid_at is not null then o.total_cents end),0)::bigint collected, count(distinct coalesce(o.customer_id::text, lower(o.email)))::int customers,
+         coalesce(sum((select sum(i.qty) from order_items i where i.order_id = o.id)),0)::int units
+       from orders o where ${w} group by 1 order by 1`),
+    q(`select to_char(date_trunc('week', o.created_at at time zone 'America/Chicago'), 'YYYY-MM-DD') wk, count(*)::int orders, sum(${net})::bigint sales
+       from orders o where o.status <> 'cancelled' and o.created_at > now() - interval '13 weeks'${repId ? ` and o.rep_id = ${Number(repId)}` : ""} group by 1 order by 1`),
+    q(`select coalesce(u.name, '(no rep)') rep, o.rep_id, count(*)::int orders, sum(${net})::bigint sales, count(distinct coalesce(o.customer_id::text, lower(o.email)))::int customers,
+         coalesce(sum(case when o.paid_at is null then o.total_cents end),0)::bigint open_ar
+       from orders o left join users u on u.id = o.rep_id where ${w} group by 1, 2 order by sales desc`),
+    q(`select coalesce(u.name, '(no rep)') rep, to_char(o.created_at at time zone 'America/Chicago', 'YYYY-MM') ym, sum(${net})::bigint sales
+       from orders o left join users u on u.id = o.rep_id where ${w} group by 1, 2`),
+    q(`select i.name || ' ' || i.strength product, sum(i.qty)::int units, sum(i.unit_cents * i.qty)::bigint sales${req.user.role === "owner" ? ", sum(coalesce(p.cost_cents,0) * i.qty)::bigint cost" : ""}
+       from order_items i join orders o on o.id = i.order_id left join products p on p.id = i.product_id where ${w} group by 1 order by sales desc limit 15`),
+    q(`select o.name customer, count(*)::int orders, sum(${net})::bigint sales, max(o.created_at) last_order from orders o where ${w} group by 1 order by sales desc limit 15`),
+    q(`select count(*)::int orders, coalesce(sum(${net}),0)::bigint sales, coalesce(avg(${net}),0)::int avg_order from orders o where ${w}`),
+  ]);
+  const num = (r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === "string" && /^-?\d+$/.test(v) && k !== "ym" && k !== "wk" ? Number(v) : v]));
+  const { rows: reps } = req.user.role === "rep" ? { rows: [] } : await q("select id, name from users where role = 'rep' order by name");
+  res.json({ months, rep: repId || null, reps, monthly: monthly.rows.map(num), weekly: weekly.rows.map(num), byRep: byRep.rows.map(num), repMonthly: repMonthly.rows.map(num), products: products.rows.map(num), customers: customers.rows.map(num), totals: num(totals.rows[0]) });
 }));
 /* ---------- promo banner (admins and managers) ---------- */
 admin.get("/banner", wrap(async (req, res) => { const s = await getSettings(); res.json({ text: s.announcement || "", on: !!s.announcementOn, scroll: s.bannerScroll !== false, tone: s.bannerTone || "navy", until: s.bannerUntil || "", link: s.bannerLink || "", speed: Math.min(90, Math.max(6, Number(s.bannerSpeed) || 30)), sticky: s.bannerSticky !== false }); }));
@@ -2047,6 +2153,7 @@ admin.put("/settings", owner, wrap(async (req, res) => {
     if (k === "mailMode") v = ["smtp", "resend", "graph"].includes(v) ? v : "";
     if (k === "custIdleMin" || k === "staffIdleMin") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 43200) return bad(res, "Idle sign-out: enter minutes (0 = never, up to 43200)."); }
     if (k === "custCloseOut" || k === "showSoldOut" || k === "lowStockEmailOn") v = !!v;
+    if (k === "invoiceTermsDays") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 365) return bad(res, "Invoice terms: days from 0 to 365."); }
     if (k === "lowStockAt") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 100000) return bad(res, "Low-stock alert: enter a whole number."); }
     if (k === "mailFrom" && v && !/^[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+$/.test(String(v).trim()) && !/^[^<>]+<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>$/.test(String(v).trim())) return bad(res, 'The From address should look like "Name <you@domain.com>" or just the address.');
     if (k === "perks") {

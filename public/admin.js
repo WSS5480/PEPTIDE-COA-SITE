@@ -80,7 +80,7 @@ function drawLogin(msg) {
 /* ---------- shell ---------- */
 // [key, label, who]: "all" = owner, staff and sales reps · "team" = owner and staff · "owner" · "ownerrep" = owner and reps. "line" draws the divider:
 // sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
-const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["line"],
+const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["ar", "Invoices & AR", "all"], ["analytics", "Analytics", "all"], ["line"],
   ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["promo", "Promo banner", "team"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["line2"],
   // below the second line: the things you reach from either app (the case tracker links here too)
   ["staff", "Team logins", "owner"], ["setup", "Email & approvals", "owner"], ["geo", "Geofencing", "owner"], ["apps", "Apps & downloads", "all"], ["howto", "How to", "all"], ["account", "My account", "all"]];
@@ -113,7 +113,7 @@ async function go(v, id, opts = {}) {
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  await ({ dashboard, orders, neworder, fill, promo, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps, geo, howto }[v] || dashboard)();
+  await ({ dashboard, orders, neworder, fill, promo, ar, analytics, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps, geo, howto }[v] || dashboard)();
   if (v === "dashboard" && document.getElementById("hubKpi")) fillHubKpi();
   if (!opts.keepScroll) window.scrollTo(0, 0);
 }
@@ -178,6 +178,120 @@ function fillHubKpi() {
 }
 /* ---------- orders ---------- */
 let oFilter = { status: "", q: "" };
+/* ---------- record a payment (check, ACH, wire, cash…) ---------- */
+function payForm(box, o, done) {
+  const today = new Date().toLocaleDateString("en-CA");
+  box.innerHTML = `<div class="panel" style="border-color:var(--blue);margin-top:.6rem"><h2 style="margin-top:0">Record payment · INV-${esc(o.number)}</h2><div class="row2" style="align-items:end;flex-wrap:wrap">
+    <div class="field" style="max-width:10rem"><label class="eyebrow">Date received</label><input type="date" data-pd value="${today}" max="${today}"></div>
+    <div class="field" style="max-width:9rem"><label class="eyebrow">Method</label><select data-pm>${[["check", "Check"], ["ach", "ACH"], ["wire", "Wire"], ["zelle", "Zelle"], ["cash", "Cash"], ["card", "Card (outside Stripe)"], ["other", "Other"]].map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select></div>
+    <div class="field" style="max-width:10rem"><label class="eyebrow">Check # / reference</label><input data-pr maxlength="80"></div>
+    <div class="field" style="max-width:9rem"><label class="eyebrow">Amount</label><input data-pa inputmode="decimal" value="${((o.total_cents || 0) / 100).toFixed(2)}"></div>
+    <button class="btn solid" type="button" data-psave>Mark paid</button><button class="btn" type="button" data-pcancel>Cancel</button></div></div>`;
+  box.querySelector("[data-pcancel]").onclick = () => { box.innerHTML = ""; };
+  box.querySelector("[data-psave]").onclick = async () => {
+    const g = (k) => box.querySelector(`[data-${k}]`).value;
+    try { await api(`/orders/${o.id}/payment`, { method: "POST", body: { date: g("pd"), method: g("pm"), ref: g("pr"), amount: g("pa") } }); toast(`INV-${o.number} marked paid`); paneDirty = false; done(); } catch (e) {}
+  };
+}
+/* ---------- invoices & accounts receivable ---------- */
+let arView = "customer", arBucket = "", arRep = "", arQ = "";
+async function ar() {
+  const { invoices, termsDays } = await api("/ar");
+  const BUCKETS = [["current", "Current"], ["1-30", "1–30 days"], ["31-60", "31–60"], ["61-90", "61–90"], ["90+", "90+"]];
+  const open = invoices.filter((i) => i.open), paid = invoices.filter((i) => !i.open);
+  const sum = (l) => l.reduce((t, i) => t + i.total_cents, 0);
+  const d = (x) => new Date(x).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" });
+  const inB = (i) => !arBucket || (arBucket === "past" ? i.bucket !== "current" : i.bucket === arBucket);
+  const match = (i) => (!arRep || String(i.rep_id || "") === arRep) && (!arQ || `${i.number} ${i.customer} ${i.email} ${i.rep}`.toLowerCase().includes(arQ.toLowerCase()));
+  const openF = open.filter(match), paidF = paid.filter(match);
+  const reps = [...new Map(invoices.filter((i) => i.rep_id).map((i) => [String(i.rep_id), i.rep])).entries()];
+  const pastDue = open.filter((i) => i.bucket !== "current");
+  const pillB = (b) => `<span class="pill ${b === "current" ? "st-shipped" : b === "1-30" ? "st-new" : "st-cancelled"}">${b === "current" ? "Current" : b + " days"}</span>`;
+  const group = (key, label) => { const m = new Map(); openF.filter(inB).forEach((i) => { const k = i[key] || "(none)"; const r = m.get(k) || { name: k, n: 0, total: 0, b: {} }; r.n++; r.total += i.total_cents; r.b[i.bucket] = (r.b[i.bucket] || 0) + i.total_cents; m.set(k, r); });
+    const rows = [...m.values()].sort((a, b) => b.total - a.total);
+    return rows.length ? `<div class="tblwrap"><table class="tbl compact"><thead><tr><th>${label}</th><th class="num">Invoices</th>${BUCKETS.map(([, l]) => `<th class="num">${l}</th>`).join("")}<th class="num">Total open</th></tr></thead><tbody>
+      ${rows.map((r) => `<tr class="click" data-arpick="${esc(r.name)}" data-arkey="${key}"><td><strong>${esc(r.name)}</strong></td><td class="num">${r.n}</td>${BUCKETS.map(([k]) => `<td class="num">${r.b[k] ? money(r.b[k]) : "—"}</td>`).join("")}<td class="num"><strong>${money(r.total)}</strong></td></tr>`).join("")}
+      <tr><td><strong>Total</strong></td><td class="num">${rows.reduce((t, r) => t + r.n, 0)}</td>${BUCKETS.map(([k]) => `<td class="num"><strong>${money(rows.reduce((t, r) => t + (r.b[k] || 0), 0))}</strong></td>`).join("")}<td class="num"><strong>${money(rows.reduce((t, r) => t + r.total, 0))}</strong></td></tr></tbody></table></div>` : `<p class="muted">No open invoices${arBucket ? " in this bucket" : ""}.</p>`; };
+  const openTable = () => { const l = openF.filter(inB).sort((a, b) => (b.days_past_due ?? 0) - (a.days_past_due ?? 0));
+    return l.length ? `<div class="tblwrap"><table class="tbl compact"><thead><tr><th>Invoice</th><th>Customer</th><th>Rep</th><th>Date</th><th>Due</th><th class="num">Days past due</th><th>Aging</th><th class="num">Amount</th><th></th></tr></thead><tbody>
+      ${l.map((i) => `<tr data-inv="${i.id}"><td class="mono"><a href="#" data-openorder="${i.id}">INV-${esc(i.number)}</a></td><td>${esc(i.customer)}</td><td>${esc(i.rep || "—")}</td><td>${d(i.created_at)}</td><td>${d(i.due)}</td><td class="num">${i.days_past_due > 0 ? i.days_past_due : "—"}</td><td>${pillB(i.bucket)}</td><td class="num"><strong>${money(i.total_cents)}</strong></td>
+        <td style="white-space:nowrap"><a class="btn" href="/api/admin/orders/${i.id}/invoice" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">Invoice</a>${isRep() ? "" : ` <button class="btn solid" type="button" data-arpay="${i.id}">Record payment</button>`}</td></tr><tr><td colspan="9" style="padding:0;border:0"><div data-paybox="${i.id}"></div></td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No open invoices${arBucket ? " in this bucket" : ""}.</p>`; };
+  const paidTable = () => { const l = paidF.sort((a, b) => new Date(b.paid_at) - new Date(a.paid_at)), avg = l.length ? Math.round(l.reduce((t, i) => t + i.days_to_pay, 0) / l.length) : 0;
+    return l.length ? `<p class="muted">${l.length} paid · ${money(sum(l))} collected · average ${avg} day${avg === 1 ? "" : "s"} to pay.</p><div class="tblwrap"><table class="tbl compact"><thead><tr><th>Invoice</th><th>Customer</th><th>Rep</th><th>Invoice date</th><th>Paid</th><th>Method</th><th class="num">Days to pay</th><th class="num">Amount</th></tr></thead><tbody>
+      ${l.map((i) => `<tr><td class="mono"><a href="#" data-openorder="${i.id}">INV-${esc(i.number)}</a></td><td>${esc(i.customer)}</td><td>${esc(i.rep || "—")}</td><td>${d(i.created_at)}</td><td>${d(i.paid_at)}</td><td>${esc(i.pay_method === "request" ? "" : i.pay_method || "")}${i.pay_ref ? ` #${esc(i.pay_ref)}` : ""}</td><td class="num">${i.days_to_pay}</td><td class="num">${money(i.paid_cents ?? i.total_cents)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No paid invoices yet.</p>`; };
+  pane().innerHTML = `<header><h1>Invoices &amp; AR</h1><a class="btn" href="#" id="arCsv">Export CSV</a></header>
+    <p class="muted">Every order is an invoice (INV-&lt;order #&gt;). ${isRep() ? "Your customers' invoices." : "It's open until it's paid by card or a payment is recorded."} Aging counts days past the due date.</p>
+    <dl class="kpis">
+      <div class="kpi${!arBucket ? " on" : ""}" data-arb=""><dt>Open AR</dt><dd>${money(sum(open))}</dd></div>
+      <div class="kpi${arBucket === "past" ? " on" : ""}" data-arb="past"><dt>Past due</dt><dd style="color:${sum(pastDue) ? "#b42318" : "inherit"}">${money(sum(pastDue))}</dd></div>
+      ${BUCKETS.map(([k, l]) => `<div class="kpi${arBucket === k ? " on" : ""}" data-arb="${k}"><dt>${l}</dt><dd>${money(sum(open.filter((i) => i.bucket === k)))}</dd></div>`).join("")}
+    </dl>
+    ${isOwner() ? `<div class="row2" style="align-items:center;margin:.4rem 0"><span class="muted">New invoices are due</span><select id="arTerms">${[0, 7, 15, 30, 45, 60].map((n) => `<option value="${n}"${termsDays === n ? " selected" : ""}>${n ? `Net ${n}` : "On receipt"}</option>`).join("")}${[0, 7, 15, 30, 45, 60].includes(termsDays) ? "" : `<option selected value="${termsDays}">Net ${termsDays}</option>`}</select><span class="muted">(each invoice keeps the terms it was created with)</span></div>` : ""}
+    <div class="row2" style="align-items:center;flex-wrap:wrap;margin:.6rem 0">
+      <div class="seg" id="arSeg">${[["customer", "By customer"], ...(isRep() ? [] : [["rep", "By rep"]]), ["open", "Open invoices"], ["paid", "Paid invoices"]].map(([k, l]) => `<button type="button" data-arv="${k}"${arView === k ? ' class="on"' : ""}>${l}</button>`).join("")}</div>
+      ${isRep() ? "" : `<select id="arRepSel"><option value="">All reps</option>${reps.map(([id, n]) => `<option value="${id}"${arRep === id ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>`}
+      <input id="arSearch" type="search" placeholder="Search invoice, customer" value="${esc(arQ)}" style="max-width:16rem">${arBucket ? `<button class="btn" type="button" data-arb="">Clear: ${esc(arBucket === "past" ? "past due" : arBucket)}</button>` : ""}</div>
+    <div class="panel" id="arBody" data-nofold>${arView === "customer" ? group("customer", "Customer") : arView === "rep" ? group("rep", "Rep") : arView === "open" ? openTable() : paidTable()}</div>`;
+  const P = pane();
+  P.onclick = async (e) => {
+    const b = e.target.closest("[data-arb]"); if (b) { arBucket = b.dataset.arb; if (arBucket && arView === "paid") arView = "open"; return ar(); }
+    const v = e.target.closest("[data-arv]"); if (v) { arView = v.dataset.arv; return ar(); }
+    const pk = e.target.closest("[data-arpick]"); if (pk) { arQ = pk.dataset.arkey === "customer" ? pk.dataset.arpick : arQ; if (pk.dataset.arkey === "rep") { const r = reps.find(([, n]) => n === pk.dataset.arpick); arRep = r ? r[0] : ""; } arView = "open"; return ar(); }
+    const oo = e.target.closest("[data-openorder]"); if (oo) { e.preventDefault(); return go("orders", +oo.dataset.openorder); }
+    const py = e.target.closest("[data-arpay]"); if (py) { const i = invoices.find((x) => x.id === +py.dataset.arpay); return payForm(P.querySelector(`[data-paybox="${i.id}"]`), { id: i.id, number: i.number, total_cents: i.total_cents }, ar); }
+    if (e.target.id === "arCsv") { e.preventDefault();
+      const rows = [["Invoice", "Customer", "Email", "Rep", "Invoice date", "Due", "Status", "Aging", "Days past due", "Amount", "Paid date", "Method", "Reference"], ...[...openF, ...paidF].map((i) => [`INV-${i.number}`, i.customer, i.email, i.rep, i.created_at.slice(0, 10), i.due.slice(0, 10), i.open ? "Open" : "Paid", i.open ? i.bucket : "", i.open && i.days_past_due > 0 ? i.days_past_due : "", (i.total_cents / 100).toFixed(2), i.paid_at ? String(i.paid_at).slice(0, 10) : "", i.pay_method === "request" ? "" : i.pay_method || "", i.pay_ref || ""])];
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([rows.map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n")], { type: "text/csv" })); a.download = `invoices-ar-${new Date().toLocaleDateString("en-CA")}.csv`; a.click(); }
+  };
+  if (document.getElementById("arRepSel")) document.getElementById("arRepSel").onchange = (e) => { arRep = e.target.value; ar(); };
+  let t; document.getElementById("arSearch").oninput = (e) => { clearTimeout(t); t = setTimeout(() => { arQ = e.target.value; ar().then(() => { const s = document.getElementById("arSearch"); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }); }, 300); };
+  if (document.getElementById("arTerms")) document.getElementById("arTerms").onchange = async (e) => { await api("/ar/terms", { method: "PUT", body: { days: +e.target.value } }); toast("Terms for new invoices saved"); };
+}
+/* ---------- analytics ---------- */
+let anMonths = 12, anRep = "";
+const barChart = (data, { label, value, fmt, color = "var(--blue, #2563eb)", h = 180 }) => {
+  if (!data.length) return '<p class="muted">No sales in this period yet.</p>';
+  const max = Math.max(1, ...data.map(value)), w = 100 / data.length;
+  return `<svg viewBox="0 0 100 ${h / 3}" preserveAspectRatio="none" style="width:100%;height:${h}px;display:block" role="img" aria-label="chart">${data.map((r, i) => { const bh = (value(r) / max) * (h / 3 - 2); return `<rect x="${i * w + w * 0.15}" y="${h / 3 - bh}" width="${w * 0.7}" height="${bh}" rx=".6" fill="${color}"><title>${esc(label(r))}: ${esc(fmt(value(r)))}</title></rect>`; }).join("")}</svg>
+    <div style="display:grid;grid-template-columns:repeat(${data.length},1fr);font-size:.68rem;color:var(--muted);text-align:center;gap:2px;margin-top:4px">${data.map((r) => `<span title="${esc(fmt(value(r)))}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(r))}</span>`).join("")}</div>
+    <div style="display:grid;grid-template-columns:repeat(${data.length},1fr);font-size:.66rem;text-align:center;gap:2px">${data.map((r) => `<span style="overflow:hidden;white-space:nowrap">${esc(fmt(value(r)))}</span>`).join("")}</div>`;
+};
+async function analytics() {
+  const j = await api(`/analytics?months=${anMonths}${anRep ? `&rep=${anRep}` : ""}`);
+  const ymLabel = (ym) => { const [y, m] = ym.split("-"); return new Date(+y, +m - 1, 1).toLocaleDateString("en-US", { month: "short" }) + (m === "01" ? ` ’${y.slice(2)}` : ""); };
+  // fill missing months so the trend has no gaps
+  const months = []; { const now = new Date(); for (let i = j.months - 1; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`); } }
+  const M = months.map((ym) => j.monthly.find((r) => r.ym === ym) || { ym, orders: 0, sales: 0, billed: 0, collected: 0, customers: 0, units: 0 });
+  const cur = M[M.length - 1], prev = M[M.length - 2] || { sales: 0, orders: 0 };
+  const pct = (a, b) => (b ? `${a >= b ? "▲" : "▼"} ${Math.abs(Math.round(((a - b) / b) * 100))}% vs last month` : "");
+  const k = (c) => (c >= 100000 ? "$" + (c / 100000).toFixed(1) + "k" : money(c));
+  const totalSales = j.byRep.reduce((t, r) => t + r.sales, 0) || 1;
+  const repNames = [...new Set(j.repMonthly.map((r) => r.rep))].sort();
+  pane().innerHTML = `<header><h1>Analytics</h1><div class="row2"><select id="anMonths">${[3, 6, 12, 24].map((n) => `<option value="${n}"${anMonths === n ? " selected" : ""}>Last ${n} months</option>`).join("")}</select>
+      ${isRep() ? "" : `<select id="anRep"><option value="">All reps</option>${j.reps.map((r) => `<option value="${r.id}"${String(anRep) === String(r.id) ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select>`}</div></header>
+    <p class="muted">Sales = products after discounts, before shipping; cancelled orders excluded.${isRep() ? " Your customers only." : ""}</p>
+    <dl class="kpis">
+      <div class="kpi"><dt>Sales · this month</dt><dd>${money(cur.sales)}</dd><small class="muted">${pct(cur.sales, prev.sales)}</small></div>
+      <div class="kpi"><dt>Orders · this month</dt><dd>${cur.orders}</dd><small class="muted">${pct(cur.orders, prev.orders)}</small></div>
+      <div class="kpi"><dt>Sales · ${j.months} months</dt><dd>${money(j.totals.sales)}</dd></div>
+      <div class="kpi"><dt>Orders · ${j.months} months</dt><dd>${j.totals.orders}</dd></div>
+      <div class="kpi"><dt>Average order</dt><dd>${money(j.totals.avg_order)}</dd></div>
+      <div class="kpi"><dt>Vials sold</dt><dd>${M.reduce((t, r) => t + (r.units || 0), 0)}</dd></div></dl>
+    <div class="panel" data-nofold><h2>Sales by month</h2>${barChart(M, { label: (r) => ymLabel(r.ym), value: (r) => r.sales, fmt: k })}</div>
+    <div class="grid2"><div class="panel" data-nofold><h2>Orders by month</h2>${barChart(M, { label: (r) => ymLabel(r.ym), value: (r) => r.orders, fmt: (v) => String(v), color: "#0f7c8c", h: 140 })}</div>
+      <div class="panel" data-nofold><h2>Sales by week · last 13 weeks</h2>${barChart(j.weekly, { label: (r) => new Date(r.wk + "T12:00:00").toLocaleDateString("en-US", { month: "numeric", day: "numeric" }), value: (r) => r.sales, fmt: k, color: "#6b4bd6", h: 140 })}</div></div>
+    ${isRep() ? "" : `<div class="panel" data-nofold><h2>By rep</h2><div class="tblwrap"><table class="tbl compact"><thead><tr><th>Rep</th><th class="num">Sales</th><th>Share</th><th class="num">Orders</th><th class="num">Customers</th><th class="num">Avg order</th><th class="num">Open AR</th></tr></thead><tbody>
+      ${j.byRep.map((r) => `<tr class="click" data-anrep="${r.rep_id || ""}"><td><strong>${esc(r.rep)}</strong></td><td class="num">${money(r.sales)}</td><td style="min-width:8rem"><div style="background:var(--line,#e5e7eb);border-radius:4px;height:8px"><div style="width:${Math.round((r.sales / totalSales) * 100)}%;background:var(--blue,#2563eb);height:8px;border-radius:4px"></div></div><small class="muted">${Math.round((r.sales / totalSales) * 100)}%</small></td><td class="num">${r.orders}</td><td class="num">${r.customers}</td><td class="num">${money(r.orders ? Math.round(r.sales / r.orders) : 0)}</td><td class="num">${r.open_ar ? money(r.open_ar) : "—"}</td></tr>`).join("") || '<tr><td colspan="7" class="muted">No sales yet.</td></tr>'}</tbody></table></div>
+      ${repNames.length ? `<h2 style="font-size:1rem;margin-top:1rem">Rep sales by month</h2><div class="tblwrap"><table class="tbl compact"><thead><tr><th>Rep</th>${months.map((ym) => `<th class="num">${ymLabel(ym)}</th>`).join("")}<th class="num">Total</th></tr></thead><tbody>
+        ${repNames.map((n) => { const row = months.map((ym) => (j.repMonthly.find((r) => r.rep === n && r.ym === ym) || { sales: 0 }).sales); return `<tr><td><strong>${esc(n)}</strong></td>${row.map((v) => `<td class="num">${v ? k(v) : "—"}</td>`).join("")}<td class="num"><strong>${k(row.reduce((t, v) => t + v, 0))}</strong></td></tr>`; }).join("")}</tbody></table></div>` : ""}</div>`}
+    <div class="grid2"><div class="panel" data-nofold><h2>Top products</h2><div class="tblwrap"><table class="tbl compact"><thead><tr><th>Product</th><th class="num">Vials</th><th class="num">Sales</th>${isOwner() ? '<th class="num">Margin</th>' : ""}</tr></thead><tbody>
+        ${j.products.map((p) => `<tr><td>${esc(p.product)}</td><td class="num">${p.units}</td><td class="num">${money(p.sales)}</td>${isOwner() ? `<td class="num">${p.cost ? Math.round(((p.sales - p.cost) / p.sales) * 100) + "%" : "—"}</td>` : ""}</tr>`).join("") || '<tr><td colspan="4" class="muted">No sales yet.</td></tr>'}</tbody></table></div></div>
+      <div class="panel" data-nofold><h2>Top customers</h2><div class="tblwrap"><table class="tbl compact"><thead><tr><th>Customer</th><th class="num">Orders</th><th class="num">Sales</th><th>Last order</th></tr></thead><tbody>
+        ${j.customers.map((c) => `<tr><td>${esc(c.customer)}</td><td class="num">${c.orders}</td><td class="num">${money(c.sales)}</td><td>${new Date(c.last_order).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">No sales yet.</td></tr>'}</tbody></table></div></div></div>`;
+  document.getElementById("anMonths").onchange = (e) => { anMonths = +e.target.value; analytics(); };
+  if (document.getElementById("anRep")) document.getElementById("anRep").onchange = (e) => { anRep = e.target.value; analytics(); };
+  pane().onclick = (e) => { const r = e.target.closest("[data-anrep]"); if (r && r.dataset.anrep) { anRep = r.dataset.anrep; analytics(); window.scrollTo(0, 0); } };
+}
 /* ---------- promo banner: admins and managers ---------- */
 async function promo() {
   if (isRep()) return dashboard();
@@ -310,7 +424,7 @@ async function orderDetail(id) {
   const unpaid = !o.paid_at && o.status !== "cancelled";
   const stripeLink = o.stripe_pi ? `https://dashboard.stripe.com/${st && st.mode === "test" ? "test/" : ""}payments/${encodeURIComponent(o.stripe_pi)}` : "";
   const canEdit = !isRep() && o.status !== "cancelled"; // reps and customers never edit; admins and managers do
-  pane().innerHTML = `<header><h1>Order ${esc(o.number)}</h1><div class="row2">${canEdit ? '<button class="btn solid" id="editO">Edit order</button>' : ""}${isOwner() ? '<button class="btn" id="delO" style="color:#9b1c1c;border-color:#e8b4b4">Delete</button>' : ""}<button class="btn" data-nav="orders">← All orders</button></div></header>
+  pane().innerHTML = `<header><h1>Order ${esc(o.number)}</h1><div class="row2"><a class="btn" href="/api/admin/orders/${o.id}/invoice" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">Invoice</a>${canEdit ? '<button class="btn solid" id="editO">Edit order</button>' : ""}${isOwner() ? '<button class="btn" id="delO" style="color:#9b1c1c;border-color:#e8b4b4">Delete</button>' : ""}<button class="btn" data-nav="orders">← All orders</button></div></header>
   <div id="editPanel"></div>
   <div class="two">
     <div class="stack">
@@ -327,7 +441,7 @@ async function orderDetail(id) {
           : `<p>Order request: no payment taken yet. Confirm the total with the customer and collect payment${st && st.on ? ", or send a card payment link" : ""}.</p>`}
         ${unpaid && st && st.ready ? `<div class="row2"><button class="btn" id="payLink">Create card payment link</button><span class="muted" style="align-self:center">${st.on ? "" : "Card payments are off for customers; links you create still work."}</span></div><div id="payLinkOut"></div>` : ""}
         ${!st || !st.ready ? `<p class="muted">Card payments aren't set up: add the Stripe key on the host (see Site settings → Payments).</p>` : ""}
-        ${isRep() ? "" : `<div class="row2"><button class="btn" id="resendMail">Send order email again</button></div>`}</div>
+        ${isRep() ? "" : `<div class="row2"><button class="btn" id="resendMail">Send order email again</button><button class="btn" id="invLink" type="button">Copy invoice link</button>${unpaid ? '<button class="btn solid" id="recPay" type="button">Record payment</button>' : ""}</div><div id="recPayBox"></div>`}</div>
       <div class="panel"><h2>Customer</h2>
         <p><strong>${esc(o.name)}</strong><br><a href="mailto:${esc(o.email)}?subject=${encodeURIComponent("Your order " + o.number)}">${esc(o.email)}</a>${o.phone ? `<br><a href="tel:${esc(o.phone)}">${esc(o.phone)}</a>` : ""}</p>
         <p class="eyebrow">${delivery ? "Deliver to" : "Ship to"}</p><p>${addr}</p>
@@ -394,6 +508,8 @@ async function orderDetail(id) {
       $("copyPay").onclick = () => navigator.clipboard?.writeText(r.url).then(() => toast("Link copied"), () => toast("Copy failed"));
     } finally { $("payLink").disabled = false; }
   };
+  if ($("invLink")) $("invLink").onclick = async () => { const r = await api(`/orders/${id}/invoice-link`); try { await navigator.clipboard.writeText(r.url); toast("Invoice link copied — send it to the customer"); } catch (e) { prompt("Invoice link", r.url); } };
+  if ($("recPay")) $("recPay").onclick = () => payForm($("recPayBox"), o, () => orderDetail(id));
   if ($("resendMail")) $("resendMail").onclick = async () => { $("resendMail").disabled = true; try { const r = await api(`/orders/${id}/email`, { method: "POST" }); toast(`Sent ${r.sent} email${r.sent === 1 ? "" : "s"}`); } finally { $("resendMail").disabled = false; } };
   if ($("saveMoney")) $("saveMoney").onclick = async () => {
     await api("/orders/" + id, { method: "PATCH", body: { shippingCents: Math.round(parseFloat($("oship").value || 0) * 100), discountCents: Math.round(parseFloat($("odisc").value || 0) * 100) } });
