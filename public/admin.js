@@ -186,6 +186,7 @@ async function promo() {
       <div class="row2" style="flex-wrap:wrap;align-items:end">
         <div class="field"><span class="eyebrow">Color</span><div class="seg" id="bnTone">${TONES.map(([k, l, bg, fg]) => `<button type="button" data-tone="${k}"${b.tone === k ? ' class="on"' : ""} style="background:${bg};color:${fg}">${l}</button>`).join("")}</div></div>
         <label class="chk"><input type="checkbox" id="bnScroll"${b.scroll ? " checked" : ""}> Scroll the text</label>
+        <label class="chk" title="The banner stays at the top of the screen while customers scroll down the page"><input type="checkbox" id="bnSticky"${b.sticky !== false ? " checked" : ""}> Keep it locked at the top while scrolling</label>
         <div class="field" id="bnSpeedWrap" style="min-width:15rem"${b.scroll ? "" : " hidden"}><label class="eyebrow" for="bnSpeed">Scroll speed · <span id="bnSpeedLbl"></span></label><div class="row2" style="align-items:center;flex-wrap:nowrap"><span class="muted">Slow</span><input id="bnSpeed" type="range" min="6" max="90" step="1" value="${96 - (b.speed || 30)}" style="flex:1"><span class="muted">Fast</span></div></div>
         <div class="field" style="max-width:11rem"><label class="eyebrow" for="bnUntil">Run until (optional)</label><input id="bnUntil" type="date" value="${esc(b.until)}"></div>
         <div class="field" style="min-width:14rem;flex:1"><label class="eyebrow" for="bnLink">Link when tapped (optional)</label><input id="bnLink" value="${esc(b.link)}" placeholder="/ or https://…"></div></div>
@@ -194,7 +195,7 @@ async function promo() {
   let tone = b.tone || "navy";
   const speed = () => 96 - Number($("bnSpeed").value); // slider left = slow (more seconds per pass)
   const speedName = (sec) => (sec >= 55 ? "very slow" : sec >= 38 ? "slow" : sec >= 24 ? "normal" : sec >= 14 ? "fast" : "very fast");
-  const vals = () => ({ text: $("bnText").value.trim(), scroll: $("bnScroll").checked, tone, until: $("bnUntil").value, link: $("bnLink").value.trim(), speed: speed() });
+  const vals = () => ({ text: $("bnText").value.trim(), scroll: $("bnScroll").checked, tone, until: $("bnUntil").value, link: $("bnLink").value.trim(), speed: speed(), sticky: $("bnSticky").checked });
   const prev = () => { const v = vals(), [, , bg, fg] = TONES.find((t) => t[0] === v.tone) || TONES[0], txt = v.text || "Your banner text";
     $("bnSpeedWrap").hidden = !v.scroll; $("bnSpeedLbl").textContent = speedName(v.speed);
     $("bnPrev").innerHTML = `<div style="background:${bg};color:${fg};font-size:.84rem;font-weight:600;padding:.5rem 0;white-space:nowrap;overflow:hidden;display:flex">${v.scroll ? [0, 1].map(() => `<div style="display:flex;flex:none;animation:marquee ${v.speed}s linear infinite">${(`<span style="padding:0 2rem">${esc(txt)}</span>`).repeat(6)}</div>`).join("") : `<div style="text-align:center;white-space:normal;width:100%">${esc(txt)}</div>`}</div>`; };

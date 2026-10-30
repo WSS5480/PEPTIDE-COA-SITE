@@ -7,7 +7,7 @@
 <title>Policies</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Poppins:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="/store.css?v=1793379013">
+<link rel="stylesheet" href="/store.css?v=1793379980">
 <style>
 .pol { display: grid; grid-template-columns: 14rem minmax(0, 1fr); gap: 2rem; padding-block: 2rem 4rem; align-items: start; }
 .pol nav { position: sticky; top: 5rem; display: grid; gap: .2rem; }
@@ -39,7 +39,7 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const para = (t) => { const m = /^([^:]{2,40}):\s+(.*)$/.exec(String(t)); return m ? `<strong>${esc(m[1])}.</strong> ${esc(m[2])}` : esc(t); };
   const { settings: S } = await (await fetch("/api/store")).json();
-  if (S.announcementOn && S.announcement) { const el = document.getElementById("announce"); el.hidden = false; el.className = "announce tone-" + (S.bannerTone || "navy"); if (S.bannerLink) { el.classList.add("linked"); el.onclick = () => { location.href = S.bannerLink; }; }
+  if (S.announcementOn && S.announcement) { const el = document.getElementById("announce"); el.hidden = false; el.className = "announce tone-" + (S.bannerTone || "navy"); if (S.bannerSticky !== false) { document.body.classList.add("ann-sticky"); setTimeout(() => document.documentElement.style.setProperty("--annh", el.offsetHeight + "px"), 50); } if (S.bannerLink) { el.classList.add("linked"); el.onclick = () => { location.href = S.bannerLink; }; }
     if (S.bannerScroll) { const i = `<span>${esc(S.announcement)}</span>`.repeat(6); el.classList.add("scroll"); el.innerHTML = `<div class="mq">${i}</div><div class="mq" aria-hidden="true">${i}</div>`; el.querySelectorAll(".mq").forEach((m) => { m.style.animationDuration = (S.bannerSpeed || 30) + "s"; }); } else el.textContent = S.announcement; }
   const name = S.brand || "360 Medical Peptides";
   document.title = "Policies · " + name; $("brand").textContent = name;

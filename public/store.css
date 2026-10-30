@@ -415,3 +415,7 @@ body.embed .rnav { top: 0; }
 .announce.tone-red { background: #b42318; color: #fff; }
 .announce.linked { cursor: pointer; }
 .announce.linked:hover { filter: brightness(1.08); }
+
+/* locked promo banner: pinned on top, the header pinned right below it */
+body.ann-sticky .announce { position: sticky; top: 0; z-index: 21; }
+body.ann-sticky .top { top: var(--annh, 0px); }

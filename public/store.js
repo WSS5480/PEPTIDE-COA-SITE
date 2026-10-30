@@ -20,10 +20,17 @@ function toast(msg) { const t = document.createElement("div"); t.className = "to
 let cat = "";
 let coaOnly = !!store.get("coaOnly");
 /* top banner: plain, or scrolling right to left when bannerScroll is on */
+// locked banner: it pins to the top and the (already pinned) header sits right under it
+function pinBanner(el, on) {
+  document.body.classList.toggle("ann-sticky", on);
+  const fit = () => document.documentElement.style.setProperty("--annh", (on && !el.hidden ? el.offsetHeight : 0) + "px");
+  fit(); if (!window.__annFit) { window.__annFit = true; window.addEventListener("resize", fit); } setTimeout(fit, 300);
+}
 function banner(el, S) {
   if (!el) return;
-  if (!S.announcementOn || !S.announcement) { el.hidden = true; el.innerHTML = ""; return; }
+  if (!S.announcementOn || !S.announcement) { el.hidden = true; el.innerHTML = ""; document.body.classList.remove("ann-sticky"); return; }
   el.hidden = false; el.className = "announce tone-" + (S.bannerTone || "navy");
+  pinBanner(el, S.bannerSticky !== false);
   if (S.bannerLink) { el.classList.add("linked"); el.onclick = () => { location.href = S.bannerLink; }; el.setAttribute("role", "link"); el.tabIndex = 0; } else { el.onclick = null; el.removeAttribute("role"); }
   if (!S.bannerScroll) { el.textContent = S.announcement; return; }
   const item = `<span>${esc(S.announcement)}</span>`;
