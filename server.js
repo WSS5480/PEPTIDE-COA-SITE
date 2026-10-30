@@ -905,12 +905,13 @@ admin.get("/stats", wrap(async (req, res) => {
   const { rows: low } = await q("select id,name,strength,manufacturer,stock,coalesce(reorder_point,5) reorder_at from products where active and stock is not null and stock <= coalesce(reorder_point,5) order by stock");
   const { rows: [np] } = await q("select count(*)::int n from products where active and price_cents is null");
   const { rows: [pr] } = await q("select count(*)::int n from pin_requests where status = 'new'");
+  const { rows: [tf] } = await q("select count(*)::int n from orders where status in ('new','confirmed','paid') and filled_at is null");
   const { rows: [lc] } = await q("select max(at) at, count(*)::int n from stock_counts");
   // on-shelf value at cost: what's physically there (available + held in unshipped orders) × cost each
   const { rows: [sv] } = await q(`select coalesce(sum(greatest(0, p.stock + c.held) * p.cost_cents), 0)::bigint cents, coalesce(sum(greatest(0, p.stock + c.held)), 0)::int units, count(*)::int tracked
     from products p cross join lateral (select coalesce((select sum(i.qty) from order_items i join orders o on o.id = i.order_id where i.product_id = p.id and o.status in ${OPEN_ORDER}), 0)::int held) c
     where p.stock is not null`);
-  res.json({ byStatus: Object.fromEntries(byStatus.map((r) => [r.status, r.n])), month: m, lowStock: low, unpriced: np.n, pinRequests: pr.n,
+  res.json({ byStatus: Object.fromEntries(byStatus.map((r) => [r.status, r.n])), month: m, lowStock: low, unpriced: np.n, pinRequests: pr.n, toFill: tf.n,
     count: { lastAt: lc.at, done: lc.n, dueDays: COUNT_DUE_DAYS }, stockValue: req.user.role === "owner" ? { cents: Number(sv.cents), units: sv.units, tracked: sv.tracked } : null });
 }));
 
@@ -965,6 +966,26 @@ admin.post("/orders/:id/email", wrap(async (req, res) => {
   if (!results || !results.length) return bad(res, "Order emails are turned off, or no address is set, under Site settings → Order emails.");
   if (failed.length) return bad(res, failed[0].error);
   res.json({ ok: true, sent: results.length });
+}));
+/* ---------- Fill orders (admins and managers only) ---------- */
+admin.get("/fill", wrap(async (req, res) => {
+  const { rows: orders } = await q(`select o.id, o.number, o.created_at, o.status, o.name, o.email, o.phone, o.address, o.fulfillment, o.shipping_method, o.customer_note, o.internal_note,
+      o.paid_at, o.total_cents, o.filled_at, o.filled_by, o.carrier, o.tracking, u.name rep_name
+    from orders o left join users u on u.id = o.rep_id where o.status in ('new','confirmed','paid') order by o.filled_at nulls first, o.created_at`);
+  const ids = orders.map((o) => o.id);
+  const { rows: items } = ids.length ? await q(`select i.order_id, i.product_id, i.name, i.strength, i.qty, p.manufacturer, p.stock from order_items i left join products p on p.id = i.product_id where i.order_id = any($1) order by i.id`, [ids]) : { rows: [] };
+  for (const o of orders) o.items = items.filter((i) => i.order_id === o.id);
+  res.json({ orders });
+}));
+admin.post("/orders/:id/fill", wrap(async (req, res) => {
+  const id = intOrNull(req.params.id), on = req.body?.filled !== false, who = req.user.name || req.user.email;
+  const { rows: [o] } = await q("select id, status, filled_at from orders where id = $1", [id]);
+  if (!o) return bad(res, "Not found", 404);
+  if (!["new", "confirmed", "paid"].includes(o.status)) return bad(res, `This order is ${o.status}; only open orders are filled.`);
+  if (on === !!o.filled_at) return res.json({ ok: true });
+  await q(on ? "update orders set filled_at = now(), filled_by = $2 where id = $1" : "update orders set filled_at = null, filled_by = '' where id = $1", on ? [id, who] : [id]);
+  await q("insert into order_events(order_id, who, text) values ($1, $2, $3)", [id, who, on ? "Filled (picked and packed)" : "Fill undone"]);
+  res.json({ ok: true });
 }));
 admin.patch("/orders/:id", wrap(async (req, res) => {
   const id = intOrNull(req.params.id), b = req.body || {};

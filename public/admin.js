@@ -72,7 +72,7 @@ function drawLogin(msg) {
 /* ---------- shell ---------- */
 // [key, label, who]: "all" = owner, staff and sales reps · "team" = owner and staff · "owner" · "ownerrep" = owner and reps. "line" draws the divider:
 // sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
-const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["line"],
+const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["line"],
   ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["line2"],
   // below the second line: the things you reach from either app (the case tracker links here too)
   ["staff", "Team logins", "owner"], ["setup", "Email & approvals", "owner"], ["geo", "Geofencing", "owner"], ["apps", "Apps & downloads", "all"], ["howto", "How to", "all"], ["account", "My account", "all"]];
@@ -93,7 +93,7 @@ function shell() {
 async function drawNav() {
   try { stats = await api("/stats"); } catch (e) { return; }
   const n = stats.byStatus.new || 0;
-  document.getElementById("nav").innerHTML = NAV.filter(([k]) => k !== "geo" || HUB.linked).map(([k, label, who]) => k === "line" ? (isRep() ? "" : '<hr class="navline">') : k === "line2" ? '<hr class="navline">' : !canSee(who) ? "" : `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}${k === "customers" && stats.pinRequests ? `<span class="badge" title="PIN requests">${stats.pinRequests}</span>` : ""}</button>`).join("");
+  document.getElementById("nav").innerHTML = NAV.filter(([k]) => k !== "geo" || HUB.linked).map(([k, label, who]) => k === "line" ? (isRep() ? "" : '<hr class="navline">') : k === "line2" ? '<hr class="navline">' : !canSee(who) ? "" : `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}${k === "fill" && stats.toFill ? `<span class="badge">${stats.toFill}</span>` : ""}${k === "customers" && stats.pinRequests ? `<span class="badge" title="PIN requests">${stats.pinRequests}</span>` : ""}</button>`).join("");
 }
 let paneDirty = false; // something typed on this screen and not saved yet
 document.addEventListener("input", (e) => { if (e.target.closest("#pane")) paneDirty = true; });
@@ -105,7 +105,7 @@ async function go(v, id, opts = {}) {
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  await ({ dashboard, orders, neworder, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps, geo, howto }[v] || dashboard)();
+  await ({ dashboard, orders, neworder, fill, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps, geo, howto }[v] || dashboard)();
   if (v === "dashboard" && document.getElementById("hubKpi")) fillHubKpi();
   if (!opts.keepScroll) window.scrollTo(0, 0);
 }
@@ -170,6 +170,60 @@ function fillHubKpi() {
 }
 /* ---------- orders ---------- */
 let oFilter = { status: "", q: "" };
+/* ---------- fill orders: admins and managers pick, pack and ship ---------- */
+let fillTab = "tofill";
+async function fill() {
+  if (isRep()) return dashboard();
+  const { orders: all } = await api("/fill");
+  const toFill = all.filter((o) => !o.filled_at), toShip = all.filter((o) => o.filled_at);
+  const list = fillTab === "tofill" ? toFill : toShip;
+  const addrOf = (o) => { const a = o.address || {}; return [a.line1, a.line2, `${a.city || ""}, ${a.state || ""} ${a.zip || ""}`].filter((x) => x && x.trim() !== ",").map(esc).join("<br>"); };
+  const short = (i) => i.stock !== null && i.stock !== undefined && i.stock < 0;
+  const card = (o) => {
+    const delivery = o.fulfillment === "delivery", paid = !!o.paid_at;
+    return `<div class="panel fillcard" data-fid="${o.id}">
+      <div class="row2" style="justify-content:space-between;align-items:baseline"><h2 style="margin:0"><a href="#" data-openorder="${o.id}">Order ${esc(o.number)}</a></h2>
+        <span>${paid ? '<span class="pill st-paid">Paid</span>' : '<span class="pill st-confirmed">Not paid yet</span>'} <span class="pill">${delivery ? "Local delivery" : "Ship"}</span></span></div>
+      <p class="muted" style="margin:.2rem 0 .5rem">${when(o.created_at)}${o.rep_name ? ` · rep ${esc(o.rep_name)}` : ""}${o.filled_at ? ` · filled by ${esc(o.filled_by || "—")} ${when(o.filled_at)}` : ""}</p>
+      <div class="grid2"><div><p class="eyebrow">${delivery ? "Deliver to" : "Ship to"}</p><p><strong>${esc(o.name)}</strong>${o.phone ? ` · ${esc(o.phone)}` : ""}<br>${addrOf(o)}</p>
+        ${o.customer_note ? `<p class="muted"><strong>Customer note:</strong> ${esc(o.customer_note)}</p>` : ""}${o.internal_note ? `<p class="muted"><strong>Internal:</strong> ${esc(o.internal_note)}</p>` : ""}</div>
+      <div><p class="eyebrow">${o.filled_at ? "Packed" : "Pick list · tick each as you pull it"}</p>
+        <table class="tbl compact"><tbody>${o.items.map((i, n) => `<tr>${o.filled_at ? "" : `<td style="width:2rem"><input type="checkbox" data-pick="${n}" aria-label="Picked ${esc(i.name)}"></td>`}<td class="num" style="width:3rem"><strong>${i.qty}×</strong></td><td>${esc(`${i.name} ${i.strength}`.trim())}${i.manufacturer ? ` <span class="muted">· ${esc(i.manufacturer)}</span>` : ""}${short(i) ? ` <span class="pill st-cancelled" title="Sold past what was on the shelf">backordered (${i.stock})</span>` : ""}</td></tr>`).join("")}</tbody></table></div></div>
+      ${o.filled_at ? `<div class="row2" style="align-items:end;margin-top:.6rem">
+          ${delivery ? "" : `<div class="field" style="max-width:9rem"><label class="eyebrow">Carrier</label><select data-carrier><option>UPS</option><option>FedEx</option><option>USPS</option><option>DHL</option><option>Other</option></select></div>
+          <div class="field" style="max-width:16rem"><label class="eyebrow">Tracking #</label><input data-tracking value="${esc(o.tracking || "")}" placeholder="Paste or scan"></div>`}
+          <label class="chk"><input type="checkbox" data-notify checked> Email the customer</label>
+          <button class="btn solid" type="button" data-ship>${delivery ? "Mark delivered" : "Mark shipped"}</button><button class="btn" type="button" data-unfill>Undo filled</button><button class="btn" type="button" data-slip>Packing slip</button></div>`
+        : `<div class="row2" style="margin-top:.6rem"><button class="btn solid" type="button" data-filled disabled>Mark filled</button><button class="btn" type="button" data-slip>Packing slip</button><span class="muted" data-pickleft>Tick all ${o.items.length} line${o.items.length === 1 ? "" : "s"} to mark it filled.</span></div>`}
+    </div>`;
+  };
+  pane().innerHTML = `<header><h1>Fill orders</h1></header>
+    <p class="muted">Only admins and managers fill orders. Reps and customers place orders; changes to an order are made here or on the order itself by the office.</p>
+    <div class="seg" style="margin-bottom:.8rem"><button type="button" data-filltab="tofill"${fillTab === "tofill" ? ' class="on"' : ""}>To fill · ${toFill.length}</button><button type="button" data-filltab="toship"${fillTab === "toship" ? ' class="on"' : ""}>Filled, to ship · ${toShip.length}</button></div>
+    ${list.length ? list.map(card).join("") : `<div class="panel"><p class="muted">${fillTab === "tofill" ? "Nothing to fill. New orders show up here as they come in." : "Nothing waiting to ship."}</p></div>`}`;
+  const P = pane();
+  P.onchange = (e) => { const c = e.target.closest(".fillcard"); if (!c || !e.target.matches("[data-pick]")) return; const boxes = [...c.querySelectorAll("[data-pick]")], left = boxes.filter((b) => !b.checked).length; c.querySelector("[data-filled]").disabled = left > 0; c.querySelector("[data-pickleft]").textContent = left ? `${left} line${left === 1 ? "" : "s"} left to pick.` : "All picked."; };
+  P.onclick = async (e) => {
+    const t = e.target.closest("[data-filltab]"); if (t) { fillTab = t.dataset.filltab; return fill(); }
+    const oo = e.target.closest("[data-openorder]"); if (oo) { e.preventDefault(); return go("orders", +oo.dataset.openorder); }
+    const c = e.target.closest(".fillcard"); if (!c) return; const id = +c.dataset.fid, o = all.find((x) => x.id === id);
+    if (e.target.closest("[data-filled]")) { await api(`/orders/${id}/fill`, { method: "POST", body: { filled: true } }); toast(`Order ${o.number} filled`); await drawNav(); return fill(); }
+    if (e.target.closest("[data-unfill]")) { await api(`/orders/${id}/fill`, { method: "POST", body: { filled: false } }); toast("Back to To fill"); await drawNav(); return fill(); }
+    if (e.target.closest("[data-ship]")) {
+      const delivery = o.fulfillment === "delivery", tr = c.querySelector("[data-tracking]"), body = { status: delivery ? "delivered" : "shipped", notify: c.querySelector("[data-notify]").checked };
+      if (!delivery) { body.carrier = c.querySelector("[data-carrier]").value; body.tracking = tr.value.trim(); if (!body.tracking && !confirm("No tracking number. Mark shipped anyway?")) return; }
+      await api(`/orders/${id}`, { method: "PATCH", body }); toast(`Order ${o.number} ${delivery ? "delivered" : "shipped"}`); await drawNav(); return fill();
+    }
+    if (e.target.closest("[data-slip]")) {
+      const w = window.open("", "_blank"); if (!w) return toast("Allow pop-ups to print the slip");
+      w.document.write(`<!doctype html><meta charset="utf-8"><title>Packing slip ${esc(o.number)}</title><style>body{font:14px/1.45 system-ui,sans-serif;margin:32px;color:#111}h1{font-size:20px;margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:16px}td,th{border-bottom:1px solid #ddd;padding:8px;text-align:left}.n{text-align:right;width:4rem}.box{width:1.2rem;height:1.2rem;border:1.5px solid #333;display:inline-block}</style>
+        <h1>Packing slip · Order ${esc(o.number)}</h1><div>${when(o.created_at)}</div><p><strong>${esc(o.name)}</strong>${o.phone ? ` · ${esc(o.phone)}` : ""}<br>${addrOf(o)}</p>${o.customer_note ? `<p><em>Note: ${esc(o.customer_note)}</em></p>` : ""}
+        <table><tr><th></th><th class="n">Qty</th><th>Product</th></tr>${o.items.map((i) => `<tr><td style="width:2rem"><span class="box"></span></td><td class="n">${i.qty}</td><td>${esc(`${i.name} ${i.strength}`.trim())}</td></tr>`).join("")}</table>
+        <p style="margin-top:24px;color:#666">For laboratory research use only.</p><script>print()<\/script>`);
+      w.document.close();
+    }
+  };
+}
 async function orders() {
   if (orderId) return orderDetail(orderId);
   pane().innerHTML = `<header><h1>Orders</h1><a class="btn" href="/api/admin/orders.csv" style="display:inline-grid;place-items:center;text-decoration:none">Export CSV</a></header>
@@ -195,7 +249,7 @@ async function orderDetail(id) {
   const delivery = o.fulfillment === "delivery";
   const unpaid = !o.paid_at && o.status !== "cancelled";
   const stripeLink = o.stripe_pi ? `https://dashboard.stripe.com/${st && st.mode === "test" ? "test/" : ""}payments/${encodeURIComponent(o.stripe_pi)}` : "";
-  const canEdit = !isRep() && o.status !== "cancelled";
+  const canEdit = !isRep() && o.status !== "cancelled"; // reps and customers never edit; admins and managers do
   pane().innerHTML = `<header><h1>Order ${esc(o.number)}</h1><div class="row2">${canEdit ? '<button class="btn solid" id="editO">Edit order</button>' : ""}${isOwner() ? '<button class="btn" id="delO" style="color:#9b1c1c;border-color:#e8b4b4">Delete</button>' : ""}<button class="btn" data-nav="orders">← All orders</button></div></header>
   <div id="editPanel"></div>
   <div class="two">

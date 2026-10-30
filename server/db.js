@@ -158,6 +158,8 @@ alter table customers add column if not exists pin_set_at timestamptz;
 alter table customers add column if not exists pin_used_at timestamptz;
 alter table products add column if not exists reorder_point int;
 alter table products add column if not exists store_note text not null default '';
+alter table orders add column if not exists filled_at timestamptz;
+alter table orders add column if not exists filled_by text not null default '';
 alter table products add column if not exists low_alerted_at timestamptz;
 alter table products add column if not exists image bytea;
 alter table products add column if not exists image_type text;
