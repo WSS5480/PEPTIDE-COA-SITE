@@ -605,6 +605,22 @@ if (window.AppRefresh) window.AppRefresh.init({
   canAuto: () => !document.querySelector("dialog[open]") && !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || ""),
   refresh: async () => { await load(); await loadAccount(); }
 });
-loadAccount();
-load().catch(() => { $("pgrid").innerHTML = `<div class="card empty"><p><strong>The store couldn't load.</strong> Refresh the page to try again.</p></div>`; });
+// 0 minutes = "as soon as they leave": this tab remembers it was signed in (sessionStorage lives only as long as the tab / app).
+// A fresh tab, a reopened browser or app, or coming back after switching away signs the customer out right away. A refresh keeps them in.
+const NOW0 = () => Number(S.custIdleMin) === 0;
+const tabMark = (on) => { try { if (on) sessionStorage.setItem("cidTab", "1"); else sessionStorage.removeItem("cidTab"); } catch (e) { /* private mode */ } };
+const tabMarked = () => { try { return sessionStorage.getItem("cidTab") === "1"; } catch (e) { return true; } };
+async function leaveOut() { try { await post("/api/account/logout", {}); } catch (e) { /* already out */ } tabMark(false); await loadAccount(); await load(); }
+let hiddenAt = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (ME && NOW0() && hiddenAt && Date.now() - hiddenAt > 15000) leaveOut();
+});
+const _la = loadAccount; let started = false;
+loadAccount = async function () { await _la(); if (started && ME) tabMark(true); if (!ME) tabMark(false); };
+Promise.all([load().catch(() => { $("pgrid").innerHTML = `<div class="card empty"><p><strong>The store couldn't load.</strong> Refresh the page to try again.</p></div>`; }), _la()]).then(async () => {
+  if (ME && NOW0() && !tabMarked()) await leaveOut(); else if (ME) tabMark(true);
+  started = true;
+});
+
 })();
