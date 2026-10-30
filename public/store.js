@@ -412,8 +412,11 @@ function acctView(mode) {
     b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Office sign-in</h2>${close}</div>
       <p class="dist">You're signed in with the store PIN. Store prices are showing and the cart is open; checkout asks for the customer's name and email, like a walk-in order. Customers with their own PIN see their own pricing instead.</p>
       <div class="row2" style="margin:.4rem 0"><a class="btn solid" href="/admin" style="display:inline-grid;place-items:center;text-decoration:none">Open Admin</a><a class="btn" href="/rep" style="display:inline-grid;place-items:center;text-decoration:none">Rep app</a></div>
-      <p class="dist">Admin and the rep app ask for your email and password (team logins). <button class="linkbtn" type="button" id="acOut">Sign out</button></p>`;
+      <p class="dist">Admin and the rep app ask for your email and password (team logins). <button class="linkbtn" type="button" id="acOut">Sign out</button></p>
+      <form id="acForm" class="stack" style="margin-top:.6rem;padding-top:.6rem;border-top:1px solid var(--line)"><div class="field"><label class="eyebrow" for="acPin">Sign in as a customer with their PIN (to see their pricing or order for them)</label><input id="acPin" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Customer's PIN"></div>
+      <div class="err" id="acErr" hidden></div><button class="btn wide" type="submit">Switch to that customer</button></form>`;
     $("acOut").onclick = async () => { await post("/api/account/logout", {}); await loadAccount(); await load(); toast("Signed out"); closeD($("acct")); };
+    $("acForm").onsubmit = async (e) => { e.preventDefault(); try { await post("/api/account/pin", { pin: $("acPin").value }); await loadAccount(); await load(); toast(ME ? "Signed in as " + (ME.name || "customer") : "Signed in"); acctView(); } catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; } };
     return;
   }
   if (!ME) {
