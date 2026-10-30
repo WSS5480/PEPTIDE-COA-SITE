@@ -402,3 +402,7 @@ body.embed aside.side, body.embed .mtop, body.embed .navtoggle, body.embed .rtop
 body.embed .adm { grid-template-columns: minmax(0, 1fr) !important; }
 body.embed .pane { padding: 1rem !important; }
 body.embed .rnav { top: 0; }
+
+/* who's signed in (storefront) */
+.whobar { background: #fff7e0; color: #5b4300; border-bottom: 1px solid #f1dc9a; font-size: .85rem; padding: .45rem 1rem; display: flex; gap: .75rem; align-items: center; justify-content: center; flex-wrap: wrap; }
+.whobar .linkbtn { color: #7a4b00; font-weight: 600; }

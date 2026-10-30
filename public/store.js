@@ -372,6 +372,15 @@ let ME = null, MY_ORDERS = [], HOUSE = false; // HOUSE: signed in with the store
 async function loadAccount() {
   try { const j = await (await fetch("/api/account", { credentials: "same-origin" })).json(); ME = j.customer; MY_ORDERS = j.orders || []; HOUSE = !ME && !!j.house; } catch (e) { ME = null; HOUSE = false; }
   $("acctLabel").textContent = ME ? (ME.name || "Account").split(" ")[0] : HOUSE ? "Office" : "Sign in";
+  whoBar();
+}
+// a shared or borrowed phone: say plainly who this browser is signed in as, with a one-tap way out
+function whoBar() {
+  let bar = document.getElementById("whoBar");
+  if (!ME) { if (bar) bar.remove(); return; }
+  if (!bar) { bar = document.createElement("div"); bar.id = "whoBar"; bar.className = "whobar"; document.getElementById("top").insertAdjacentElement("afterend", bar); }
+  bar.innerHTML = `<span>Signed in as <strong>${esc(ME.name || ME.email)}</strong></span> <button class="linkbtn" type="button" id="whoOut">Not you? Sign out</button>`;
+  document.getElementById("whoOut").onclick = async () => { await post("/api/account/logout", {}); await loadAccount(); await load(); toast("Signed out"); };
 }
 async function post(url, body, method = "POST") {
   const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify(body) });

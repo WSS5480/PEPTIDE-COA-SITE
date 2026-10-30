@@ -143,10 +143,10 @@ app.post("/api/pin", limit("pin", 10, 15 * 60 * 1000), wrap(async (req, res) => 
   const pin = String(req.body?.pin || "").replace(/\D/g, "").slice(0, 12);
   if (!pin) return bad(res, "Wrong PIN.", 401);
   const passCookie = (v) => `spin=${v}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`;
-  if (st.hash && (await bcrypt.compare(pin, st.hash))) { res.append("Set-Cookie", passCookie(pinToken(st))); return res.json({ ok: true }); }
+  if (st.hash && (await bcrypt.compare(pin, st.hash))) { await endCustomerSession(req, res); res.append("Set-Cookie", passCookie(pinToken(st))); return res.json({ ok: true }); }
   // a customer's own PIN unlocks the site and signs them into their account
   const { rows: [c] } = await q("select id, pin_version from customers where access_pin_key = $1 and active", [customerPinKey(st, pin)]);
-  if (!c) { const u = await teamByPin(pin); if (!u) return bad(res, "Wrong PIN.", 401); await teamSignIn(res, u); if (st.hash) res.append("Set-Cookie", passCookie(pinToken(st))); return res.json({ ok: true }); }
+  if (!c) { const u = await teamByPin(pin); if (!u) return bad(res, "Wrong PIN.", 401); await endCustomerSession(req, res); await teamSignIn(res, u); if (st.hash) res.append("Set-Cookie", passCookie(pinToken(st))); return res.json({ ok: true }); }
   await q("update customers set pin_used_at = now() where id = $1", [c.id]);
   res.append("Set-Cookie", passCookie(customerPass(st, c.id, c.pin_version)));
   await startCustomerSession(res, c.id);
@@ -655,10 +655,12 @@ async function customerFrom(req) {
   const { rows } = await q("select c.id, c.email, c.name, c.phone, c.address, c.markup from customer_sessions s join customers c on c.id = s.customer_id where s.token = $1 and s.expires > now() and c.active", [token]);
   return rows[0] || null;
 }
+const CLEAR_CID = () => `cid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${SECURE ? "; Secure" : ""}`;
+async function endCustomerSession(req, res) { const t = parseCookies(req.headers.cookie).cid; if (t) await q("delete from customer_sessions where token = $1", [t]); res.append("Set-Cookie", CLEAR_CID()); }
 async function startCustomerSession(res, id) {
   const token = crypto.randomBytes(32).toString("hex");
-  await q("insert into customer_sessions(token, customer_id, expires) values ($1, $2, now() + interval '60 days')", [token, id]);
-  res.append("Set-Cookie", `cid=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 86400}${SECURE ? "; Secure" : ""}`);
+  await q("insert into customer_sessions(token, customer_id, expires) values ($1, $2, now() + interval '14 days')", [token, id]); // a shared or borrowed phone shouldn't stay "you" for two months
+  res.append("Set-Cookie", `cid=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${14 * 86400}${SECURE ? "; Secure" : ""}`);
 }
 const cleanAddress = (a = {}) => ({ line1: str(a.line1, 160), line2: str(a.line2, 160), city: str(a.city, 80), state: str(a.state, 40), zip: str(a.zip, 20), country: "US" });
 const jsonOnly = (req, res, next) => (req.is("application/json") ? next() : bad(res, "Bad request"));
@@ -715,6 +717,7 @@ app.post("/api/account/pin", jsonOnly, limit("cpin", 10, 15 * 60 * 1000), wrap(a
   const st = await pinState();
   if (st.hash && (await bcrypt.compare(pin, st.hash))) {
     // the store's shared PIN: office sign-in (no customer account)
+    await endCustomerSession(req, res);
     res.append("Set-Cookie", `spin=${pinToken(st)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`);
     res.append("Set-Cookie", HOUSE_COOKIE(pinToken(st), 30 * 86400));
     return res.json({ ok: true, house: true });
@@ -723,7 +726,7 @@ app.post("/api/account/pin", jsonOnly, limit("cpin", 10, 15 * 60 * 1000), wrap(a
   if (!c) {
     const u = await teamByPin(pin); // a team member's own PIN: the office, signed into the admin / rep app as well
     if (!u) return bad(res, "That PIN isn't right. Contact us if you need a new one.", 401);
-    await teamSignIn(res, u);
+    await endCustomerSession(req, res); await teamSignIn(res, u);
     if (st.hash) res.append("Set-Cookie", `spin=${pinToken(st)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`);
     return res.json({ ok: true, house: true, team: { name: u.name, role: u.role } });
   }
@@ -2125,6 +2128,7 @@ app.get(["/sso", "/admin/sso", "/rep/sso"], wrap(async (req, res) => { // in-sco
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '1 day')", [token, u.id]); // hop-in sessions are short; the switch mints a fresh one each time
   res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=${14 * 86400}`);
+  res.append("Set-Cookie", CLEAR_CID()); // the office is not a customer
   land(u.role === "rep" && /^\/admin(\?[^#]*)?#account$/.test(next) ? next.replace("/admin", "/rep") : next); // reps: My account lives in the rep app; the shared admin pages (Apps, How to) are theirs too
 }));
 // the switch, kept inside this app's own address: a full-window frame of the tracker (signed in through the frame)
