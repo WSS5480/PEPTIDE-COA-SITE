@@ -1183,29 +1183,39 @@ async function commissionsHub() {
 }
 
 /* ---------- products ---------- */
+let pFilter = "all"; const openP = new Set();
 async function products() {
   const [{ products: list }, { reports: reps }] = await Promise.all([api("/products"), api("/reports")]);
   const repFor = (p) => reps.filter((r) => r.active && reportMatches(p, r));
   const COLS = [["name", "Name"], ["strength", "Size"], ["description", "Description (line 1: peptides + mg · then - benefits)"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["cost", "Cost $"], ["price", "Price $"], ["stock", "Stock"], ["storeNote", "Store note"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["report", "Lab report"], ["docs", "Docs"]];
   const NUM = new Set(["cost", "price", "stock", "maxPerOrder", "sort"]);
   const inp = (k, v, ph = "", extra = "") => `<input data-k="${k}" value="${esc(v)}" placeholder="${ph}"${extra}${ro()}>`;
-  const row = (p) => `<tr data-id="${p ? p.id : ""}"${p ? "" : ' class="dirty"'}>
-    <td>${inp("name", p?.name, "Name", ' style="min-width:16rem"')}</td>
-    <td>${inp("strength", p?.strength, "10 mg", ' style="min-width:4.5rem"')}</td>
-    <td><textarea data-k="description" rows="4" placeholder="Line 1: what's in the vial. Then one benefit per line starting with -" title="First line shows under the name on the store; lines that start with - become the benefit bullets" style="min-width:22rem;width:100%;font:inherit;font-size:.85rem;line-height:1.3;resize:vertical"${ro()}>${esc(p?.description || "")}</textarea></td>
-    <td>${inp("category", p?.category ?? "Research peptide", "Category", ' list="catlist" style="min-width:9rem"')}</td>
-    <td>${inp("manufacturer", p?.manufacturer, "", ' list="mfrlist" style="min-width:7rem"')}</td>
-    <td>${inp("cost", dollars(p?.cost_cents), "—", ' inputmode="decimal" style="min-width:4.5rem" title="Our cost per vial (staff never see it on the store)"')}</td>
-    <td>${inp("price", dollars(p?.price_cents), "Ask", ' inputmode="decimal" style="min-width:5rem"')}</td>
-    <td>${inp("stock", p?.stock ?? "", "∞", ' inputmode="numeric" style="min-width:4rem"')}</td>
-    <td>${inp("storeNote", p?.store_note ?? "", "e.g. Sold out — 2 weeks", ' maxlength="80" style="min-width:11rem" title="Shown on the store under the product (optional)"')}</td>
-    <td>${inp("maxPerOrder", p?.max_per_order ?? "", "—", ' inputmode="numeric" style="min-width:4rem"')}</td>
-    <td>${inp("sort", p?.sort ?? 0, "", ' inputmode="numeric" style="min-width:3.5rem"')}</td>
-    <td><input type="checkbox" data-k="active"${!p || p.active ? " checked" : ""}${ro()}></td>
-    <td data-rep>${p ? (repFor(p).length ? repFor(p).map((r) => `<span class="pill st-shipped" title="Task ${esc(r.task)}">${esc(r.sample || r.product + " " + r.strength)}</span>`).join(" ") : '<span class="pill st-cancelled">No report</span>') : ""}</td>
-    <td data-docs>${p ? `<button class="btn" type="button" data-manage="${p.id}" title="COA and documents for this peptide">${p.doc_count ? `${p.doc_count} doc${p.doc_count === 1 ? "" : "s"} · ` : ""}Manage</button>` : '<span class="muted">Save first</span>'}</td>
-    ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-save>Save</button><button class="btn" data-del>${p ? "Delete" : "Remove"}</button></td>` : ""}
-  </tr>`;
+  // one product per row: the summary line (name, cost, price, stock) stays visible; tap it for every other field. All inputs live in the
+  // same <tr>, so sorting, the markup tool, the dirty count and Save all changes work as before.
+  const repPills = (p) => (repFor(p).length ? repFor(p).map((r) => `<span class="pill st-shipped" title="Task ${esc(r.task)}">${esc(r.sample || r.product + " " + r.strength)}</span>`).join(" ") : '<span class="pill st-cancelled">No report</span>');
+  const fl = (lab, html, wide) => `<label style="display:flex;flex-direction:column;gap:.2rem;min-width:0${wide ? ";grid-column:1/-1" : ""}"><span class="eyebrow">${lab}</span>${html}</label>`;
+  const sm = (lab, html) => `<label style="display:flex;flex-direction:column;gap:.1rem;font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:700">${lab}${html}</label>`;
+  const row = (p) => { const open = !p || openP.has(p.id); return `<tr data-id="${p ? p.id : ""}" class="prow${p ? "" : " dirty"}"><td style="padding:.55rem .8rem">
+    <div class="psum" style="display:flex;flex-wrap:wrap;align-items:center;gap:.4rem 1rem;cursor:pointer">
+      <span style="flex:1 1 14rem;min-width:0"><span class="caret" style="display:inline-block;width:1rem;transition:transform .15s;${open ? "transform:rotate(90deg)" : ""}">▸</span><strong data-pname>${esc(p ? `${p.name} ${p.strength}`.trim() : "New product")}</strong>
+        <span class="muted" style="font-size:.8rem" data-pmeta>${esc(p ? [p.manufacturer, p.category].filter(Boolean).join(" · ") : "")}</span>
+        ${p && !p.active ? ' <span class="pill st-cancelled" data-poff>hidden</span>' : ""}${p && !repFor(p).length && p.active ? ' <span class="pill st-cancelled" title="No lab report attached">no report</span>' : ""}</span>
+      <span style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:flex-end">
+        ${sm("Cost $", inp("cost", dollars(p?.cost_cents), "—", ' inputmode="decimal" style="width:5.5rem" title="Our cost per vial (staff never see it on the store)"'))}
+        ${sm("Price $", inp("price", dollars(p?.price_cents), "Ask", ' inputmode="decimal" style="width:5.5rem"'))}
+        ${sm("Stock", inp("stock", p?.stock ?? "", "∞", ' inputmode="numeric" style="width:4.5rem"'))}</span></div>
+    <div class="pdet"${open ? "" : " hidden"} style="margin-top:.7rem;padding:.7rem;border-radius:10px;background:var(--ground,#f6f7f9)">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,11rem),1fr));gap:.7rem 1rem;align-items:start">
+        ${fl("Name", inp("name", p?.name, "Name", ' style="width:100%"'))}${fl("Size", inp("strength", p?.strength, "10 mg", ' style="width:100%"'))}
+        ${fl("Category", inp("category", p?.category ?? "Research peptide", "Category", ' list="catlist" style="width:100%"'))}${fl("Manufacturer", inp("manufacturer", p?.manufacturer, "", ' list="mfrlist" style="width:100%"'))}
+        ${fl("Store note", inp("storeNote", p?.store_note ?? "", "e.g. Sold out — 2 weeks", ' maxlength="80" style="width:100%" title="Shown on the store under the product (optional)"'))}
+        ${fl("Max per order", inp("maxPerOrder", p?.max_per_order ?? "", "—", ' inputmode="numeric" style="width:100%"'))}${fl("Sort order", inp("sort", p?.sort ?? 0, "", ' inputmode="numeric" style="width:100%"'))}
+        ${fl("On the store", `<span class="chk"><input type="checkbox" data-k="active"${!p || p.active ? " checked" : ""}${ro()}> Active</span>`)}
+        ${fl("Description · line 1 what's in the vial, then one - benefit per line", `<textarea data-k="description" rows="4" placeholder="Line 1: what's in the vial. Then one benefit per line starting with -" style="width:100%;font:inherit;font-size:.85rem;line-height:1.3;resize:vertical"${ro()}>${esc(p?.description || "")}</textarea>`, true)}
+        <div data-rep style="grid-column:1/-1">${p ? `<span class="eyebrow">Lab report</span> ${repPills(p)}` : ""}</div></div>
+      <div class="row2" style="margin-top:.6rem;flex-wrap:wrap" data-docs>${p ? `<button class="btn" type="button" data-manage="${p.id}" title="COA and documents for this peptide">${p.doc_count ? `${p.doc_count} doc${p.doc_count === 1 ? "" : "s"} · ` : ""}Pictures &amp; documents</button>` : '<span class="muted">Save first to add pictures and documents.</span>'}
+        ${isOwner() ? `<button class="btn solid" data-save>Save</button><button class="btn danger" data-del>${p ? "Delete" : "Remove"}</button>` : ""}</div></div>
+  </td></tr>`; };
   const cats = [...new Set(list.map((p) => p.category).filter(Boolean))];
   const saveBar = isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" data-saveall disabled>Save all changes</button><span class="muted" data-dirtycount></span></div>` : "";
   const savedMk = localStorage.getItem("markup") || "100";
@@ -1219,13 +1229,16 @@ async function products() {
       <span class="muted">Pick a markup, then Set all prices: price = cost + markup (a $20 cost at +100% is $40). Only products with a cost change; the new prices show in the table until you click Save all changes. Costs come from the cost sheet, the Cost column or Inventory → Receive.</span></div>` : "";
   pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="descP">Descriptions</button><button class="btn" id="costP">Cost sheet</button><button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>${list.length ? `<button class="btn danger" id="clrP">Remove all products</button>` : ""}` : ""}</div></header>
     <div id="descBox"></div><div id="costBox"></div><div id="impBox"></div><div id="manageBox"></div>
-    <p class="muted">Click a column name to sort. Cost = what you pay per vial (never shown on the store). Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). Untick Active to hide a product. <strong>Description:</strong> the first line is what's in the vial (e.g. "BPC-157 5 mg + TB-500 5 mg in one 10 mg vial") and each line that starts with "-" is a benefit bullet on the store card. A lab report attaches to a product when the peptide name, size and manufacturer match.</p>
-    ${(() => { const n = list.filter((p) => p.active && !repFor(p).length).length; return n ? `<p class="muted"><strong>${n} active product${n === 1 ? " has" : "s have"} no lab report.</strong> Sort by the Lab report column to see them.</p>` : ""; })()}
+    <p class="muted">Tap a product to open all its fields; cost, price and stock edit right on the line. Use Sort by to reorder the list. Cost = what you pay per vial (never shown on the store). Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). Untick Active to hide a product. <strong>Description:</strong> the first line is what's in the vial (e.g. "BPC-157 5 mg + TB-500 5 mg in one 10 mg vial") and each line that starts with "-" is a benefit bullet on the store card. A lab report attaches to a product when the peptide name, size and manufacturer match.</p>
+    ${(() => { const n = list.filter((p) => p.active && !repFor(p).length).length; return n ? `<p class="muted"><strong>${n} active product${n === 1 ? " has" : "s have"} no lab report.</strong> Tap the No lab report filter to see them.</p>` : ""; })()}
     ${markupBar}
     ${saveBar}
     <datalist id="catlist">${cats.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
     <datalist id="mfrlist">${[...new Set(list.map((p) => p.manufacturer).filter(Boolean))].map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
-    <div class="tblwrap"><table class="tbl" id="pt"><thead><tr>${COLS.map(([k, l]) => `<th class="sortable" data-sort="${k}">${l}<span class="arr"></span></th>`).join("")}${isOwner() ? "<th></th>" : ""}</tr></thead>
+    <div class="filters" style="flex-wrap:wrap;gap:.5rem"><input id="pq" type="search" placeholder="Search name, maker or category">
+      ${[["all", "All"], ["active", "Active"], ["hidden", "Hidden"], ["noprice", "No price"], ["nocost", "No cost"], ["noreport", "No lab report"]].map(([k, l]) => `<button class="chip${pFilter === k ? " on" : ""}" type="button" data-pf="${k}">${l}</button>`).join("")}</div>
+    <div class="row2" style="justify-content:space-between;align-items:center"><p class="muted" id="pSum" style="margin:0"></p><button class="btn" type="button" id="pAll">Expand all</button></div>
+    <div class="tblwrap"><table class="tbl ctbl" id="pt" data-noflip><thead><tr><th style="font-weight:600">Sort by ${COLS.filter(([k]) => !["description", "docs"].includes(k)).map(([k, l]) => `<span class="sortable chip" data-sort="${k}" style="cursor:pointer;margin:.15rem .2rem;height:1.8rem;padding:0 .6rem;text-transform:none;letter-spacing:0">${l.replace(" $", "")}<span class="arr"></span></span>`).join("")}</th></tr></thead>
     <tbody id="pb">${list.map(row).join("")}</tbody></table></div>
     ${saveBar}`;
   const pb = document.getElementById("pb");
@@ -1240,6 +1253,18 @@ async function products() {
     unsaved = d.length > 0;
   };
   pb.addEventListener("input", refresh); pb.addEventListener("change", refresh);
+  pb.addEventListener("input", (e) => { if (!e.target.matches('[data-k="name"], [data-k="strength"]')) return; const tr = e.target.closest("tr"); tr.querySelector("[data-pname]").textContent = `${tr.querySelector('[data-k="name"]').value} ${tr.querySelector('[data-k="strength"]').value}`.trim() || "New product"; });
+  const setOpen = (tr, open) => { tr.querySelector(".pdet").hidden = !open; tr.querySelector(".caret").style.transform = open ? "rotate(90deg)" : ""; const id = +tr.dataset.id; if (id) { if (open) openP.add(id); else openP.delete(id); } };
+  pb.addEventListener("click", (e) => { const s = e.target.closest(".psum"); if (!s || e.target.closest("a, button, input, select, textarea, label")) return; const tr = s.closest("tr"); setOpen(tr, tr.querySelector(".pdet").hidden); });
+  const byId = Object.fromEntries(list.map((p) => [String(p.id), p]));
+  const pass = (tr) => { const p = byId[tr.dataset.id]; if (!p) return true; const t = (document.getElementById("pq").value || "").toLowerCase();
+    if (t && ![p.name, p.strength, p.manufacturer, p.category].join(" ").toLowerCase().includes(t)) return false;
+    return pFilter === "all" || (pFilter === "active" ? p.active : pFilter === "hidden" ? !p.active : pFilter === "noprice" ? p.price_cents == null : pFilter === "nocost" ? p.cost_cents == null : !repFor(p).length); };
+  const applyF = () => { let n = 0; pb.querySelectorAll("tr").forEach((tr) => { const ok = pass(tr); tr.hidden = !ok; if (ok) n++; }); document.getElementById("pSum").textContent = `${n} product${n === 1 ? "" : "s"}${n !== list.length ? ` of ${list.length}` : ""} · ${list.filter((p) => p.active).length} active · ${list.filter((p) => p.price_cents == null).length} without a price`; };
+  document.getElementById("pq").oninput = applyF;
+  pane().querySelectorAll("[data-pf]").forEach((c) => { c.onclick = () => { pFilter = c.dataset.pf; pane().querySelectorAll("[data-pf]").forEach((x) => x.classList.toggle("on", x === c)); applyF(); }; });
+  document.getElementById("pAll").onclick = () => { const rows = [...pb.querySelectorAll("tr")].filter((tr) => !tr.hidden), all = rows.some((tr) => tr.querySelector(".pdet").hidden); rows.forEach((tr) => setOpen(tr, all)); document.getElementById("pAll").textContent = all ? "Collapse all" : "Expand all"; };
+  applyF();
 
   // sort rows in place, so unsaved edits are kept
   let sortKey = "", dir = 1;
@@ -1344,7 +1369,7 @@ async function products() {
       toast(`${r.updated} cost${r.updated === 1 ? "" : "s"} updated`); unsaved = false; products();
     };
   };
-  if (document.getElementById("addP")) document.getElementById("addP").onclick = () => { pb.insertAdjacentHTML("afterbegin", row(null)); refresh(); pb.querySelector("tr input").focus(); };
+  if (document.getElementById("addP")) document.getElementById("addP").onclick = () => { pb.insertAdjacentHTML("afterbegin", row(null)); refresh(); pb.querySelector('tr [data-k="name"]').focus(); };
   if (document.getElementById("clrP")) document.getElementById("clrP").onclick = async () => {
     const typed = prompt(`This removes all ${list.length} products, their prices and their documents from the store. Past orders keep their own copy of what was bought. Lab reports are not touched.\n\nType DELETE to confirm.`);
     if (typed === null) return;
