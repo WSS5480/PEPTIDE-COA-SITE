@@ -383,6 +383,7 @@ function whoBar() {
   document.getElementById("whoOut").onclick = async () => { await post("/api/account/logout", {}); await loadAccount(); await load(); toast("Signed out"); };
 }
 // coming back to the tab after a while: re-check who's signed in (idle sign-out may have happened)
+if (new URLSearchParams(location.search).get("signin") === "1") { history.replaceState(null, "", location.pathname); window.addEventListener("load", () => { setTimeout(() => { loadAccount().then(() => { if (!ME) { const b = document.getElementById("acctLabel"); const t = b && b.closest("button, a"); if (t) t.click(); } }); }, 400); }); }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && (ME || HOUSE)) loadAccount().then(() => { if (!ME && !HOUSE) load(); }); });
 async function post(url, body, method = "POST") {
   const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify(body) });

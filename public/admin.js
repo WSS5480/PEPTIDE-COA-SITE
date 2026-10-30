@@ -53,7 +53,8 @@ function drawLogin(msg) {
     <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>`}
     ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
     <button class="btn solid wide">Sign in</button><button class="btn wide" type="button" data-install>Download admin app</button>
-    <p class="muted" style="text-align:center;margin:0">Sales reps sign in at the <a href="/rep">rep app</a> (name + PIN there). A PIN is set under Team logins or My account.</p></form></div>`;
+    <p class="muted" style="text-align:center;margin:0">Sales reps sign in at the <a href="/rep">rep app</a> (name + PIN there). A PIN is set under Team logins or My account.</p>
+    <p class="muted" style="text-align:center;margin:.5rem 0 0">Customers: <a href="/?signin=1">sign in at the store</a> with the PIN we gave you.</p></form></div>`;
   document.querySelectorAll("[data-lmode]").forEach((b) => (b.onclick = () => { loginMode = b.dataset.lmode; localStorage.setItem("loginMode", loginMode); drawLogin(); }));
   if (pinMode) fetch("/api/admin/pin-names").then((r) => r.json()).then((j) => { const sel = document.getElementById("ln"); if (!sel) return; sel.innerHTML = `<option value="">Choose your name…</option>` + j.names.map((n) => `<option value="${n.id}"${String(n.id) === localStorage.getItem("loginName") ? " selected" : ""}>${esc(n.name)}</option>`).join(""); if (!j.names.length) sel.innerHTML = `<option value="">No PINs set yet — use email + password</option>`; }).catch(() => {});
   document.getElementById("lf").onsubmit = async (e) => {
