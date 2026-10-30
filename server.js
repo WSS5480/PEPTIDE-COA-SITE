@@ -2405,13 +2405,17 @@ app.get(["/admin/tracker", "/rep/tracker"], wrap(async (req, res) => {
 app.get("/api/rep-list", wrap(auth), wrap(async (req, res) => { if (req.user.role === "rep") return res.json({ reps: [] }); const { rows } = await q("select id, name from users where role = 'rep' and active order by name"); res.json({ reps: rows }); }));
 app.get("/api/admin/hub", wrap(auth), (req, res) => res.json({ linked: !!(HUB_SECRET && TRACKER_URL), trackerUrl: TRACKER_URL, apps: appsOf(req.user) }));
 // combined commissions: the store's rows plus the tracker's month estimates
+// surgical (case tracker) commission for the month; a rep only gets their own row
+async function surgicalComm(month, who) {
+  const j = await trackerGet("/api/hub/commissions", { month });
+  if (who) { const mine = String(who.name).trim().toLowerCase(); j.reps = (j.reps || []).filter((r) => String(r.rep).trim().toLowerCase() === mine || r.hub === who.id); j.total = j.reps.reduce((t, r) => t + r.commission, 0); j.sales = j.reps.reduce((t, r) => t + (r.metric === "Cases" ? 0 : r.actual), 0); }
+  return j;
+}
+const monthQ = (req) => /^\d{4}-\d{2}$/.test(String(req.query.month || "")) ? String(req.query.month) : new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" }).slice(0, 7);
 admin.get("/hub/commissions", wrap(async (req, res) => {
-  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || "")) ? String(req.query.month) : new Date().toISOString().slice(0, 7);
-  try {
-    const j = await trackerGet("/api/hub/commissions", { month });
-    if (req.user.role === "rep") { const mine = String(req.user.name).trim().toLowerCase(); j.reps = (j.reps || []).filter((r) => String(r.rep).trim().toLowerCase() === mine || r.hub === req.user.id); j.total = j.reps.reduce((t, r) => t + r.commission, 0); j.sales = j.reps.reduce((t, r) => t + (r.metric === "Cases" ? 0 : r.actual), 0); }
-    res.json({ ok: true, month, ...j });
-  } catch (e) { res.json({ ok: false, month, error: e.message, reps: [] }); }
+  const month = monthQ(req);
+  try { res.json({ ok: true, month, ...(await surgicalComm(month, req.user.role === "rep" ? req.user : null)) }); }
+  catch (e) { res.json({ ok: false, month, error: e.message, reps: [] }); }
 }));
 // Setup page: the tracker's approval-email switch, a test send, and signed preview links
 admin.get("/hub/settings", owner, wrap(async (req, res) => { try { res.json({ ok: true, ...(await trackerGet("/api/hub/settings")) }); } catch (e) { res.json({ ok: false, error: e.message }); } }));
@@ -2465,6 +2469,12 @@ rep.use(wrap(async (req, res, next) => {
   const { rows: [r] } = as ? await q("select id, name, email, phone, commission_rate, role, apps from users where id = $1 and role = 'rep' and active", [as]) : { rows: [] };
   if (!r) return bad(res, "Pick which rep to view as.", 403, { pick: true });
   req.repId = r.id; req.asRep = r; next();
+}));
+rep.get("/surgical", wrap(async (req, res) => { // this rep's surgical-case commission from the case tracker
+  const month = monthQ(req);
+  if (!(HUB_SECRET && TRACKER_URL)) return res.json({ ok: false, linked: false, month, reps: [] });
+  const { rows: [u] } = await q("select id, name from users where id = $1", [req.repId]);
+  try { res.json({ ok: true, linked: true, month, ...(await surgicalComm(month, u)) }); } catch (e) { res.json({ ok: false, linked: true, month, error: e.message, reps: [] }); }
 }));
 rep.get("/me", wrap(async (req, res) => {
   const { rows: [u] } = await q("select id, name, email, phone, commission_rate from users where id = $1", [req.repId]);

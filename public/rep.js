@@ -101,9 +101,11 @@ async function home() {
       <div class="kpi"><dt>Sales this month</dt><dd>${money(d.month.sales)}</dd></div>
       <div class="kpi"><dt>Orders this month</dt><dd>${d.month.orders}</dd></div>
       <div class="kpi"><dt>My customers</dt><dd>${d.customers}</dd></div>
+      <div class="kpi green" id="hSurg" data-surg hidden style="cursor:pointer"><dt>Surgical commission this month</dt><dd>…</dd></div>
     </dl>
     <div class="row2"><button class="btn solid rep" data-nav="neworder" style="height:2.8rem">Place an order</button><button class="btn" data-nav="customers" style="height:2.8rem">Add a customer</button></div>
-    <div class="panel"><h2>How commissions work</h2><p class="muted">You earn ${d.rep.commission_rate}% of the product total (after any discount, before shipping) on every order from your customers, whether you place it or they order on the store themselves. Commission is <strong>pending</strong> until the office marks the order paid, then <strong>earned</strong> until it's paid out to you. Cancelled orders earn nothing.</p></div>`;
+    <div class="panel"><h2>How commissions work</h2><p class="muted">Peptide store: you earn ${d.rep.commission_rate}% of the product total (after any discount, before shipping) on every order from your customers, whether you place it or they order on the store themselves. Commission is <strong>pending</strong> until the office marks the order paid, then <strong>earned</strong> until it's paid out to you. Cancelled orders earn nothing.</p></div>`;
+  api("/surgical").then((j) => { const k = $("hSurg"), r = j.ok && (j.reps || [])[0]; if (!k || !r) return; k.hidden = false; k.querySelector("dd").textContent = usd0(r.commission); k.onclick = () => { cmTab = "surgical"; go("commissions"); }; }).catch(() => {});
 }
 
 /* ---------- customers ---------- */
@@ -256,6 +258,35 @@ async function orders() {
   draw(); $("oq2").oninput = draw; $("of2").onchange = draw;
 }
 
+/* ---------- surgical (case tracker) commissions ---------- */
+const usd0 = (n) => (n === null || n === undefined ? "—" : "$" + Math.round(n).toLocaleString("en-US"));
+let cmTab = "store", surgMonth = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" }).slice(0, 7);
+const mLabel = (ym) => new Date(ym + "-15T12:00:00Z").toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+function surgicalHtml(j) {
+  if (!j.ok) return `<div class="panel"><p class="muted">${j.linked === false ? "Surgical commissions show here once the case tracker is linked." : "The case tracker isn't answering right now — try again in a minute."}</p></div>`;
+  const r = (j.reps || [])[0];
+  if (!r) return `<div class="panel"><p class="muted">You don't have a surgical case plan in the case tracker. Ask the office if you should.</p></div>`;
+  const cnt = r.metric === "Cases", amt = (v) => (cnt ? (v ?? "—") + " cases" : usd0(v));
+  const how = !r.comm_rate ? "No surgical commission rate is set on your plan yet." : r.comm_floor ? `${r.comm_rate}% × (${amt(r.actual)} − ${amt(r.comm_floor)} floor${r.carried ? `, includes ${amt(r.carried)} carried shortfall` : ""}) = <strong>${usd0(r.commission)}</strong>.${r.actual < r.comm_floor ? ` You're ${amt(r.comm_floor - r.actual)} below the floor; every $1,000 above it earns ${usd0(r.comm_rate * 10)}.` : ` Every extra $1,000 earns ${usd0(r.comm_rate * 10)}.`}` : `${r.comm_rate}% × ${amt(r.actual)} = <strong>${usd0(r.commission)}</strong>, from the first dollar.`;
+  const counted = r.counts !== "All" || r.product_filter ? ` Only ${[r.counts !== "All" ? r.counts.toLowerCase().replace(" only", "") + " surgeons" : "", r.product_filter ? r.product_filter : ""].filter(Boolean).join(" · ")} count toward it.` : "";
+  return `<dl class="kpis">
+      <div class="kpi green"><dt>Surgical commission · ${esc(mLabel(j.month))}</dt><dd>${usd0(r.commission)}</dd></div>
+      <div class="kpi"><dt>${cnt ? "Cases" : "Surgical sales"}</dt><dd>${amt(r.actual)}</dd></div>
+      <div class="kpi"><dt>Commission floor</dt><dd>${r.comm_floor ? amt(r.comm_floor) : "None"}</dd></div>
+      <div class="kpi"><dt>At current pace</dt><dd>${usd0(r.comm_proj)}</dd></div>
+      <div class="kpi"><dt>${esc(j.quarter || "Quarter")} to date</dt><dd>${usd0(r.comm_qtd)}</dd></div>
+      <div class="kpi"><dt>Est. pay this month</dt><dd>${usd0(r.est_pay)}</dd></div>
+    </dl>
+    <div class="panel" data-fold-open><h2>How it's figured</h2><p class="muted">${how}${counted} ${r.pay_amount ? `Est. pay = ${usd0(r.pay_amount)} ${r.pay_type ? r.pay_type.toLowerCase() : ""} + commission.` : ""} Quota ${r.quota ? amt(r.target || r.quota) : "not set"}. These are estimates from the cases you logged in the case tracker; the office pays from invoiced sales under your written plan.</p></div>
+    <div class="panel" data-fold-open><h2>Cases in ${esc(mLabel(j.month))} (${r.case_list.length})</h2>${r.case_list.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:.5rem">${r.case_list.map((c) => `<div style="border:1px solid var(--line);border-radius:10px;padding:.5rem .7rem${c.counts ? "" : ";opacity:.65"}"><div class="row2" style="justify-content:space-between;gap:.4rem"><strong>${esc(c.surgeon || "Surgeon TBD")}</strong><span>${cnt ? "" : usd0(c.net_sales)}</span></div><div class="muted" style="font-size:.8rem">${esc(when(c.date + "T12:00:00"))}${c.facility ? " · " + esc(c.facility) : ""}${c.product ? " · " + esc(c.product) + (c.units ? " ×" + c.units : "") : ""}</div><div style="font-size:.75rem;margin-top:.2rem">${c.counts ? '<span class="pill st-paid">Counts</span>' : `<span class="pill st-cancelled">${/scheduled/i.test(c.status) ? "Scheduled" : "Doesn't count"}</span>`} <span class="muted">${esc(c.status)}${c.surgeon_type ? " · " + esc(c.surgeon_type) : ""}</span></div></div>`).join("")}</div>` : '<p class="muted">No cases logged this month.</p>'}</div>`;
+}
+async function surgical() {
+  const box = $("cmSurg"); if (!box) return;
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  const j = await api("/surgical?month=" + surgMonth).catch(() => ({ ok: false }));
+  if ($("cmSurg") === box) box.innerHTML = surgicalHtml(j);
+}
+
 /* ---------- commissions ---------- */
 async function commissions() {
   const qs = (f, t) => "?" + new URLSearchParams({ from: f || "", to: t || "" }).toString();
@@ -266,10 +297,19 @@ async function commissions() {
       ${d.rows.map((r) => `<tr><td>${when(r.created_at)}</td><td class="mono">${esc(r.number)}</td><td>${esc(r.customer)}</td><td class="num">${money(r.subtotal_cents - r.discount_cents)}</td><td class="num">${r.commission_rate}%</td><td class="num"><strong>${money(r.commission_cents)}</strong></td><td><span class="pill st-${r.comm_status}">${r.comm_status}</span>${r.payout_date ? `<div class="muted" style="font-size:.72rem">paid ${when(r.payout_date)}</div>` : ""}</td></tr>`).join("")}</table></div>` : `<p class="muted">No orders in this period.</p>`;
     $("cmP").innerHTML = d.payouts.length ? `<div class="panel"><h2>Payouts to me</h2><div class="tblwrap"><table class="tbl"><tr><th>Date</th><th class="num">Amount</th><th class="num">Orders</th><th>Note</th></tr>${d.payouts.map((p) => `<tr><td>${when(p.paid_at)}</td><td class="num"><strong>${money(p.amount_cents)}</strong></td><td class="num">${p.orders}</td><td>${esc(p.note)}</td></tr>`).join("")}</table></div></div>` : "";
   };
-  pane().innerHTML = `<header><h1>My commissions</h1></header>
+  const tabs = `<div class="seg" style="margin:0 0 .8rem"><button type="button" data-cmtab="store"${cmTab === "store" ? ' class="on"' : ""}>Peptide store</button><button type="button" data-cmtab="surgical"${cmTab === "surgical" ? ' class="on"' : ""}>Surgical cases</button></div>`;
+  if (cmTab === "surgical") {
+    pane().innerHTML = `<header><h1>My commissions</h1><div class="row2"><button class="btn" id="smPrev" type="button">‹</button><input id="smMonth" type="month" value="${esc(surgMonth)}"><button class="btn" id="smNext" type="button">›</button></div></header>${tabs}<div id="cmSurg"></div>`;
+    const step = (n) => { const [y, m] = surgMonth.split("-").map(Number); surgMonth = new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7); $("smMonth").value = surgMonth; surgical(); };
+    $("smPrev").onclick = () => step(-1); $("smNext").onclick = () => step(1); $("smMonth").onchange = () => { if (/^\d{4}-\d{2}$/.test($("smMonth").value)) { surgMonth = $("smMonth").value; surgical(); } };
+    document.querySelectorAll("[data-cmtab]").forEach((b) => { b.onclick = () => { cmTab = b.dataset.cmtab; commissions(); }; });
+    return surgical();
+  }
+  pane().innerHTML = `<header><h1>My commissions</h1></header>${tabs}
     <div class="filters"><input id="cmF" type="date"><input id="cmTo" type="date"><button class="btn" id="cmAll" type="button">All time</button></div>
     <dl class="kpis" id="cmK"></dl><div id="cmT"></div><div id="cmP"></div>
     <p class="muted"><strong>Pending</strong> = the customer hasn't paid yet. <strong>Earned</strong> = order paid, commission owed to you. <strong>Paid</strong> = included in a payout.</p>`;
+  document.querySelectorAll("[data-cmtab]").forEach((b) => { b.onclick = () => { cmTab = b.dataset.cmtab; commissions(); }; });
   const run = () => load($("cmF").value, $("cmTo").value);
   $("cmF").onchange = run; $("cmTo").onchange = run; $("cmAll").onclick = () => { $("cmF").value = ""; $("cmTo").value = ""; run(); };
   run();
