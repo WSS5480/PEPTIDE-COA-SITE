@@ -1006,8 +1006,8 @@ async function products() {
     <td><textarea data-k="description" rows="4" placeholder="Line 1: what's in the vial. Then one benefit per line starting with -" title="First line shows under the name on the store; lines that start with - become the benefit bullets" style="min-width:22rem;width:100%;font:inherit;font-size:.85rem;line-height:1.3;resize:vertical"${ro()}>${esc(p?.description || "")}</textarea></td>
     <td>${inp("category", p?.category ?? "Research peptide", "Category", ' list="catlist" style="min-width:9rem"')}</td>
     <td>${inp("manufacturer", p?.manufacturer, "", ' list="mfrlist" style="min-width:7rem"')}</td>
-    <td>${inp("cost", usd(p?.cost_cents), "—", ' inputmode="decimal" style="min-width:4.5rem" title="Our cost per vial (staff never see it on the store)"')}</td>
-    <td>${inp("price", usd(p?.price_cents), "Ask", ' inputmode="decimal" style="min-width:5rem"')}</td>
+    <td>${inp("cost", dollars(p?.cost_cents), "—", ' inputmode="decimal" style="min-width:4.5rem" title="Our cost per vial (staff never see it on the store)"')}</td>
+    <td>${inp("price", dollars(p?.price_cents), "Ask", ' inputmode="decimal" style="min-width:5rem"')}</td>
     <td>${inp("stock", p?.stock ?? "", "∞", ' inputmode="numeric" style="min-width:4rem"')}</td>
     <td>${inp("storeNote", p?.store_note ?? "", "e.g. Sold out — 2 weeks", ' maxlength="80" style="min-width:11rem" title="Shown on the store under the product (optional)"')}</td>
     <td>${inp("maxPerOrder", p?.max_per_order ?? "", "—", ' inputmode="numeric" style="min-width:4rem"')}</td>
@@ -1242,7 +1242,7 @@ async function inventory() {
       <td class="num"><strong>${p.stock ?? "—"}</strong>${p.stock < 0 ? '<div class="muted" style="font-size:.72rem" title="Open orders need more than what\'s on the shelf">short for orders</div>' : ""}</td><td class="num">${p.committed || ""}</td><td class="num">${p.stock === null ? "" : p.stock + p.committed}</td>
       <td class="num">${p.sold_30d || ""}${weeksLeft(p) !== null ? `<div class="muted" style="font-size:.72rem">~${weeksLeft(p)} wk left</div>` : ""}</td>
       <td class="num">${own ? `<input data-reorder value="${p.reorder_point ?? ""}" placeholder="5" inputmode="numeric" style="width:4.2rem;text-align:right">` : (p.reorder_point ?? 5)}</td>
-      ${own ? `<td class="num"><input data-cost value="${usd(p.cost_cents)}" placeholder="—" inputmode="decimal" style="width:5.5rem;text-align:right"></td><td class="num">${p.cost_cents !== null && p.stock !== null ? money(p.cost_cents * Math.max(0, p.stock + p.committed)) : ""}</td>` : ""}
+      ${own ? `<td class="num"><input data-cost value="${dollars(p.cost_cents)}" placeholder="—" inputmode="decimal" style="width:5.5rem;text-align:right"></td><td class="num">${p.cost_cents !== null && p.stock !== null ? money(p.cost_cents * Math.max(0, p.stock + p.committed)) : ""}</td>` : ""}
       <td>${p.next_expiry ? `<span${soon(p.next_expiry) ? ' class="pill st-new"' : ""}>${esc(String(p.next_expiry).slice(0, 10))}</span>` : ""}</td>
       <td>${pillFor[status(p)]}</td>
       <td><div class="acts"><button class="btn" data-act="receive">Receive</button>${p.stock === null ? (own ? '<button class="btn" data-act="track">Track</button>' : "") : '<button class="btn" data-act="adjust">Adjust</button>'}<button class="btn" data-act="history">History</button></div></td></tr>`).join("")
@@ -1258,7 +1258,7 @@ async function inventory() {
       ${only ? "" : `<input id="rvQ" type="search" placeholder="Filter products" style="height:2.4rem;padding:0 .8rem;border:1px solid var(--line-strong);border-radius:8px;max-width:20rem">`}
       <div class="tblwrap" style="max-height:26rem;overflow:auto"><table class="tbl compact" id="rvT"><tr><th>Product</th><th class="num">Now</th><th>Qty received</th><th>Cost each $</th><th>Lot / batch</th><th>Expires</th></tr>
       ${rows.map((p) => `<tr data-rid="${p.id}" data-txt="${esc([p.name, p.strength, p.manufacturer].join(" ").toLowerCase())}"><td class="namecol"><strong>${esc(label(p))}</strong><div class="muted" style="font-size:.78rem">${esc(sub(p))}</div></td><td class="num">${p.stock ?? "—"}</td>
-        <td><input data-f="qty" inputmode="numeric" style="width:5rem"></td><td><input data-f="costEach" inputmode="decimal" style="width:6rem" placeholder="${p.cost_cents !== null ? usd(p.cost_cents) : ""}"></td>
+        <td><input data-f="qty" inputmode="numeric" style="width:5rem"></td><td><input data-f="costEach" inputmode="decimal" style="width:6rem" placeholder="${p.cost_cents !== null ? dollars(p.cost_cents) : ""}"></td>
         <td><input data-f="lot" style="width:9rem"></td><td><input data-f="expires" type="date" style="width:9.5rem"></td></tr>`).join("")}</table></div>
       <div class="row2"><button class="btn solid" type="button" id="rvGo">Add to stock</button><span class="muted">Only rows with a quantity are received. Cost updates the average cost per unit.</span></div></div>`;
     if (!only) document.getElementById("rvQ").oninput = (e) => { const t = e.target.value.toLowerCase(); document.querySelectorAll("#rvT tr[data-rid]").forEach((tr) => { tr.hidden = t && !tr.dataset.txt.includes(t); }); };
@@ -1920,14 +1920,14 @@ async function settings(part = "site") {
       <div class="grid2">${t("brand", "Store name", "Shown top left and in the footer")}${t("tagline", "Tagline (optional)")}${t("contact", "Contact for customers", "Phone, text or email")}
       ${t("distributorOf", "Brand you distribute", 'Shows "Authorized ___ distributor"')}${t("brandUrl", "Brand's website (https)")}</div>
       <div class="grid2">${t("priceNote", "Note under products")}
-        <div class="field"><label class="eyebrow" for="s-minOrder">Minimum order $</label><input id="s-minOrder" value="${usd(s.minOrderCents) || ""}" placeholder="None" inputmode="decimal"${ro()}></div></div></div>
+        <div class="field"><label class="eyebrow" for="s-minOrder">Minimum order $</label><input id="s-minOrder" value="${dollars(s.minOrderCents) || ""}" placeholder="None" inputmode="decimal"${ro()}></div></div></div>
     <div class="panel"><h2>Shipping &amp; local delivery</h2>
       <p class="muted">Customers (and sales reps) choose one at checkout. Shipping is charged; local delivery is free. Orders show which one was picked.</p>
       <div class="grid2">
         <div class="stack"><label class="chk"><input type="checkbox" id="s-shippingOn"${s.shippingOn ? " checked" : ""}${ro()}> Offer shipping</label>
           ${t("shippingLabel", "Shipping name shown", "e.g. FedEx shipping")}
-          <div class="field"><label class="eyebrow" for="s-shippingAmt">Shipping charge $</label><input id="s-shippingAmt" value="${usd(s.shippingCents)}" inputmode="decimal"${ro()}></div>
-          <div class="field"><label class="eyebrow" for="s-shippingFree">Free shipping on orders over $ (optional)</label><input id="s-shippingFree" value="${s.shippingFreeOverCents ? usd(s.shippingFreeOverCents) : ""}" placeholder="Never free" inputmode="decimal"${ro()}></div>
+          <div class="field"><label class="eyebrow" for="s-shippingAmt">Shipping charge $</label><input id="s-shippingAmt" value="${dollars(s.shippingCents)}" inputmode="decimal"${ro()}></div>
+          <div class="field"><label class="eyebrow" for="s-shippingFree">Free shipping on orders over $ (optional)</label><input id="s-shippingFree" value="${s.shippingFreeOverCents ? dollars(s.shippingFreeOverCents) : ""}" placeholder="Never free" inputmode="decimal"${ro()}></div>
           ${t("shippingNote", "Note under it", "e.g. Ships in 1 to 3 business days")}
           ${t("fedexAccount", "FedEx account number", "Shown to staff on orders to ship, with a copy button. Customers never see it.")}</div>
         <div class="stack"><label class="chk"><input type="checkbox" id="s-deliveryOn"${s.deliveryOn ? " checked" : ""}${ro()}> Offer local delivery (free)</label>
