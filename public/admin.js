@@ -956,16 +956,41 @@ async function reps() {
   if (!isOwner()) return dashboard();
   const $ = (x) => document.getElementById(x);
   const { reps: list } = await api("/reps");
+  const F = (() => { try { return JSON.parse(localStorage.getItem("repView") || "{}"); } catch (e) { return {}; } })();
+  const st = { q: "", show: F.show || "active", sort: F.sort || "month" }, openSet = new Set();
+  const SORTS = { month: (r) => r.month_cents, sales: (r) => r.sales_cents, owed: (r) => r.commission.earned, customers: (r) => r.customers, orders: (r) => r.orders, name: (r) => r.name.toLowerCase() };
   pane().innerHTML = `<header><h1>Sales reps</h1><button class="btn solid" id="addRep">Add sales rep</button></header>
-    <p class="muted">Reps sign in at <a href="/rep" target="_blank">/rep</a> (the rep app). They add their own customers and place orders for them; every order from one of their customers earns their commission rate, whether the rep or the customer placed it. Change the rate here; it applies to new orders.</p>
+    <p class="muted">Reps sign in at <a href="/rep" target="_blank">/rep</a> (the rep app). They add their own customers and place orders for them; every order from one of their customers earns their commission, whether the rep or the customer placed it. Tap a rep to change their details or plan.</p>
     <div id="repForm"></div>
-    <div class="tblwrap"><table class="tbl" id="rt"><tr><th>Name</th><th>Email</th><th>Phone</th><th class="num">Commission</th><th class="num">Customers</th><th class="num">Orders</th><th class="num">Sales (all)</th><th class="num">This month</th><th class="num">Owed now</th><th class="num">Paid out</th><th>Active</th><th>New password</th><th></th></tr>
-    ${list.map((r) => `<tr data-rid="${r.id}"><td><input data-k="name" value="${esc(r.name)}"></td><td>${esc(r.email)}</td><td><input data-k="phone" value="${esc(r.phone)}" style="min-width:7rem"></td>
-      <td class="num">${planPick(r, PLAN_ON)}</td>
-      <td class="num">${r.customers}</td><td class="num">${r.orders}</td><td class="num">${money(r.sales_cents)}</td><td class="num">${money(r.month_cents)}</td><td class="num"><strong>${money(r.commission.earned)}</strong></td><td class="num">${money(r.commission.paid)}</td>
-      <td><input type="checkbox" data-k="active"${r.active ? " checked" : ""}></td><td><input data-k="password" type="password" placeholder="Leave blank" autocomplete="new-password" style="min-width:7rem"></td>
-      <td class="row2" style="flex-wrap:nowrap"><button class="btn" data-save>Save</button><button class="btn" data-comm="${r.id}">Commissions</button></td></tr>`).join("")}
-    ${list.length ? "" : '<tr><td colspan="13" class="muted">No sales reps yet.</td></tr>'}</table></div>`;
+    <div class="filters" style="flex-wrap:wrap;gap:.5rem"><input id="rq" type="search" placeholder="Search reps">
+      <select id="rShow"><option value="active">Active reps</option><option value="off">Turned off</option><option value="">All reps</option></select>
+      <select id="rSort">${[["month", "This month"], ["sales", "Sales (all)"], ["owed", "Owed now"], ["customers", "Customers"], ["orders", "Orders"], ["name", "Name A–Z"]].map(([k, l]) => `<option value="${k}">Sort: ${l}</option>`).join("")}</select></div>
+    <div class="row2" style="justify-content:space-between;align-items:center"><p class="muted" id="rSum" style="margin:0"></p><button class="btn" type="button" id="rAll">Expand all</button></div>
+    <div class="tblwrap" id="rt"></div>`;
+  let shown = [];
+  const draw = () => {
+    shown = list.filter((r) => (!st.show || (st.show === "off" ? !r.active : r.active)) && (!st.q || [r.name, r.email, r.phone].join(" ").toLowerCase().includes(st.q)));
+    const key = SORTS[st.sort] || SORTS.month, asc = st.sort === "name";
+    shown.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * (asc ? 1 : -1); });
+    $("rSum").textContent = shown.length ? `${shown.length} rep${shown.length === 1 ? "" : "s"} · ${shown.reduce((t, r) => t + r.customers, 0)} customers · ${money(shown.reduce((t, r) => t + r.month_cents, 0))} this month · ${money(shown.reduce((t, r) => t + r.commission.earned, 0))} owed` : "";
+    const det = (lab, html) => `<div><div class="eyebrow" style="margin-bottom:.2rem">${lab}</div>${html}</div>`;
+    $("rt").innerHTML = shown.length ? `<table class="tbl ctbl"><thead><tr><th>Rep</th><th class="num">Customers</th><th class="num">This month</th><th class="num">Sales (all)</th><th class="num">Owed now</th></tr></thead><tbody>
+      ${shown.map((r) => { const open = openSet.has(r.id); return `<tr class="csum click" data-rid="${r.id}" aria-expanded="${open}"><td><span class="caret" style="display:inline-block;width:1rem;transition:transform .15s;${open ? "transform:rotate(90deg)" : ""}">▸</span><strong>${esc(r.name)}</strong>${r.active ? "" : ' <span class="pill st-cancelled">off</span>'}</td>
+        <td class="num">${r.customers}</td><td class="num">${money(r.month_cents)}</td><td class="num">${money(r.sales_cents)}</td><td class="num"><strong>${money(r.commission.earned)}</strong></td></tr>
+        <tr class="cdet" data-rid="${r.id}"${open ? "" : " hidden"}><td colspan="5" style="background:var(--ground,#f6f7f9)">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr));gap:.8rem 1.2rem;padding:.4rem .2rem;align-items:start">
+            ${det("Name", `<input data-k="name" value="${esc(r.name)}" style="width:100%">`)}${det("Email (login)", esc(r.email))}${det("Phone", `<input data-k="phone" value="${esc(r.phone || "")}" style="width:100%">`)}
+            ${det("Commission", planPick(r, PLAN_ON).replace("justify-content:flex-end", "justify-content:flex-start"))}${det("Orders", r.orders)}${det("Paid out", money(r.commission.paid))}
+            ${det("Status", `<label class="chk"><input type="checkbox" data-k="active"${r.active ? " checked" : ""}> Active</label>`)}${det("New password", `<input data-k="password" type="password" placeholder="Leave blank" autocomplete="new-password" style="width:100%">`)}</div>
+          <div class="row2" style="margin-top:.6rem"><button class="btn solid" data-save>Save</button><button class="btn" data-comm="${r.id}">Commissions</button><button class="btn" data-rcust="${r.id}">Customers</button></div></td></tr>`; }).join("")}</tbody></table>` : `<p class="muted">${list.length ? "No reps match." : "No sales reps yet."}</p>`;
+  };
+  const save = () => { try { localStorage.setItem("repView", JSON.stringify({ show: st.show, sort: st.sort })); } catch (e) {} };
+  $("rShow").value = st.show; $("rSort").value = st.sort;
+  $("rq").oninput = (e) => { st.q = e.target.value.trim().toLowerCase(); draw(); };
+  $("rShow").onchange = (e) => { st.show = e.target.value; save(); draw(); };
+  $("rSort").onchange = (e) => { st.sort = e.target.value; save(); draw(); };
+  $("rAll").onclick = () => { const all = openSet.size < shown.length; openSet.clear(); if (all) shown.forEach((r) => openSet.add(r.id)); $("rAll").textContent = all ? "Collapse all" : "Expand all"; draw(); };
+  draw();
   $("addRep").onclick = () => {
     const f = (id, label, type = "text", extra = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}"${extra}></div>`;
     $("repForm").innerHTML = `<div class="panel"><h2>New sales rep</h2><div class="grid2">${f("nr-n", "Name")}${f("nr-e", "Email (their login)", "email")}${f("nr-p", "Phone", "tel")}${f("nr-r", "Commission %", "text", ' inputmode="decimal" placeholder="e.g. 10"')}${f("nr-pw", "Temporary password (8+ characters)", "password", ' autocomplete="new-password"')}</div>
@@ -980,8 +1005,10 @@ async function reps() {
   $("rt").addEventListener("change", planToggle);
   $("rt").onclick = async (e) => {
     const c = e.target.closest("[data-comm]"); if (c) { commFilter.rep = c.dataset.comm; go("commissions"); return; }
+    const rc = e.target.closest("[data-rcust]"); if (rc) { try { const v = JSON.parse(localStorage.getItem("custView") || "{}"); v.rep = rc.dataset.rcust; localStorage.setItem("custView", JSON.stringify(v)); } catch (er) {} go("customers"); return; }
+    const sm = e.target.closest("tr.csum"); if (sm && !e.target.closest("a, button, input, select")) { const id = +sm.dataset.rid, d = sm.nextElementSibling, open = d.hidden; d.hidden = !open; sm.setAttribute("aria-expanded", open); sm.querySelector(".caret").style.transform = open ? "rotate(90deg)" : ""; if (open) openSet.add(id); else openSet.delete(id); return; }
     if (!e.target.closest("[data-save]")) return;
-    const tr = e.target.closest("[data-id]"), body = {};
+    const tr = e.target.closest("tr.cdet[data-rid]"), body = {};
     tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body.active = i.checked; else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
     await api("/reps/" + tr.dataset.rid, { method: "PATCH", body }); toast("Saved"); paneDirty = false; reps();
   };
@@ -1357,6 +1384,7 @@ const agoText = (iso) => { const d = daysAgo(iso); return d <= 0 ? "today" : d =
 const countDue = (lastAt, dueDays) => !lastAt || daysAgo(lastAt) >= (dueDays || 7);
 const signedMoney = (c) => (c === null || c === undefined ? "" : (c < 0 ? "−" : c > 0 ? "+" : "") + money(Math.abs(c)));
 const refCell = (m) => !m.ref ? "" : m.reason.startsWith("Order") ? `<a href="#" data-orderq="${esc(m.ref)}">${esc(m.ref)}</a>` : m.count_id ? `<a href="#" data-cntopen="${m.count_id}">${esc(m.ref)}</a>` : esc(m.ref);
+let invSort = (() => { try { return localStorage.getItem("invSort") || "name"; } catch (e) { return "name"; } })();
 async function inventory() {
   if (invTab === "count") return invCountSheet();
   if (invTab === "counts") return invCounts();
@@ -1394,22 +1422,32 @@ async function inventory() {
     <div class="filters"><input id="invQ" type="search" placeholder="Search name, maker or code">
       ${[["all", "All"], ["low", "Low"], ["out", "Out"], ["expiring", "Expiring"], ["untracked", "Not tracked"]].map(([k, l]) => `<button class="chip${invFilter === k ? " on" : ""}" type="button" data-invf="${k}">${l}${counts[k] ? ` (${counts[k]})` : ""}</button>`).join("")}</div>
     <p class="muted">Available is what customers can still buy. Stock comes off when an order is placed and goes back if it's cancelled; "In orders" is stock held by orders not yet shipped, so On shelf = Available + In orders. Value = on shelf × cost each. Every change is kept in each product's History and in the Activity log; the weekly count goes on the Count sheet.</p>
-    <div class="tblwrap"><table class="tbl compact" id="invT"><thead><tr><th>Product</th><th class="num">Available</th><th class="num">In orders</th><th class="num">On shelf</th><th class="num">Sold 30d</th><th class="num">Reorder at</th>${own ? '<th class="num">Cost each</th><th class="num">Value</th>' : ""}<th>Next expiry</th><th>Status</th><th></th></tr></thead><tbody id="invB"></tbody></table></div>`;
+    <div class="row2" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem"><p class="muted" id="invSum" style="margin:0"></p><div class="row2" style="gap:.5rem"><select id="invSort">${[["name", "Name A–Z"], ["avail", "Available, lowest first"], ["sold", "Sold 30 days"], ["weeks", "Weeks left, fewest first"], ...(own ? [["value", "Value"]] : []), ["expiry", "Next expiry"]].map(([k, l]) => `<option value="${k}"${invSort === k ? " selected" : ""}>Sort: ${l}</option>`).join("")}</select><button class="btn" type="button" id="invAll">Expand all</button></div></div>
+    <div class="tblwrap"><table class="tbl ctbl" id="invT"><thead><tr><th>Product</th><th class="num">Available</th><th class="num">On shelf</th><th class="num">Sold 30d</th><th>Status</th></tr></thead><tbody id="invB"></tbody></table></div>`;
+  const openInv = new Set(); let shownInv = [];
+  const ISORT = { name: (p) => label(p).toLowerCase(), avail: (p) => (p.stock === null ? 1e9 : p.stock), sold: (p) => -(p.sold_30d || 0), weeks: (p) => (weeksLeft(p) === null ? 1e9 : weeksLeft(p)), value: (p) => -((p.cost_cents || 0) * Math.max(0, (p.stock || 0) + (p.committed || 0))), expiry: (p) => p.next_expiry || "9999" };
   const draw = () => {
     const term = (document.getElementById("invQ").value || "").toLowerCase();
     const list = items.filter((p) => (invFilter === "all" || (invFilter === "expiring" ? soon(p.next_expiry) : status(p) === invFilter))
       && (!term || [p.name, p.strength, p.manufacturer].join(" ").toLowerCase().includes(term)));
-    document.getElementById("invB").innerHTML = list.length ? list.map((p) => `<tr data-iid="${p.id}">
-      <td class="namecol" title="${esc(label(p))}"><strong>${esc(label(p))}</strong>${sub(p) ? `<div class="muted" style="font-size:.78rem">${esc(sub(p))}</div>` : ""}</td>
-      <td class="num"><strong>${p.stock ?? "—"}</strong>${p.stock < 0 ? '<div class="muted" style="font-size:.72rem" title="Open orders need more than what\'s on the shelf">short for orders</div>' : ""}</td><td class="num">${p.committed || ""}</td><td class="num">${p.stock === null ? "" : p.stock + p.committed}</td>
-      <td class="num">${p.sold_30d || ""}${weeksLeft(p) !== null ? `<div class="muted" style="font-size:.72rem">~${weeksLeft(p)} wk left</div>` : ""}</td>
-      <td class="num">${own ? `<input data-reorder value="${p.reorder_point ?? ""}" placeholder="5" inputmode="numeric" style="width:4.2rem;text-align:right">` : (p.reorder_point ?? 5)}</td>
-      ${own ? `<td class="num"><input data-cost value="${dollars(p.cost_cents)}" placeholder="—" inputmode="decimal" style="width:5.5rem;text-align:right"></td><td class="num">${p.cost_cents !== null && p.stock !== null ? money(p.cost_cents * Math.max(0, p.stock + p.committed)) : ""}</td>` : ""}
-      <td>${p.next_expiry ? `<span${soon(p.next_expiry) ? ' class="pill st-new"' : ""}>${esc(String(p.next_expiry).slice(0, 10))}</span>` : ""}</td>
-      <td>${pillFor[status(p)]}</td>
-      <td><div class="acts"><button class="btn" data-act="receive">Receive</button>${p.stock === null ? (own ? '<button class="btn" data-act="track">Track</button>' : "") : '<button class="btn" data-act="adjust">Adjust</button>'}<button class="btn" data-act="history">History</button></div></td></tr>`).join("")
-      : `<tr><td colspan="11" class="muted">Nothing here.</td></tr>`;
+    const key = ISORT[invSort] || ISORT.name; list.sort((a, b) => { const x = key(a), y = key(b); return x < y ? -1 : x > y ? 1 : 0; }); shownInv = list;
+    document.getElementById("invSum").textContent = `${list.length} product${list.length === 1 ? "" : "s"}${list.length !== items.length ? ` of ${items.length}` : ""} · ${list.reduce((t, p) => t + Math.max(0, (p.stock || 0) + (p.committed || 0)), 0)} units on shelf${own ? ` · ${money(list.reduce((t, p) => t + (p.cost_cents && p.stock !== null ? p.cost_cents * Math.max(0, p.stock + p.committed) : 0), 0))} at cost` : ""}`;
+    const det = (lab, html) => `<div><div class="eyebrow" style="margin-bottom:.2rem">${lab}</div>${html}</div>`;
+    document.getElementById("invB").innerHTML = list.length ? list.map((p) => { const open = openInv.has(p.id); return `<tr class="csum click" data-iid="${p.id}" aria-expanded="${open}">
+      <td title="${esc(label(p))}"><span class="caret" style="display:inline-block;width:1rem;transition:transform .15s;${open ? "transform:rotate(90deg)" : ""}">▸</span><strong>${esc(label(p))}</strong>${sub(p) ? `<div class="muted" style="font-size:.78rem;margin-left:1rem">${esc(sub(p))}</div>` : ""}</td>
+      <td class="num"><strong>${p.stock ?? "—"}</strong>${p.stock < 0 ? '<div class="muted" style="font-size:.72rem" title="Open orders need more than what\'s on the shelf">short for orders</div>' : ""}</td><td class="num">${p.stock === null ? "" : p.stock + p.committed}</td>
+      <td class="num">${p.sold_30d || ""}${weeksLeft(p) !== null ? `<div class="muted" style="font-size:.72rem">~${weeksLeft(p)} wk left</div>` : ""}</td><td>${pillFor[status(p)]}</td></tr>
+      <tr class="cdet" data-iid="${p.id}"${open ? "" : " hidden"}><td colspan="5" style="background:var(--ground,#f6f7f9)">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,10rem),1fr));gap:.8rem 1.2rem;padding:.4rem .2rem;align-items:start">
+          ${det("In orders", p.committed || 0)}${det("Reorder at", own ? `<input data-reorder value="${p.reorder_point ?? ""}" placeholder="5" inputmode="numeric" style="width:100%">` : (p.reorder_point ?? 5))}
+          ${own ? det("Cost each", `<input data-cost value="${dollars(p.cost_cents)}" placeholder="—" inputmode="decimal" style="width:100%">`) + det("Value on shelf", p.cost_cents !== null && p.stock !== null ? money(p.cost_cents * Math.max(0, p.stock + p.committed)) : "—") : ""}
+          ${det("Next expiry", p.next_expiry ? `<span${soon(p.next_expiry) ? ' class="pill st-new"' : ""}>${esc(String(p.next_expiry).slice(0, 10))}</span>` : "—")}</div>
+        <div class="acts row2" style="margin-top:.6rem"><button class="btn" data-act="receive">Receive</button>${p.stock === null ? (own ? '<button class="btn" data-act="track">Track</button>' : "") : '<button class="btn" data-act="adjust">Adjust</button>'}<button class="btn" data-act="history">History</button></div></td></tr>`; }).join("")
+      : `<tr><td colspan="5" class="muted">Nothing here.</td></tr>`;
   };
+  document.getElementById("invSort").onchange = (e) => { invSort = e.target.value; try { localStorage.setItem("invSort", invSort); } catch (er) {} draw(); };
+  document.getElementById("invAll").onclick = () => { const all = openInv.size < shownInv.length; openInv.clear(); if (all) shownInv.forEach((p) => openInv.add(p.id)); document.getElementById("invAll").textContent = all ? "Collapse all" : "Expand all"; draw(); };
+  document.getElementById("invB").addEventListener("click", (e) => { const t = e.target.closest("tr.csum"); if (!t || e.target.closest("a, button, input, select")) return; const id = +t.dataset.iid, d = t.nextElementSibling, open = d.hidden; d.hidden = !open; t.setAttribute("aria-expanded", open); t.querySelector(".caret").style.transform = open ? "rotate(90deg)" : ""; if (open) openInv.add(id); else openInv.delete(id); });
   draw();
   const panel = document.getElementById("invPanel");
   const fld = (id, label, attrs = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" ${attrs}></div>`;
