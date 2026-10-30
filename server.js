@@ -241,7 +241,7 @@ app.get("/api/store", wrap(async (req, res) => {
   const markup = cust && cust.markup !== null ? Number(cust.markup) : null;
   const guest = !cust && !house, guestUp = guest && s.guestPricesOn ? Math.max(0, Number(s.guestMarkup) || 0) : 0;
   const hide = !!s.pricesRequireLogin && guest && !s.guestPricesOn;
-  const out = products.map(({ cost_cents, ...p }) => ({ ...p, price_cents: hide ? null : guestPrice(priceFor({ ...p, cost_cents }, markup), guestUp) }));
+  const out = products.map(({ cost_cents, ...p }) => ({ ...p, stock: s.showSoldOut ? p.stock : null, price_cents: hide ? null : guestPrice(priceFor({ ...p, cost_cents }, markup), guestUp) })); // stock counts stay private unless sold-out messages are on
   res.set("Cache-Control", "no-store");
   res.json({ settings: publicSettings(s), products: out, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents, pricing: markup !== null ? { markup } : null, pricesHidden: hide, signedIn: !!cust || !!(house && !cust), house: !!(house && !cust) });
 }));

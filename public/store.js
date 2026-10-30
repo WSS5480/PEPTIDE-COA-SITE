@@ -112,7 +112,7 @@ function drawProducts() {
     const purity = r ? ((r.results || []).find(([n]) => isPurity(n)) || [])[1] : "";
     const sold = !!S.showSoldOut && p.stock !== null && p.stock <= 0; // "sold out" only when the office turns it on; otherwise it's a backorder
     const price = HIDDEN ? `<p class="p-price ask">Sign in for pricing</p>` : p.price_cents !== null ? `<p class="p-price">${money(p.price_cents)}</p>` : `<p class="p-price ask">Ask for price</p>`;
-    const stock = (p.store_note ? `<span class="stockline note">${esc(p.store_note)}</span>` : "") + (sold ? `<span class="soldout">Sold out</span>` : p.stock !== null && p.stock > 0 && p.stock <= 5 ? `<span class="stockline low">Only ${p.stock} left</span>` : "");
+    const stock = (p.store_note ? `<span class="stockline note">${esc(p.store_note)}</span>` : "") + (sold ? `<span class="soldout">Sold out</span>` : S.showSoldOut && p.stock !== null && p.stock > 0 && p.stock <= 5 ? `<span class="stockline low">Only ${p.stock} left</span>` : ""); // stock counts show only when the office turns sold-out messages on
     const buy = HIDDEN ? `<button class="btn solid" type="button" data-signin>Sign in to order</button>`
       : p.price_cents === null ? (S.contact ? `<span class="stockline">Contact us: ${esc(S.contact)}</span>` : "")
       : sold ? "" : `<button class="btn solid" type="button" data-add="${p.id}">Add to cart${inCart(p.id) ? ` (${inCart(p.id)})` : ""}</button>`;
