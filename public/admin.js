@@ -929,7 +929,7 @@ async function reps() {
   $("rt").onclick = async (e) => {
     const c = e.target.closest("[data-comm]"); if (c) { commFilter.rep = c.dataset.comm; go("commissions"); return; }
     if (!e.target.closest("[data-save]")) return;
-    const tr = e.target.closest("tr"), body = {};
+    const tr = e.target.closest("[data-id]"), body = {};
     tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body.active = i.checked; else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
     await api("/reps/" + tr.dataset.rid, { method: "PATCH", body }); toast("Saved"); paneDirty = false; reps();
   };
@@ -2272,24 +2272,37 @@ function apps() {
     ${card("360 Medical tracker admin", "Reps and plans, visits, surgeons, facilities, approvals.", "COO and managers", tr ? link("/admin/go/tracker?next=/admin", "Open the tracker admin", true) + link("/admin/go/tracker?next=/admin/download", "Download page", true) : `<span class="muted">Not linked yet.</span>`)}`;
 }
 /* ---------- staff ---------- */
+let staffPick = null;
 async function staff() {
   const PLAN_ON = isOwner() ? await api("/commissions/plan").then((j) => j.on).catch(() => false) : false;
   if (!isOwner()) return dashboard();
   const { users } = await api("/users");
   const ROLE = { owner: "Admin", staff: "Manager", rep: "Sales rep" };
   const roleSel = (cur, id) => `<select ${id ? `id="${id}"` : 'data-k="role" style="min-width:7.5rem"'}>${Object.entries(ROLE).map(([k, l]) => `<option value="${k}"${cur === k ? " selected" : ""}>${l}</option>`).join("")}</select>`;
+  if (!users.some((u) => String(u.id) === String(staffPick))) staffPick = (users.find((u) => u.role === "rep") || users[0] || {}).id;
+  const appsOf = (u) => ({ store: !u.apps || u.apps.store !== false, tracker: u.apps && u.apps.tracker !== undefined ? !!u.apps.tracker : u.role === "owner" });
+  const optLabel = (u) => `${u.name}${u.active ? "" : " (off)"}${u.id === me.id ? " · you" : u.signed_in ? " · signed in" : ""}`;
+  const u = users.find((x) => String(x.id) === String(staffPick));
+  const F = (label, html, wide) => `<div class="field" style="margin:0${wide ? ";grid-column:1/-1" : ""}"><span class="eyebrow">${label}</span>${html}</div>`;
+  const card = !u ? '<p class="muted">No logins yet.</p>' : (() => { const ap = appsOf(u); return `<div class="panel" data-id="${u.id}" data-role="${u.role}" style="margin-top:.6rem">
+      <div class="row2" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem;margin-bottom:.6rem"><div><strong style="font-size:1.05rem">${esc(u.name)}</strong> <span class="muted">${esc(u.email)}</span>${u.role === "rep" ? ` <span class="muted">· ${u.customers} customer${u.customers === 1 ? "" : "s"}</span>` : ""}</div>
+        <div class="row2" style="gap:.4rem"><button class="btn solid" data-save>Save</button>${u.id === me.id ? "" : '<button class="btn danger" data-del title="Delete this login for good">Delete</button>'}</div></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,12.5rem),1fr));gap:.7rem 1rem;align-items:end">
+        ${F("Name", `<input data-k="name" value="${esc(u.name)}">`)}
+        ${F("Role", roleSel(u.role))}
+        ${F("Phone", `<input data-k="phone" value="${esc(u.phone || "")}">`)}
+        ${F("Commission", planPick(u, PLAN_ON, u.role === "rep").replace("justify-content:flex-end", "justify-content:flex-start") + (u.role === "rep" ? "" : '<span class="muted" data-noplan>— (reps only)</span>'))}
+        ${F("PIN", `<input data-k="pin" inputmode="numeric" placeholder="${u.pin_set ? "Set · type to change" : "4–10 digits"}" title="Name + PIN sign-in for both apps">`)}
+        ${F("New password", `<input data-k="password" type="password" placeholder="Leave blank to keep" autocomplete="new-password">`)}
+        ${F("Apps", `<div class="row2" style="gap:.2rem 1rem;flex-wrap:wrap"><label class="chk"><input type="checkbox" data-app="store"${ap.store ? " checked" : ""}> Peptide store</label><label class="chk"><input type="checkbox" data-app="tracker"${ap.tracker ? " checked" : ""}> Case tracker</label></div>`)}
+        ${F("Status", `<label class="chk"><input type="checkbox" data-k="active"${u.active ? " checked" : ""}${u.id === me.id ? " disabled" : ""}> Active</label>`)}
+      </div></div>`; })();
+  const grp = (role, label) => { const l = users.filter((x) => x.role === role); return l.length ? `<optgroup label="${label} (${l.length})">${l.map((x) => `<option value="${x.id}"${String(x.id) === String(staffPick) ? " selected" : ""}>${esc(optLabel(x))}</option>`).join("")}</optgroup>` : ""; };
   pane().innerHTML = `<header><h1>Team logins</h1></header>
     <div id="trackerImport"></div>
-    <p class="muted">One login for both apps: tick <strong>Peptide store</strong> and/or <strong>Case tracker</strong> per person. A <strong>PIN</strong> lets them sign in by name + PIN on either app (email + password always works too). <strong>Admin</strong> can do everything (prices, costs, settings, logins, deleting orders). <strong>Manager</strong> works orders, customers, products, inventory and settings but can't see costs, change prices or manage logins. <strong>Sales rep</strong> signs in to the admin or the <a href="/rep" target="_blank" rel="noopener">rep app</a> and sees only their own customers, orders and commission. Changing someone's role or password signs them out everywhere.</p>
-    <div class="tblwrap"><table class="tbl compact" id="ut"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Phone</th><th class="num">Commission %</th><th class="num">Customers</th><th>Apps</th><th>PIN</th><th>Active</th><th>New password</th><th></th></tr></thead><tbody>
-    ${users.map((u) => `<tr data-id="${u.id}" data-role="${u.role}"><td class="namecol"><input data-k="name" value="${esc(u.name)}" style="min-width:9rem">${u.id === me.id ? '<div class="muted" style="font-size:.75rem">you</div>' : u.signed_in ? '<div class="muted" style="font-size:.75rem">signed in</div>' : ""}</td><td>${esc(u.email)}</td>
-      <td>${roleSel(u.role)}</td><td><input data-k="phone" value="${esc(u.phone || "")}" style="width:8rem"></td>
-      <td class="num">${planPick(u, PLAN_ON, u.role === "rep")}${u.role === "rep" ? "" : '<span class="muted" data-noplan>—</span>'}</td>
-      <td class="num">${u.role === "rep" ? u.customers : ""}</td>
-      <td style="white-space:nowrap"><label class="chk" style="display:block"><input type="checkbox" data-app="store"${!u.apps || u.apps.store !== false ? " checked" : ""}> Peptide store</label><label class="chk" style="display:block"><input type="checkbox" data-app="tracker"${u.apps && u.apps.tracker !== undefined ? (u.apps.tracker ? " checked" : "") : (u.role === "owner" ? " checked" : "")}> Case tracker</label></td>
-      <td><input data-k="pin" inputmode="numeric" placeholder="${u.pin_set ? "Set · type to change" : "4–10 digits"}" style="width:7rem" title="Name + PIN sign-in for both apps"></td>
-      <td><input type="checkbox" data-k="active"${u.active ? " checked" : ""}${u.id === me.id ? " disabled" : ""}></td>
-      <td><input data-k="password" type="password" placeholder="Leave blank to keep" autocomplete="new-password" style="min-width:9rem"></td><td style="white-space:nowrap"><button class="btn" data-save>Save</button>${u.id === me.id ? "" : ` <button class="btn danger" data-del title="Delete this login for good">Delete</button>`}</td></tr>`).join("")}</tbody></table></div>
+    <details class="muted" style="margin:.2rem 0 .6rem"><summary>How logins work</summary><p>One login for both apps: tick <strong>Peptide store</strong> and/or <strong>Case tracker</strong> per person. A <strong>PIN</strong> lets them sign in by name + PIN on either app (email + password always works too). <strong>Admin</strong> can do everything (prices, costs, settings, logins, deleting orders). <strong>Manager</strong> works orders, customers, products, inventory and settings but can't see costs, change prices or manage logins. <strong>Sales rep</strong> signs in to the admin or the <a href="/rep" target="_blank" rel="noopener">rep app</a> and sees only their own customers, orders and commission. Changing someone's role or password signs them out everywhere.</p></details>
+    <div class="row2" style="align-items:end;gap:.6rem;flex-wrap:wrap"><div class="field" style="margin:0;flex:1 1 18rem;max-width:28rem"><label class="eyebrow" for="staffPick">Person (${users.length})</label><select id="staffPick">${grp("rep", "Sales reps")}${grp("staff", "Managers")}${grp("owner", "Admins")}</select></div><button class="btn" type="button" onclick="const n=document.getElementById('nu-n'),c=n.closest('.folded');if(c){const h=c.querySelector('.fold-h,.fold-head');if(h)h.click();else c.classList.remove('folded')}n.scrollIntoView({behavior:'smooth',block:'center'});n.focus()">+ Add a login</button></div>
+    <div id="ut">${card}</div>
     <div class="panel"><h2>Add a login</h2><div class="grid2">
       <div class="field"><label class="eyebrow" for="nu-n">Name</label><input id="nu-n"></div>
       <div class="field"><label class="eyebrow" for="nu-e">Email (their login)</label><input id="nu-e" type="email"></div>
@@ -2310,12 +2323,12 @@ async function staff() {
     if (!r.ok) { box.innerHTML = `<p class="muted">Case tracker: ${esc(r.error)}</p>`; return; }
     const missing = (r.reps || []).filter((t) => !users.some((u) => u.name.trim().toLowerCase() === String(t.rep).trim().toLowerCase()));
     if (!missing.length) return;
-    box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2 style="margin-top:0">In the case tracker only</h2>
+    box.innerHTML = `<details class="panel" style="border-color:var(--blue)"><summary><strong>In the case tracker only (${missing.length})</strong> <span class="muted">· reps without a login yet</span></summary>
       <p class="muted">These reps were set up in the tracker before Team logins existed. <strong>Add</strong> gives them one login for both apps (Case tracker ticked, same PIN they use today; the email is only for email + password sign-in — change it if they have a real one). <strong>Remove</strong> takes them out of the tracker's rep list; their logged cases stay.</p>
-      <div class="tblwrap"><table class="tbl compact"><thead><tr><th>Name</th><th>Email for their login</th><th></th></tr></thead><tbody>
-      ${missing.map((t, i) => `<tr><td><strong>${esc(t.rep)}</strong>${t.active === false ? ' <span class="muted">(off)</span>' : ""}</td><td><input data-imp="${i}" type="email" style="min-width:16rem" value="${esc(String(t.rep).toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, ""))}@360medical.net"></td>
-        <td style="white-space:nowrap"><button class="btn solid" type="button" data-impadd="${i}">Add login</button> <button class="btn danger" type="button" data-imprm="${i}" title="Remove from the tracker's rep list (their cases stay)">Remove</button></td></tr>`).join("")}</tbody></table></div>
-      ${missing.length > 1 ? `<div style="margin-top:.5rem"><button class="btn" type="button" id="impReps">Add all ${missing.length}</button></div>` : ""}</div>`;
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr));gap:.6rem">
+      ${missing.map((t, i) => `<div style="border:1px solid var(--line);border-radius:10px;padding:.6rem .7rem"><strong>${esc(t.rep)}</strong>${t.active === false ? ' <span class="muted">(off)</span>' : ""}<label class="eyebrow" style="display:block;margin-top:.3rem">Email for their login</label><input data-imp="${i}" type="email" style="width:100%" value="${esc(String(t.rep).toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, ""))}@360medical.net">
+        <div class="row2" style="gap:.4rem;margin-top:.4rem"><button class="btn solid" type="button" data-impadd="${i}">Add login</button><button class="btn danger" type="button" data-imprm="${i}" title="Remove from the tracker's rep list (their cases stay)">Remove</button></div></div>`).join("")}</div>
+      ${missing.length > 1 ? `<div style="margin-top:.5rem"><button class="btn" type="button" id="impReps">Add all ${missing.length}</button></div>` : ""}</details>`;
     const addOne = async (i) => {
       const email = (document.querySelector(`[data-imp="${i}"]`).value || "").trim(); if (!email) { toast("Enter an email for " + missing[i].rep); return false; }
       try { await api("/users", { method: "POST", body: { name: missing[i].rep, email, password: "temp-" + Math.random().toString(36).slice(2, 10) + "A1", role: "rep", rate: "0", pin: missing[i].pin || "", apps: { store: false, tracker: true } } }); return true; } catch (e) { return false; }
@@ -2327,15 +2340,16 @@ async function staff() {
       if (e.target.id === "impReps") { let n = 0; for (let i = 0; i < missing.length; i++) if (await addOne(i)) n++; toast(`Added ${n} login${n === 1 ? "" : "s"}`); staff(); }
     };
   }).catch(() => {});
-  document.getElementById("ut").onchange = (e) => { if (planToggle(e)) return; if (e.target.matches('[data-k="role"]')) { const tr = e.target.closest("tr"), pp = tr.querySelector(".planpick"), np = tr.querySelector("[data-noplan]"); pp.hidden = e.target.value !== "rep"; if (np) np.hidden = e.target.value === "rep"; } };
+  document.getElementById("staffPick").onchange = (e) => { staffPick = e.target.value; staff(); };
+  document.getElementById("ut").onchange = (e) => { if (planToggle(e)) return; if (e.target.matches('[data-k="role"]')) { const tr = e.target.closest("[data-id]"), pp = tr.querySelector(".planpick"), np = tr.querySelector("[data-noplan]"); pp.hidden = e.target.value !== "rep"; if (np) np.hidden = e.target.value === "rep"; } };
   document.getElementById("ut").onclick = async (e) => {
     if (e.target.closest("[data-del]")) {
-      const tr = e.target.closest("tr"), nm = tr.querySelector('[data-k="name"]').value;
+      const tr = e.target.closest("[data-id]"), nm = tr.querySelector('[data-k="name"]').value;
       if (!confirm(`Delete ${nm}'s login for good? Their customers stay (unassigned). A rep with orders on record can't be deleted — untick Active instead.`)) return;
-      await api("/users/" + tr.dataset.id, { method: "DELETE" }); toast("Login deleted"); staff(); return;
+      await api("/users/" + tr.dataset.id, { method: "DELETE" }); toast("Login deleted"); staffPick = null; staff(); return;
     }
     if (!e.target.closest("[data-save]")) return;
-    const tr = e.target.closest("tr"), body = {};
+    const tr = e.target.closest("[data-id]"), body = {};
     tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body.active = i.checked; else if (i.dataset.k === "rate") { if (!i.disabled && i.value.trim() !== "") body.rate = i.value.trim(); } else if (i.dataset.k === "pin") { if (i.value.trim()) body.pin = i.value.trim(); } else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
     body.apps = { store: tr.querySelector('[data-app="store"]').checked, tracker: tr.querySelector('[data-app="tracker"]').checked };
     if (body.role && body.role !== tr.dataset.role && !confirm(`Change this login to ${ROLE[body.role]}? They'll be signed out.`)) return;
