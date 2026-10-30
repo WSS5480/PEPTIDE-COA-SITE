@@ -382,6 +382,8 @@ function whoBar() {
   bar.innerHTML = `<span>Signed in as <strong>${esc(ME.name || ME.email)}</strong></span> <button class="linkbtn" type="button" id="whoOut">Not you? Sign out</button>`;
   document.getElementById("whoOut").onclick = async () => { await post("/api/account/logout", {}); await loadAccount(); await load(); toast("Signed out"); };
 }
+// coming back to the tab after a while: re-check who's signed in (idle sign-out may have happened)
+document.addEventListener("visibilitychange", () => { if (!document.hidden && (ME || HOUSE)) loadAccount().then(() => { if (!ME && !HOUSE) load(); }); });
 async function post(url, body, method = "POST") {
   const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "That didn't work."); return j;

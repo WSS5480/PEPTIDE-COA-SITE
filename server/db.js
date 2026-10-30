@@ -222,6 +222,8 @@ alter table orders add column if not exists discount_code text not null default 
 alter table customers alter column email drop not null;
 -- customer pricing: a markup % over our cost that replaces the store price for that customer (null = store prices)
 alter table customers add column if not exists markup numeric(6,2);
+alter table customer_sessions add column if not exists seen timestamptz not null default now();
+alter table sessions add column if not exists seen timestamptz not null default now();
 alter table orders add column if not exists price_markup numeric(6,2);
 -- visitors without a PIN can ask for one; the office turns a request into a customer + PIN
 create table if not exists pin_requests (
@@ -303,6 +305,9 @@ const DEFAULT_SETTINGS = {
   storeOpen: true,
   pricesRequireLogin: true,   // prices (and the cart) show only once a customer signs in with their PIN
   minAge: 21,
+  custIdleMin: 30,      // customers are signed out after this many minutes without using the store (0 = never)
+  custCloseOut: true,   // …and when the browser / app is closed
+  staffIdleMin: 720,    // admin and rep app: 12 hours idle
   ageGate: true,
   minOrderCents: 0,
   // Shipping & delivery: customers choose one at checkout. Shipping is charged, local delivery is free.

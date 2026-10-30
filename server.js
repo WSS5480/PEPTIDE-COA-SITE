@@ -81,11 +81,25 @@ function limit(name, max, windowMs) {
 }
 
 /* ---------- auth ---------- */
+// idle sign-out: a session that hasn't been used for `minutes` is dropped; otherwise its `seen` is refreshed (at most once a minute)
+async function touchSession(table, token, seen, minutes) {
+  const idle = (Date.now() - new Date(seen).getTime()) / 60000;
+  if (minutes > 0 && idle > minutes) { await q(`delete from ${table} where token = $1`, [token]); return false; }
+  if (idle > 1) q(`update ${table} set seen = now() where token = $1`, [token]).catch(() => {});
+  return true;
+}
+let idleCache = { at: 0, s: null };
+async function idleMinutes(key) { // settings cached 30 s: this runs on every signed-in request
+  if (Date.now() - idleCache.at > 30000) idleCache = { at: Date.now(), s: await getSettings() };
+  const n = Number(idleCache.s[key]); return isFinite(n) && n >= 0 ? n : (key === "custIdleMin" ? 30 : 720);
+}
 async function auth(req, res, next) {
   const token = parseCookies(req.headers.cookie).sid;
   if (!token) return bad(res, "Sign in first", 401);
-  const { rows } = await q("select u.id, u.email, u.name, u.role, u.commission_rate, u.apps, u.phone from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]);
+  const { rows } = await q("select u.id, u.email, u.name, u.role, u.commission_rate, u.apps, u.phone, s.seen from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]);
   if (!rows[0]) return bad(res, "Sign in first", 401);
+  if (!(await touchSession("sessions", token, rows[0].seen, await idleMinutes("staffIdleMin")))) return bad(res, "Signed out after a while away. Sign in again.", 401);
+  delete rows[0].seen;
   req.user = rows[0];
   // admin API only accepts JSON, which a plain cross-site form cannot send
   if (req.method !== "GET" && !req.is("application/json")) return bad(res, "Bad request");
@@ -652,15 +666,18 @@ async function houseFrom(req) {
 async function customerFrom(req) {
   const token = parseCookies(req.headers.cookie).cid;
   if (!token) return null;
-  const { rows } = await q("select c.id, c.email, c.name, c.phone, c.address, c.markup from customer_sessions s join customers c on c.id = s.customer_id where s.token = $1 and s.expires > now() and c.active", [token]);
-  return rows[0] || null;
+  const { rows } = await q("select c.id, c.email, c.name, c.phone, c.address, c.markup, s.seen from customer_sessions s join customers c on c.id = s.customer_id where s.token = $1 and s.expires > now() and c.active", [token]);
+  if (!rows[0]) return null;
+  if (!(await touchSession("customer_sessions", token, rows[0].seen, await idleMinutes("custIdleMin")))) return null;
+  delete rows[0].seen; return rows[0];
 }
 const CLEAR_CID = () => `cid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${SECURE ? "; Secure" : ""}`;
 async function endCustomerSession(req, res) { const t = parseCookies(req.headers.cookie).cid; if (t) await q("delete from customer_sessions where token = $1", [t]); res.append("Set-Cookie", CLEAR_CID()); }
 async function startCustomerSession(res, id) {
-  const token = crypto.randomBytes(32).toString("hex");
+  const token = crypto.randomBytes(32).toString("hex"), s = await getSettings();
   await q("insert into customer_sessions(token, customer_id, expires) values ($1, $2, now() + interval '14 days')", [token, id]); // a shared or borrowed phone shouldn't stay "you" for two months
-  res.append("Set-Cookie", `cid=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${14 * 86400}${SECURE ? "; Secure" : ""}`);
+  // custCloseOut: a session cookie (gone when the browser / app closes); the idle timer still applies either way
+  res.append("Set-Cookie", `cid=${token}; Path=/; HttpOnly; SameSite=Lax; ${s.custCloseOut === false ? `Max-Age=${14 * 86400}; ` : ""}${SECURE ? "Secure" : ""}`.replace(/; $/, ""));
 }
 const cleanAddress = (a = {}) => ({ line1: str(a.line1, 160), line2: str(a.line2, 160), city: str(a.city, 80), state: str(a.state, 40), zip: str(a.zip, 20), country: "US" });
 const jsonOnly = (req, res, next) => (req.is("application/json") ? next() : bad(res, "Bad request"));
@@ -1954,6 +1971,8 @@ admin.put("/settings", owner, wrap(async (req, res) => {
     if (k === "cooEmail") { v = str(v, 160).toLowerCase(); if (v && !isEmail(v)) return bad(res, "The COO email address doesn't look right."); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; }
     if (k === "mailPass" || k === "resendKey" || k === "graphSecret") { v = String(v || ""); if (!v.trim()) continue; v = v.trim().slice(0, 300); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; } // blank = keep the saved one
     if (k === "mailMode") v = ["smtp", "resend", "graph"].includes(v) ? v : "";
+    if (k === "custIdleMin" || k === "staffIdleMin") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 43200) return bad(res, "Idle sign-out: enter minutes (0 = never, up to 43200)."); }
+    if (k === "custCloseOut") v = !!v;
     if (k === "mailFrom" && v && !/^[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+$/.test(String(v).trim()) && !/^[^<>]+<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>$/.test(String(v).trim())) return bad(res, 'The From address should look like "Name <you@domain.com>" or just the address.');
     if (k === "perks") {
       const ICONS = ["flask", "doc", "key", "shield", "truck", "star", "lock", "chat", "box", "check"];

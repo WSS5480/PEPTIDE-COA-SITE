@@ -1710,6 +1710,12 @@ async function settings(part = "site") {
     <div class="panel"><h2>Age gate</h2>
       <label class="chk"><input type="checkbox" id="s-ageGate"${s.ageGate ? " checked" : ""}${ro()}> Ask visitors to confirm age and research use before entering</label>
       <div class="field" style="max-width:10rem"><label class="eyebrow" for="s-minAge">Minimum age</label><input id="s-minAge" value="${esc(s.minAge)}" inputmode="numeric"${ro()}></div></div>
+    <div class="panel"><h2>Automatic sign-out</h2>
+      <p class="muted">So a phone or computer left signed in doesn't show one customer's account to the next person. The store always shows who is signed in with a "Not you? Sign out" link.</p>
+      <div class="row2" style="align-items:end"><div class="field" style="max-width:12rem"><label class="eyebrow" for="s-custIdleMin">Customers: sign out after (minutes idle)</label><input id="s-custIdleMin" value="${esc(s.custIdleMin ?? 30)}" inputmode="numeric" placeholder="30"${ro()}></div>
+      <label class="chk"><input type="checkbox" id="s-custCloseOut"${s.custCloseOut !== false ? " checked" : ""}${ro()}> Also sign customers out when they close the browser or app</label></div>
+      <div class="field" style="max-width:12rem"><label class="eyebrow" for="s-staffIdleMin">Admin and rep app: sign out after (minutes idle)</label><input id="s-staffIdleMin" value="${esc(s.staffIdleMin ?? 720)}" inputmode="numeric" placeholder="720"${ro()}></div>
+      <p class="muted">0 = never. Customers' saved sign-ins also expire after 14 days.</p></div>
     <div class="panel"><h2>Disclaimers &amp; policies</h2><p class="muted">One paragraph per line. Start a line with "Heading: " to show a bold heading. Have your attorney review these before you rely on them.</p>
       ${[["footerNotice", "Footer notice (every page)"], ["disclaimers", "Disclaimer"], ["policyTerms", "Terms of service"], ["policyReturns", "Refund and returns policy"], ["policyShipping", "Shipping policy"], ["policyPrivacy", "Privacy policy"]]
         .map(([k, label]) => `<div class="field"><label class="eyebrow" for="s-${k}">${label}</label><textarea id="s-${k}" style="min-height:12rem"${ro()}>${esc((s[k] || []).join("\n"))}</textarea></div>`).join("")}</div>
@@ -1741,7 +1747,7 @@ async function settings(part = "site") {
     const body = {};
     ["brand", "tagline", "contact", "distributorOf", "brandUrl", "paymentInstructions", "priceNote", "shippingLabel", "shippingNote", "fedexAccount", "deliveryLabel", "deliveryNote", "orderEmail", "cooEmail"].forEach((k) => { body[k] = v(k).value; });
     ["storeOpen", "pricesRequireLogin", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn", "repEmailOn"].forEach((k) => { body[k] = v(k).checked; });
-    body.minAge = v("minAge").value;
+    body.minAge = v("minAge").value; body.custIdleMin = v("custIdleMin").value; body.staffIdleMin = v("staffIdleMin").value; body.custCloseOut = v("custCloseOut").checked;
     const cents = (id) => Math.max(0, Math.round(parseFloat(String(v(id).value).replace(/[$,]/g, "") || 0) * 100));
     body.minOrderCents = cents("minOrder"); body.shippingCents = cents("shippingAmt"); body.shippingFreeOverCents = cents("shippingFree");
     ["footerNotice", "disclaimers", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy"].forEach((k) => { body[k] = v(k).value.split("\n").map((x) => x.trim()).filter(Boolean); });
