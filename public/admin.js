@@ -2275,7 +2275,7 @@ async function settings(part = "site") {
       <div class="field" style="max-width:10rem"><label class="eyebrow" for="s-minAge">Minimum age</label><input id="s-minAge" value="${esc(s.minAge)}" inputmode="numeric"${ro()}></div></div>
     <div class="panel"><h2>Automatic sign-out</h2>
       <p class="muted">So a phone or computer left signed in doesn't show one customer's account to the next person. The store always shows who is signed in with a "Not you? Sign out" link.</p>
-      <div class="row2" style="align-items:end"><div class="field" style="max-width:12rem"><label class="eyebrow" for="s-custIdleMin">Customers: sign out after (minutes idle)</label><input id="s-custIdleMin" value="${esc(s.custIdleMin ?? 30)}" inputmode="numeric" placeholder="30"${ro()}></div>
+      <div class="row2" style="align-items:end"><div class="field" style="max-width:12rem"><label class="eyebrow" for="s-custIdleMin">Customers: sign out after (minutes idle · 0 = as soon as they leave)</label><input id="s-custIdleMin" value="${esc(s.custIdleMin ?? 30)}" inputmode="numeric" placeholder="30"${ro()}></div>
       <label class="chk"><input type="checkbox" id="s-custCloseOut"${s.custCloseOut !== false ? " checked" : ""}${ro()}> Also sign customers out when they close the browser or app</label></div>
       <div class="field" style="max-width:12rem"><label class="eyebrow" for="s-staffIdleMin">Admin and rep app: sign out after (minutes idle)</label><input id="s-staffIdleMin" value="${esc(s.staffIdleMin ?? 720)}" inputmode="numeric" placeholder="720"${ro()}></div>
       <p class="muted">0 = never. Customers' saved sign-ins also expire after 14 days.</p></div>

@@ -46,7 +46,7 @@ const SID_ATTRS = () => (process.env.HUB_SECRET && process.env.TRACKER_URL) ? "S
 
 function publicSettings(s) {
   const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy",
-    "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote", "pricesRequireLogin", "showSoldOut", "stockDisplay", "stockLowAt"];
+    "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote", "pricesRequireLogin", "showSoldOut", "stockDisplay", "stockLowAt", "custIdleMin"];
   // card payments only work once the Stripe key is on the host, so the store is told the effective state
   const out = { ...Object.fromEntries(keys.map((k) => [k, s[k]])), cardPayments: !!(s.cardPayments && stripe), bannerTone: s.bannerTone || "navy", bannerLink: s.bannerLink || "", bannerSpeed: Math.min(90, Math.max(6, Number(s.bannerSpeed) || 30)), bannerSticky: s.bannerSticky !== false };
   // the promo banner stops on its own after its end date (Central time)
@@ -89,8 +89,10 @@ function limit(name, max, windowMs) {
 // idle sign-out: a session that hasn't been used for `minutes` is dropped; otherwise its `seen` is refreshed (at most once a minute)
 async function touchSession(table, token, seen, minutes) {
   const idle = (Date.now() - new Date(seen).getTime()) / 60000;
-  if (minutes > 0 && idle > minutes) { await q(`delete from ${table} where token = $1`, [token]); return false; }
-  if (idle > 1) q(`update ${table} set seen = now() where token = $1`, [token]).catch(() => {});
+  // 0 = as soon as they leave: the open store checks in every 30 s, so a closed tab / switched-away phone is signed out within about a minute
+  const limit = minutes === 0 && table === "customer_sessions" ? 1.5 : minutes;
+  if (limit > 0 && idle > limit) { await q(`delete from ${table} where token = $1`, [token]); return false; }
+  if (idle > (limit > 0 && limit < 5 ? 0.25 : 1)) q(`update ${table} set seen = now() where token = $1`, [token]).catch(() => {});
   return true;
 }
 let idleCache = { at: 0, s: null };
@@ -2291,7 +2293,7 @@ admin.put("/settings", owner, wrap(async (req, res) => {
     if (k === "cooEmail") { v = str(v, 160).toLowerCase(); if (v && !isEmail(v)) return bad(res, "The COO email address doesn't look right."); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; }
     if (k === "mailPass" || k === "resendKey" || k === "graphSecret") { v = String(v || ""); if (!v.trim()) continue; v = v.trim().slice(0, 300); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; } // blank = keep the saved one
     if (k === "mailMode") v = ["smtp", "resend", "graph"].includes(v) ? v : "";
-    if (k === "custIdleMin" || k === "staffIdleMin") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 43200) return bad(res, "Idle sign-out: enter minutes (0 = never, up to 43200)."); }
+    if (k === "custIdleMin" || k === "staffIdleMin") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 43200) return bad(res, k === "custIdleMin" ? "Customer sign-out: enter minutes (0 = as soon as they leave the store)." : "Idle sign-out: enter minutes (0 = never, up to 43200)."); }
     if (k === "custCloseOut" || k === "showSoldOut" || k === "lowStockEmailOn") v = !!v;
     if (k === "invoiceTermsDays") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 365) return bad(res, "Invoice terms: days from 0 to 365."); }
     if (k === "stockDisplay") v = ["none", "low", "words", "count"].includes(v) ? v : "none";

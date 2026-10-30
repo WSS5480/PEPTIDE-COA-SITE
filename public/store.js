@@ -407,6 +407,9 @@ function whoBar() {
 }
 // coming back to the tab after a while: re-check who's signed in (idle sign-out may have happened)
 if (new URLSearchParams(location.search).get("signin") === "1") { history.replaceState(null, "", location.pathname); window.addEventListener("load", () => { setTimeout(() => { loadAccount().then(() => { if (!ME) { const b = document.getElementById("acctLabel"); const t = b && b.closest("button, a"); if (t) t.click(); } }); }, 400); }); }
+// "sign out as soon as they leave" (Site settings: 0 minutes): while the store is open and on screen it checks in every 30 s;
+// once it's closed or the phone switches away, the server signs the customer out within about a minute
+setInterval(() => { if ((ME) && Number(S.custIdleMin) === 0 && !document.hidden) loadAccount().then(() => { if (!ME && !HOUSE) load(); }); }, 30000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && (ME || HOUSE)) loadAccount().then(() => { if (!ME && !HOUSE) load(); }); });
 async function post(url, body, method = "POST") {
   const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify(body) });
