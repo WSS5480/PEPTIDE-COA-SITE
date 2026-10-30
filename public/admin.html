@@ -36,7 +36,8 @@
 .side .sref-row { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: -.4rem; } .side .sref-row .sref { margin-top: 0; text-decoration: none; }
 .side .who button { justify-self: start; display: inline-flex; align-items: center; gap: .3rem; padding: .35rem .7rem; background: none; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; color: #fff; font-size: .8rem; cursor: pointer; }
 .pwrap { min-width: 0; }
-#pills { position: sticky; top: 0; z-index: 25; display: flex; flex-wrap: wrap; gap: 6px; padding: .7rem clamp(1rem, 3vw, 2rem) .5rem; background: var(--ground, var(--bg, #f3f5f9)); }
+#pills { display: none !important; } /* the left menu does the job */
+#pillsX { position: sticky; top: 0; z-index: 25; display: flex; flex-wrap: wrap; gap: 6px; padding: .7rem clamp(1rem, 3vw, 2rem) .5rem; background: var(--ground, var(--bg, #f3f5f9)); }
 #pills a { flex: none; padding: 7px 12px; border-radius: 999px; background: var(--card, #fff); border: 1px solid var(--line, #dde3ec); color: var(--ink, #111); font-size: .8125rem; font-weight: 600; text-decoration: none; white-space: nowrap; display: inline-flex; gap: .35rem; align-items: center; }
 #pills a.on { background: var(--blue, #1d6fd8); border-color: var(--blue, #1d6fd8); color: #fff; }
 #pills a .badge { min-width: 1.2rem; padding: 0 .3rem; background: var(--navy, #0f1b33); color: #fff; border-radius: 999px; font-size: .68rem; text-align: center; }
@@ -140,7 +141,7 @@ body.embed #pills { display: none; }
 <div id="app"></div>
 <script src="/refresh.js?v=2"></script>
 <script src="/vial.js?v=1793299629"></script>
-<script src="/collapse.js?v=12" defer></script><script src="/admin.js?v=1793396437"></script>
+<script src="/collapse.js?v=13" defer></script><script src="/admin.js?v=1793396667"></script>
 <script src="/install.js?v=1793299629"></script>
 </body>
 </html>
