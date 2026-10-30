@@ -1108,16 +1108,16 @@ admin.get("/analytics", wrap(async (req, res) => {
        from orders o where o.status <> 'cancelled' and o.created_at > now() - interval '13 weeks'${repId ? ` and o.rep_id = ${Number(repId)}` : ""} group by 1 order by 1`),
     q(`select coalesce(u.name, '(no rep)') rep, o.rep_id, count(*)::int orders, sum(${net})::bigint sales, count(distinct coalesce(o.customer_id::text, lower(o.email)))::int customers,
          coalesce(sum(case when o.paid_at is null then o.total_cents end),0)::bigint open_ar
-       from orders o left join users u on u.id = o.rep_id where ${w} group by 1, 2 order by sales desc`),
+       from orders o left join users u on u.id = o.rep_id where ${w} and (u.id is null or u.active) group by 1, 2 order by sales desc`),
     q(`select coalesce(u.name, '(no rep)') rep, to_char(o.created_at at time zone 'America/Chicago', 'YYYY-MM') ym, sum(${net})::bigint sales
-       from orders o left join users u on u.id = o.rep_id where ${w} group by 1, 2`),
+       from orders o left join users u on u.id = o.rep_id where ${w} and (u.id is null or u.active) group by 1, 2`),
     q(`select i.name || ' ' || i.strength product, sum(i.qty)::int units, sum(i.unit_cents * i.qty)::bigint sales${req.user.role === "owner" ? ", sum(coalesce(p.cost_cents,0) * i.qty)::bigint cost" : ""}
        from order_items i join orders o on o.id = i.order_id left join products p on p.id = i.product_id where ${w} group by 1 order by sales desc limit 15`),
     q(`select o.name customer, count(*)::int orders, sum(${net})::bigint sales, max(o.created_at) last_order from orders o where ${w} group by 1 order by sales desc limit 15`),
     q(`select count(*)::int orders, coalesce(sum(${net}),0)::bigint sales, coalesce(avg(${net}),0)::int avg_order from orders o where ${w}`),
   ]);
   const num = (r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === "string" && /^-?\d+$/.test(v) && k !== "ym" && k !== "wk" ? Number(v) : v]));
-  const { rows: reps } = req.user.role === "rep" ? { rows: [] } : await q("select id, name from users where role = 'rep' order by name");
+  const { rows: reps } = req.user.role === "rep" ? { rows: [] } : await q("select id, name from users where role = 'rep' and active order by name");
   res.json({ months, rep: repId || null, reps, monthly: monthly.rows.map(num), weekly: weekly.rows.map(num), byRep: byRep.rows.map(num), repMonthly: repMonthly.rows.map(num), products: products.rows.map(num), customers: customers.rows.map(num), totals: num(totals.rows[0]) });
 }));
 /* ---------- sales & cost (admins only): day / week / month / year buckets, each with the same bucket a year earlier ---------- */
@@ -1941,13 +1941,17 @@ admin.patch("/reps/:id", owner, wrap(async (req, res) => {
 }));
 admin.get("/commissions", wrap(async (req, res) => {
   const repId = isRep(req) ? req.user.id : intOrNull(req.query.rep);
-  const rows = await commissionRows({ repId, from: req.query.from, to: req.query.to, status: req.query.status });
-  const { rows: payouts } = await q(`select p.*, u.name rep_name from commission_payouts p left join users u on u.id = p.rep_id ${isRep(req) ? "where p.rep_id = $1" : ""} order by p.paid_at desc limit 200`, isRep(req) ? [req.user.id] : []);
+  let rows = await commissionRows({ repId, from: req.query.from, to: req.query.to, status: req.query.status });
+  let { rows: payouts } = await q(`select p.*, u.name rep_name, u.active rep_active from commission_payouts p left join users u on u.id = p.rep_id ${isRep(req) ? "where p.rep_id = $1" : ""} order by p.paid_at desc limit 200`, isRep(req) ? [req.user.id] : []);
+  if (!isRep(req)) { // a rep whose access is off is hidden from every report
+    const off = new Set((await q("select id from users where role = 'rep' and not active")).rows.map((r) => r.id));
+    rows = rows.filter((r) => !off.has(r.rep_id)); payouts = payouts.filter((p) => p.rep_active !== false);
+  }
   res.json({ rows, totals: commTotals(rows), payouts });
 }));
 admin.get("/commissions/plan", owner, wrap(async (req, res) => {
   const plan = await commPlan(), raw = (await getSettings()).commTiers || {};
-  const { rows: reps } = await q("select id, name, commission_rate, comm_tiered, active from users where role = 'rep' order by active desc, name");
+  const { rows: reps } = await q("select id, name, commission_rate, comm_tiered, active from users where role = 'rep' and active order by name");
   res.json({ on: !!raw.on, mode: plan.mode, tiers: plan.tiers.length ? plan.tiers : [{ from: 0, rate: 10 }, { from: 5000, rate: 15 }, { from: 7500, rate: 20 }], reps });
 }));
 admin.put("/commissions/plan", owner, wrap(async (req, res) => {
