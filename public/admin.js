@@ -179,6 +179,13 @@ async function fill() {
   const list = fillTab === "tofill" ? toFill : toShip;
   const addrOf = (o) => { const a = o.address || {}; return [a.line1, a.line2, `${a.city || ""}, ${a.state || ""} ${a.zip || ""}`].filter((x) => x && x.trim() !== ",").map(esc).join("<br>"); };
   const short = (i) => i.stock !== null && i.stock !== undefined && i.stock < 0;
+  const bizDays = (n) => { const d = new Date(); while (n > 0) { d.setDate(d.getDate() + 1); if (d.getDay() !== 0 && d.getDay() !== 6) n--; } return d.toISOString().slice(0, 10); };
+  const today = new Date().toISOString().slice(0, 10);
+  const shipFields = (o) => { const delivery = o.fulfillment === "delivery";
+    return `<div class="row2" style="align-items:end;margin-top:.6rem;flex-wrap:wrap">
+      ${delivery ? "" : `<div class="field" style="max-width:9rem"><label class="eyebrow">Carrier</label><select data-carrier>${["UPS", "FedEx", "USPS", "DHL", "Other"].map((c) => `<option${o.carrier === c ? " selected" : ""}>${c}</option>`).join("")}</select></div>
+      <div class="field" style="max-width:16rem"><label class="eyebrow">Tracking # (required)</label><input data-tracking value="${esc(o.tracking || "")}" placeholder="Paste or scan"></div>`}
+      <div class="field" style="max-width:11rem"><label class="eyebrow">${delivery ? "Delivery date" : "Estimated arrival"} (required)</label><input type="date" data-eta min="${today}" value="${o.eta ? String(o.eta).slice(0, 10) : bizDays(delivery ? 1 : 3)}"></div></div>`; };
   const card = (o) => {
     const delivery = o.fulfillment === "delivery", paid = !!o.paid_at;
     return `<div class="panel fillcard" data-fid="${o.id}">
@@ -189,12 +196,9 @@ async function fill() {
         ${o.customer_note ? `<p class="muted"><strong>Customer note:</strong> ${esc(o.customer_note)}</p>` : ""}${o.internal_note ? `<p class="muted"><strong>Internal:</strong> ${esc(o.internal_note)}</p>` : ""}</div>
       <div><p class="eyebrow">${o.filled_at ? "Packed" : "Pick list · tick each as you pull it"}</p>
         <table class="tbl compact"><tbody>${o.items.map((i, n) => `<tr>${o.filled_at ? "" : `<td style="width:2rem"><input type="checkbox" data-pick="${n}" aria-label="Picked ${esc(i.name)}"></td>`}<td class="num" style="width:3rem"><strong>${i.qty}×</strong></td><td>${esc(`${i.name} ${i.strength}`.trim())}${i.manufacturer ? ` <span class="muted">· ${esc(i.manufacturer)}</span>` : ""}${short(i) ? ` <span class="pill st-cancelled" title="Sold past what was on the shelf">backordered (${i.stock})</span>` : ""}</td></tr>`).join("")}</tbody></table></div></div>
-      ${o.filled_at ? `<div class="row2" style="align-items:end;margin-top:.6rem">
-          ${delivery ? "" : `<div class="field" style="max-width:9rem"><label class="eyebrow">Carrier</label><select data-carrier><option>UPS</option><option>FedEx</option><option>USPS</option><option>DHL</option><option>Other</option></select></div>
-          <div class="field" style="max-width:16rem"><label class="eyebrow">Tracking #</label><input data-tracking value="${esc(o.tracking || "")}" placeholder="Paste or scan"></div>`}
-          <label class="chk"><input type="checkbox" data-notify checked> Email the customer</label>
-          <button class="btn solid" type="button" data-ship>${delivery ? "Mark delivered" : "Mark shipped"}</button><button class="btn" type="button" data-unfill>Undo filled</button><button class="btn" type="button" data-slip>Packing slip</button></div>`
-        : `<div class="row2" style="margin-top:.6rem"><button class="btn solid" type="button" data-filled disabled>Mark filled</button><button class="btn" type="button" data-slip>Packing slip</button><span class="muted" data-pickleft>Tick all ${o.items.length} line${o.items.length === 1 ? "" : "s"} to mark it filled.</span></div>`}
+      ${o.filled_at ? `${shipFields(o)}<div class="row2" style="margin-top:.6rem"><button class="btn solid" type="button" data-ship>${delivery ? "Send out for delivery" : "Ship"} &amp; email customer</button><button class="btn" type="button" data-unfill>Undo filled</button><button class="btn" type="button" data-slip>Packing slip</button></div>`
+        : `${shipFields(o)}<div class="row2" style="margin-top:.6rem"><button class="btn solid" type="button" data-fillship disabled>${o.fulfillment === "delivery" ? "Fill &amp; send out for delivery" : "Fill &amp; ship"}</button><button class="btn" type="button" data-slip>Packing slip</button><span class="muted" data-pickleft>Tick all ${o.items.length} line${o.items.length === 1 ? "" : "s"}, then add the shipping info.</span></div>
+          <p class="muted" style="margin:.3rem 0 0">This marks the order filled and shipped and emails the customer their tracking and estimated arrival${o.rep_name ? " (and the rep)" : ""}.</p>`}
     </div>`;
   };
   pane().innerHTML = `<header><h1>Fill orders</h1></header>
@@ -202,17 +206,27 @@ async function fill() {
     <div class="seg" style="margin-bottom:.8rem"><button type="button" data-filltab="tofill"${fillTab === "tofill" ? ' class="on"' : ""}>To fill · ${toFill.length}</button><button type="button" data-filltab="toship"${fillTab === "toship" ? ' class="on"' : ""}>Filled, to ship · ${toShip.length}</button></div>
     ${list.length ? list.map(card).join("") : `<div class="panel"><p class="muted">${fillTab === "tofill" ? "Nothing to fill. New orders show up here as they come in." : "Nothing waiting to ship."}</p></div>`}`;
   const P = pane();
-  P.onchange = (e) => { const c = e.target.closest(".fillcard"); if (!c || !e.target.matches("[data-pick]")) return; const boxes = [...c.querySelectorAll("[data-pick]")], left = boxes.filter((b) => !b.checked).length; c.querySelector("[data-filled]").disabled = left > 0; c.querySelector("[data-pickleft]").textContent = left ? `${left} line${left === 1 ? "" : "s"} left to pick.` : "All picked."; };
+  const ready = (c) => { const boxes = [...c.querySelectorAll("[data-pick]")], left = boxes.filter((b) => !b.checked).length, tr = c.querySelector("[data-tracking]"), eta = c.querySelector("[data-eta]");
+    const missing = [left ? `${left} line${left === 1 ? "" : "s"} to pick` : "", tr && !tr.value.trim() ? "tracking #" : "", eta && !eta.value ? "estimated arrival" : ""].filter(Boolean);
+    const b = c.querySelector("[data-fillship]"); if (b) b.disabled = missing.length > 0; const m = c.querySelector("[data-pickleft]"); if (m) m.textContent = missing.length ? "Still needed: " + missing.join(", ") + "." : "Ready.";
+    return !missing.length; };
+  P.onchange = P.oninput = (e) => { const c = e.target.closest(".fillcard"); if (c && c.querySelector("[data-fillship]")) ready(c); };
+  const shipBody = (c, o) => { const delivery = o.fulfillment === "delivery", body = { status: "shipped", notify: true, eta: c.querySelector("[data-eta]").value };
+    if (!delivery) { body.carrier = c.querySelector("[data-carrier]").value; body.tracking = c.querySelector("[data-tracking]").value.trim(); } return body; };
   P.onclick = async (e) => {
     const t = e.target.closest("[data-filltab]"); if (t) { fillTab = t.dataset.filltab; return fill(); }
     const oo = e.target.closest("[data-openorder]"); if (oo) { e.preventDefault(); return go("orders", +oo.dataset.openorder); }
     const c = e.target.closest(".fillcard"); if (!c) return; const id = +c.dataset.fid, o = all.find((x) => x.id === id);
-    if (e.target.closest("[data-filled]")) { await api(`/orders/${id}/fill`, { method: "POST", body: { filled: true } }); toast(`Order ${o.number} filled`); await drawNav(); return fill(); }
+    if (e.target.closest("[data-fillship]")) {
+      if (!ready(c)) return; const btn = e.target.closest("[data-fillship]"); btn.disabled = true; btn.textContent = "Working…";
+      try { await api(`/orders/${id}/fill`, { method: "POST", body: { filled: true } }); await api(`/orders/${id}`, { method: "PATCH", body: shipBody(c, o) }); toast(`Order ${o.number} filled and shipped — customer emailed`); }
+      catch (x) { toast("Filled, but shipping didn't save — finish it under Filled, to ship"); }
+      await drawNav(); return fill();
+    }
     if (e.target.closest("[data-unfill]")) { await api(`/orders/${id}/fill`, { method: "POST", body: { filled: false } }); toast("Back to To fill"); await drawNav(); return fill(); }
     if (e.target.closest("[data-ship]")) {
-      const delivery = o.fulfillment === "delivery", tr = c.querySelector("[data-tracking]"), body = { status: delivery ? "delivered" : "shipped", notify: c.querySelector("[data-notify]").checked };
-      if (!delivery) { body.carrier = c.querySelector("[data-carrier]").value; body.tracking = tr.value.trim(); if (!body.tracking && !confirm("No tracking number. Mark shipped anyway?")) return; }
-      await api(`/orders/${id}`, { method: "PATCH", body }); toast(`Order ${o.number} ${delivery ? "delivered" : "shipped"}`); await drawNav(); return fill();
+      const body = shipBody(c, o); if (o.fulfillment !== "delivery" && !body.tracking) return toast("Add the tracking number"); if (!body.eta) return toast("Add the estimated arrival");
+      await api(`/orders/${id}`, { method: "PATCH", body }); toast(`Order ${o.number} shipped — customer emailed`); await drawNav(); return fill();
     }
     if (e.target.closest("[data-slip]")) {
       const w = window.open("", "_blank"); if (!w) return toast("Allow pop-ups to print the slip");
@@ -282,6 +296,7 @@ async function orderDetail(id) {
         ${!delivery && fedexAccount ? `<p class="muted">FedEx account <span class="mono">${esc(fedexAccount)}</span> <button class="linkbtn" type="button" id="copyFedex">copy</button> — use it when you make the label.</p>` : ""}
         <div class="field"><label class="eyebrow" for="ocar">Carrier</label><input id="ocar" list="carriers" value="${esc(o.carrier || (!delivery && fedexAccount ? "FedEx" : ""))}"><datalist id="carriers"><option>FedEx</option><option>USPS</option><option>UPS</option><option>DHL</option><option>Hand delivered</option></datalist></div>
         <div class="field"><label class="eyebrow" for="otr">Tracking number</label><input id="otr" value="${esc(o.tracking)}"></div>
+        <div class="field"><label class="eyebrow" for="oeta">Estimated arrival</label><input id="oeta" type="date" value="${o.eta ? String(o.eta).slice(0, 10) : ""}"></div>
         <div class="field"><label class="eyebrow" for="oin">Internal note (staff only)</label><textarea id="oin">${esc(o.internal_note)}</textarea></div>
         <label class="chk"><input type="checkbox" id="oNotify"${o.email ? " checked" : " disabled"}> Email the customer about this update${o.email ? "" : " (no email on the order)"}</label>
         <button class="btn solid" id="saveO">Save</button>
@@ -299,7 +314,7 @@ async function orderDetail(id) {
   const $ = (x) => document.getElementById(x);
   if ($("saveO")) $("saveO").onclick = async () => {
     if ($("ost").value === "shipped" && $("oful").value === "ship" && !$("otr").value.trim() && !confirm("Mark shipped without a tracking number?")) return;
-    const r = await api("/orders/" + id, { method: "PATCH", body: { status: $("ost").value, fulfillment: $("oful").value, carrier: $("ocar").value, tracking: $("otr").value, internalNote: $("oin").value, notify: !!($("oNotify") && $("oNotify").checked) } });
+    const r = await api("/orders/" + id, { method: "PATCH", body: { status: $("ost").value, fulfillment: $("oful").value, carrier: $("ocar").value, tracking: $("otr").value, eta: $("oeta").value || null, internalNote: $("oin").value, notify: !!($("oNotify") && $("oNotify").checked) } });
     toast(r.emailed ? (r.emailed.sent ? `Saved · emailed the customer` : `Saved · email not sent: ${r.emailed.error || "emails are off"}`) : "Saved"); orderDetail(id); drawNav();
   };
   if ($("editO")) $("editO").onclick = () => editOrder(o, items, id);

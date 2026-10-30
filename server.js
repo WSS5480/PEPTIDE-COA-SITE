@@ -401,7 +401,7 @@ app.post("/api/discount", limit("discount", 30, 15 * 60 * 1000), wrap(async (req
 const canPayByCard = (o, s) => !!(stripe && s.cardPayments && !o.paid_at && o.status !== "cancelled");
 app.post("/api/orders/lookup", limit("lookup", 20, 15 * 60 * 1000), wrap(async (req, res) => {
   const number = str(req.body?.number, 20), email = str(req.body?.email, 160).toLowerCase();
-  const { rows: [o] } = await q("select id,number,status,shipping_method,shipping_cents,subtotal_cents,discount_cents,total_cents,carrier,tracking,created_at,shipped_at,paid_at,fulfillment,pay_method from orders where number = $1 and lower(email) = $2", [number, email]);
+  const { rows: [o] } = await q("select id,number,status,shipping_method,shipping_cents,subtotal_cents,discount_cents,total_cents,carrier,tracking,eta,created_at,shipped_at,paid_at,fulfillment,pay_method from orders where number = $1 and lower(email) = $2", [number, email]);
   if (!o) return bad(res, "No order matches that number and email.", 404);
   const { rows: items } = await q("select name,strength,unit_cents,qty from order_items where order_id = $1 order by id", [o.id]);
   delete o.id;
@@ -546,6 +546,7 @@ function emailHtml(s, p) {
 const trackingUrl = (carrier, num) => { const n = encodeURIComponent(String(num || "").trim()); if (!n) return ""; const c = String(carrier || "").toLowerCase(); return /fedex/.test(c) ? `https://www.fedex.com/fedextrack/?trknbr=${n}` : /ups/.test(c) ? `https://www.ups.com/track?tracknum=${n}` : /usps/.test(c) ? `https://tools.usps.com/go/TrackConfirmAction?tLabels=${n}` : /dhl/.test(c) ? `https://www.dhl.com/en/express/tracking.html?AWB=${n}` : ""; };
 // kind: "new" (order request placed) · "paid" (card payment received) · "unpaid" (card order never finished)
 //       "updated" (the office changed the order; extra.changes lists what) · "shipped" (on its way / delivered) · "cancelled" (removed by the office)
+const etaText = (d) => { if (!d) return ""; const x = new Date(typeof d === "string" ? d.slice(0, 10) + "T12:00:00Z" : d); return isNaN(x) ? "" : x.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" }); };
 async function notifyOrder(orderId, kind, extra = {}) {
   const s = await getSettings();
   const { rows: [o] } = await q("select * from orders where id = $1", [orderId]);
@@ -621,7 +622,7 @@ Open the rep app: ${replink}` : "", "", `— ${s.brand}`].filter((x) => x !== ""
       eyebrow: "Your customer", kicker: head + " order", title: `Order ${o.number}`, preheader: `${o.name} · ${$(o.total_cents)}`,
       badge: kind === "paid" ? { text: "Paid", tone: "ok" } : kind === "cancelled" ? { text: "Cancelled", tone: "bad" } : kind === "updated" ? { text: "Updated", tone: "warn" } : kind === "shipped" ? { text: head, tone: "ok" } : { text: "New order", tone: "ok" },
       intro: `Hi ${escHtml(repFor.name)}, ${escHtml(intro.charAt(0).toLowerCase() + intro.slice(1))}`,
-      facts: [["Customer", `${escHtml(o.name)}${o.phone ? ` · ${escHtml(o.phone)}` : ""}`], ["Status", escHtml(o.status)], ...(commLine ? [["Commission", escHtml(commLine)]] : [])],
+      facts: [["Customer", `${escHtml(o.name)}${o.phone ? ` · ${escHtml(o.phone)}` : ""}`], ["Status", escHtml(o.status)], ...(kind === "shipped" && o.eta && o.status !== "delivered" ? [["Estimated arrival", escHtml(etaText(o.eta))]] : []), ...(o.tracking ? [["Tracking", escHtml(`${o.carrier || ""} ${o.tracking}`.trim())]] : []), ...(commLine ? [["Commission", escHtml(commLine)]] : [])],
       address: { label: delivery ? "Deliver to" : "Ship to", lines: addrLines }, items, totals: totalRows,
       note: changes.length ? { label: kind === "cancelled" ? "Reason" : "What changed", text: changes.join(" · ") } : null,
       button: replink && kind !== "cancelled" ? { text: "Open the rep app", url: replink } : null,
@@ -640,7 +641,7 @@ Open the rep app: ${replink}` : "", "", `— ${s.brand}`].filter((x) => x !== ""
       : kind === "cancelled" ? `Your order ${o.number} was cancelled · ${s.brand}` : `Your order ${o.number} · ${s.brand}`;
     const intro = kind === "paid" ? `Thank you! We received your card payment of ${$(o.paid_cents ?? o.total_cents)} and your order is being prepared.`
       : kind === "updated" ? "We've updated your order. Here is how it stands now."
-      : kind === "shipped" ? (delivered ? "Your order has been delivered." : delivery ? "Your order is on its way to you." : `Your order has shipped${o.carrier ? ` with ${o.carrier}` : ""}.`)
+      : kind === "shipped" ? (delivered ? "Your order has been delivered." : (delivery ? "Your order is on its way to you." : `Your order has shipped${o.carrier ? ` with ${o.carrier}` : ""}.`) + (o.eta ? ` Estimated arrival: ${etaText(o.eta)}.` : ""))
       : kind === "cancelled" ? "Your order has been cancelled. If you didn't expect this, just reply to this email."
       : byRep ? `Your sales rep${rep ? ` ${rep.name}` : ""} placed this order for you.` : "We received your order request.";
     const next = kind === "paid" ? (delivery ? "We'll contact you to arrange the delivery." : "You'll get the tracking number when it ships.")
@@ -661,7 +662,7 @@ Open the rep app: ${replink}` : "", "", `— ${s.brand}`].filter((x) => x !== ""
       title: `Order ${o.number}`, preheader: `Order ${o.number} · ${$(o.total_cents)}`,
       badge: kind === "paid" ? { text: "Paid", tone: "ok" } : kind === "updated" ? { text: "Updated", tone: "warn" } : kind === "shipped" ? { text: delivered ? "Delivered" : "Shipped", tone: "ok" } : kind === "cancelled" ? { text: "Cancelled", tone: "bad" } : { text: "Received", tone: "info" },
       intro: `Hi ${o.name}, ${intro.charAt(0).toLowerCase() + intro.slice(1)}`,
-      facts: [[delivery ? "Delivery" : "Shipping", escHtml(how) + (o.shipping_cents ? ` · ${$(o.shipping_cents)}` : " · free")], ...(o.tracking ? [["Tracking", track ? `<a href="${escHtml(track)}" style="color:${BLUE}">${escHtml(`${o.carrier || ""} ${o.tracking}`.trim())}</a>` : escHtml(`${o.carrier || ""} ${o.tracking}`.trim())]] : [])],
+      facts: [[delivery ? "Delivery" : "Shipping", escHtml(how) + (o.shipping_cents ? ` · ${$(o.shipping_cents)}` : " · free")], ...(kind === "shipped" && !delivered && o.eta ? [["Estimated arrival", escHtml(etaText(o.eta))]] : []), ...(o.tracking ? [["Tracking", track ? `<a href="${escHtml(track)}" style="color:${BLUE}">${escHtml(`${o.carrier || ""} ${o.tracking}`.trim())}</a>` : escHtml(`${o.carrier || ""} ${o.tracking}`.trim())]] : [])],
       address: { label: delivery ? "Delivering to" : "Shipping to", lines: addrLines }, items, totals: totalRows,
       note: changes.length && kind === "updated" ? { label: "What changed", text: changes.join(" · ") } : changes.length && kind === "cancelled" ? { label: "Reason", text: changes.join(" · ") } : null,
       after: `${escHtml(next)}${BASE_URL && kind !== "cancelled" ? `<br><br><span style="color:${INK2};font-size:13px">You can check this order any time under "Check an order" on our site with this email address and your order number.</span>` : ""}`,
@@ -795,7 +796,7 @@ app.get("/api/account", wrap(async (req, res) => {
   const c = await customerFrom(req);
   res.set("Cache-Control", "no-store");
   if (!c) return res.json({ customer: null, house: await houseFrom(req) });
-  const { rows: orders } = await q(`select o.id, o.number, o.status, o.total_cents, o.carrier, o.tracking, o.created_at, o.paid_at, o.pay_method, o.fulfillment, o.shipping_method,
+  const { rows: orders } = await q(`select o.id, o.number, o.status, o.total_cents, o.carrier, o.tracking, o.eta, o.created_at, o.paid_at, o.pay_method, o.fulfillment, o.shipping_method,
       (select json_agg(json_build_object('name', i.name, 'strength', i.strength, 'qty', i.qty) order by i.id) from order_items i where i.order_id = o.id) items
     from orders o where o.customer_id = $1 order by o.created_at desc limit 100`, [c.id]);
   const s = await getSettings();
@@ -970,7 +971,7 @@ admin.post("/orders/:id/email", wrap(async (req, res) => {
 /* ---------- Fill orders (admins and managers only) ---------- */
 admin.get("/fill", wrap(async (req, res) => {
   const { rows: orders } = await q(`select o.id, o.number, o.created_at, o.status, o.name, o.email, o.phone, o.address, o.fulfillment, o.shipping_method, o.customer_note, o.internal_note,
-      o.paid_at, o.total_cents, o.filled_at, o.filled_by, o.carrier, o.tracking, u.name rep_name
+      o.paid_at, o.total_cents, o.filled_at, o.filled_by, o.carrier, o.tracking, o.eta, u.name rep_name
     from orders o left join users u on u.id = o.rep_id where o.status in ('new','confirmed','paid') order by o.filled_at nulls first, o.created_at`);
   const ids = orders.map((o) => o.id);
   const { rows: items } = ids.length ? await q(`select i.order_id, i.product_id, i.name, i.strength, i.qty, p.manufacturer, p.stock from order_items i left join products p on p.id = i.product_id where i.order_id = any($1) order by i.id`, [ids]) : { rows: [] };
@@ -1009,6 +1010,7 @@ admin.patch("/orders/:id", wrap(async (req, res) => {
       if (o.discount_code) await q(`update discount_codes set used = greatest(0, used ${sign === "+" ? "-" : "+"} 1) where code = $1`, [o.discount_code]);
     }
   }
+  if (b.eta !== undefined) { const v = /^\d{4}-\d{2}-\d{2}$/.test(String(b.eta)) ? String(b.eta) : null; if (v !== (o.eta ? new Date(o.eta).toISOString().slice(0, 10) : null)) { set("eta", v); log.push(v ? `Estimated arrival ${v}` : "Estimated arrival cleared"); } }
   for (const [k, col] of [["carrier", "carrier"], ["tracking", "tracking"], ["internalNote", "internal_note"]]) {
     if (b[k] !== undefined && str(b[k], 2000) !== o[col]) { set(col, str(b[k], 2000)); if (k !== "internalNote") log.push(`${k === "carrier" ? "Carrier" : "Tracking"} set to ${str(b[k], 200) || "(blank)"}`); else log.push("Internal note updated"); }
   }

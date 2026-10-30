@@ -358,7 +358,7 @@ async function lookup(e) {
     const o = j.order;
     out.innerHTML = `<div class="okbox"><span class="eyebrow">Order ${esc(o.number)} · placed ${fmtDate(o.created_at)}</span>
       <strong>${esc(o.paid_at && o.status === "paid" ? "Paid, getting ready" + (o.fulfillment === "delivery" ? " for delivery" : " to ship") : STATUS_TEXT[o.status] || o.status)}</strong>
-      ${o.tracking ? `<span>${esc(o.carrier || "Tracking")}: <span class="mono">${esc(o.tracking)}</span></span>` : ""}
+      ${o.tracking ? `<span>${esc(o.carrier || "Tracking")}: <span class="mono">${esc(o.tracking)}</span></span>` : ""}${o.eta && o.status === "shipped" ? `<span>Estimated arrival: ${esc(new Date(String(o.eta).slice(0, 10) + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }))}</span>` : ""}
       <span>${j.items.map((i) => `${i.qty} × ${esc(i.name)} ${esc(i.strength)}`).join(", ")}</span>
       <span>${o.shipping_method ? esc(o.shipping_method) + (o.shipping_cents ? ` ${money(o.shipping_cents)}` : " (free)") + " · " : ""}${o.discount_cents ? `Discount −${money(o.discount_cents)} · ` : ""}Total ${money(o.total_cents)}${o.paid_at ? " · paid by card" : ""}</span>
       ${o.canPay ? `<div><button class="btn solid" type="button" id="payLookup">Pay now by card</button></div>` : ""}</div>`;
@@ -440,7 +440,7 @@ function acctView(mode) {
     ${tab === "orders" ? `<div class="olist">${MY_ORDERS.length ? MY_ORDERS.map((o) => `<div class="orow"><div class="top2"><span>Order ${esc(o.number)}</span><span>${money(o.total_cents)}</span></div>
         <span>${fmtDate(o.created_at)} · ${esc(STATUS_TEXT[o.status] || o.status)}${o.shipping_method ? ` · ${esc(o.shipping_method)}` : ""}${o.paid_at ? " · paid by card" : ""}</span>
         <span class="dist">${(o.items || []).map((i) => `${i.qty} × ${esc(i.name)} ${esc(i.strength)}`).join(", ")}</span>
-        ${o.tracking ? `<span>${esc(o.carrier || "Tracking")}: <span class="mono">${esc(o.tracking)}</span></span>` : ""}
+        ${o.tracking ? `<span>${esc(o.carrier || "Tracking")}: <span class="mono">${esc(o.tracking)}</span></span>` : ""}${o.eta && o.status === "shipped" ? `<span>Estimated arrival: ${esc(new Date(String(o.eta).slice(0, 10) + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }))}</span>` : ""}
         ${o.canPay ? `<span><button class="btn solid" type="button" data-payorder="${esc(o.number)}">Pay now by card</button></span>` : ""}</div>`).join("") : `<p class="dist">No orders yet.</p>`}</div>`
     : `<form id="acForm" class="stack"><div class="grid2">${fld("mN", "Full name", "text", "name", ME.name)}${fld("mPh", "Phone", "tel", "tel", ME.phone)}</div>
       <div class="grid2">${fld("m1", "Street address", "text", "address-line1", a.line1)}${fld("m2", "Apt, suite", "text", "address-line2", a.line2)}${fld("mC", "City", "text", "address-level2", a.city)}${fld("mS", "State", "text", "address-level1", a.state)}${fld("mZ", "ZIP", "text", "postal-code", a.zip)}</div>
