@@ -161,6 +161,7 @@ alter table products add column if not exists store_note text not null default '
 alter table orders add column if not exists filled_at timestamptz;
 alter table orders add column if not exists filled_by text not null default '';
 alter table orders add column if not exists eta date;
+alter table discount_codes add column if not exists min_vials int not null default 0;
 alter table products add column if not exists low_alerted_at timestamptz;
 alter table products add column if not exists image bytea;
 alter table products add column if not exists image_type text;

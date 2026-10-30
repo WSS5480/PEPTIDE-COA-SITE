@@ -1,4 +1,12 @@
 /* Sales rep app: one rep's customers, orders and commissions. Signs in with the same login screen as admin; the server only shows this rep's own records. */
+// what a discount code takes off (the server checks it again): percent, dollars, or the cheapest N vials free; minimum order / minimum vials
+const codeOffFor = (code, sub, units) => {
+  if (!code || !sub) return 0;
+  const vials = units.reduce((t, u) => t + u.qty, 0);
+  if ((code.minSubtotalCents && sub < code.minSubtotalCents) || (code.minVials && vials < code.minVials)) return 0;
+  const free = () => units.flatMap((u) => Array(Math.max(0, u.qty)).fill(u.cents)).sort((a, b) => a - b).slice(0, code.value).reduce((t, c) => t + c, 0);
+  return Math.max(0, Math.min(sub, code.kind === "percent" ? Math.round(sub * code.value / 100) : code.kind === "vials" ? free() : code.value));
+};
 (() => {
 const app = document.getElementById("app");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -188,7 +196,8 @@ async function neworder() {
     let sub = 0, n = 0;
     document.querySelectorAll("#oLines [data-pid]").forEach((row) => { const p = sellable.find((x) => String(x.id) === row.dataset.pid); const q = parseInt(row.querySelector("[data-qty]").value) || 0; row.querySelector("[data-amt]").textContent = q ? money(p.price_cents * q) : ""; sub += q * p.price_cents; n += q; });
     ful.forEach((f) => { const el = document.querySelector(`[data-fulamt="${f.key}"]`); if (el) el.textContent = shipCost(f, sub) ? money(shipCost(f, sub)) : "Free"; });
-    const off = !code || !sub || (code.minSubtotalCents && sub < code.minSubtotalCents) ? 0 : Math.max(0, Math.min(sub, code.kind === "percent" ? Math.round(sub * code.value / 100) : code.value));
+    const units = [...document.querySelectorAll("#oLines [data-pid]")].map((row) => { const p = sellable.find((x) => String(x.id) === row.dataset.pid); return { cents: p ? p.price_cents : 0, qty: parseInt(row.querySelector("[data-qty]").value) || 0 }; });
+    const off = codeOffFor(code, sub, units);
     const sc = shipCost(chosen(), sub);
     $("oSub").textContent = money(sub - off + sc); $("oCount").textContent = `${n} item${n === 1 ? "" : "s"}${off ? ` · −${money(off)} ${code.code}` : ""}${sc ? ` · +${money(sc)} ${chosen().label}` : ""}`;
   };
@@ -197,9 +206,9 @@ async function neworder() {
     if (!c) { code = null; total(); return; }
     let sub = 0; document.querySelectorAll("#oLines [data-pid]").forEach((row) => { const p = sellable.find((x) => String(x.id) === row.dataset.pid); sub += (parseInt(row.querySelector("[data-qty]").value) || 0) * p.price_cents; });
     try {
-      const r = await fetch("/api/discount", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: c, subtotalCents: sub }) });
+      const r = await fetch("/api/discount", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: c, subtotalCents: sub, units: [...document.querySelectorAll("#oLines [data-pid]")].map((row) => { const p = sellable.find((x) => String(x.id) === row.dataset.pid); return { cents: p ? p.price_cents : 0, qty: parseInt(row.querySelector("[data-qty]").value) || 0 }; }) }) });
       const j = await r.json(); if (!r.ok) throw new Error(j.error || "That code didn't work.");
-      code = { code: j.code, kind: j.kind, value: j.value, minSubtotalCents: j.minSubtotalCents || 0 }; $("oCode").value = j.code; $("oCodeMsg").textContent = `${j.label} applied.`;
+      code = { code: j.code, kind: j.kind, value: j.value, minSubtotalCents: j.minSubtotalCents || 0, minVials: j.minVials || 0 }; $("oCode").value = j.code; $("oCodeMsg").textContent = `${j.label} applied.`;
     } catch (e) { code = null; $("oCodeMsg").textContent = e.message; }
     total();
   };

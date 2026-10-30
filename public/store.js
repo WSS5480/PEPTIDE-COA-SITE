@@ -140,11 +140,15 @@ function drawCartCount() { $("cartN").textContent = cart.reduce((n, c) => n + c.
 function shipCost(f, sub) { return !f ? 0 : f.freeOverCents > 0 && sub >= f.freeOverCents ? 0 : f.cents; }
 const chosenFul = () => FUL.find((f) => f.key === ($("fulfil").querySelector("input:checked") || {}).value) || FUL[0] || null;
 // what the applied discount code takes off a subtotal (the server checks it again when the order is placed)
-function codeOff(sub) {
-  if (!CODE || !sub) return 0;
-  if (CODE.minSubtotalCents && sub < CODE.minSubtotalCents) return 0;
-  return Math.max(0, Math.min(sub, CODE.kind === "percent" ? Math.round(sub * CODE.value / 100) : CODE.value));
-}
+// what a discount code takes off (the server checks it again): percent, dollars, or the cheapest N vials free; minimum order / minimum vials
+const codeOffFor = (code, sub, units) => {
+  if (!code || !sub) return 0;
+  const vials = units.reduce((t, u) => t + u.qty, 0);
+  if ((code.minSubtotalCents && sub < code.minSubtotalCents) || (code.minVials && vials < code.minVials)) return 0;
+  const free = () => units.flatMap((u) => Array(Math.max(0, u.qty)).fill(u.cents)).sort((a, b) => a - b).slice(0, code.value).reduce((t, c) => t + c, 0);
+  return Math.max(0, Math.min(sub, code.kind === "percent" ? Math.round(sub * code.value / 100) : code.kind === "vials" ? free() : code.value));
+};
+function codeOff(sub) { return codeOffFor(CODE, sub, cartLines().map((l) => ({ cents: l.p.price_cents, qty: l.qty }))); }
 function drawCart() {
   const lines = cartLines();
   if (lines.length !== cart.length) { cart = lines.map(({ id, qty }) => ({ id, qty })); saveCart(); }
@@ -208,8 +212,8 @@ async function applyCode() {
   if (!code) { CODE = null; drawTotals(); return; }
   const lines = cartLines(), sub = lines.reduce((s, l) => s + l.p.price_cents * l.qty, 0);
   try {
-    const j = await post("/api/discount", { code, subtotalCents: sub });
-    CODE = { code: j.code, kind: j.kind, value: j.value, label: j.label, minSubtotalCents: j.minSubtotalCents || 0 };
+    const j = await post("/api/discount", { code, subtotalCents: sub, units: lines.map((l) => ({ cents: l.p.price_cents, qty: l.qty })) });
+    CODE = { code: j.code, kind: j.kind, value: j.value, label: j.label, minSubtotalCents: j.minSubtotalCents || 0, minVials: j.minVials || 0 };
     $("cCode").value = j.code;
     $("cCodeMsg").textContent = `${j.label} applied.`;
   } catch (x) { CODE = null; $("cCodeMsg").textContent = x.message; }

@@ -1,4 +1,12 @@
 /* Store admin: dashboard, orders, products, lab reports, shipping, settings, staff, account. */
+// what a discount code takes off (the server checks it again): percent, dollars, or the cheapest N vials free; minimum order / minimum vials
+const codeOffFor = (code, sub, units) => {
+  if (!code || !sub) return 0;
+  const vials = units.reduce((t, u) => t + u.qty, 0);
+  if ((code.minSubtotalCents && sub < code.minSubtotalCents) || (code.minVials && vials < code.minVials)) return 0;
+  const free = () => units.flatMap((u) => Array(Math.max(0, u.qty)).fill(u.cents)).sort((a, b) => a - b).slice(0, code.value).reduce((t, c) => t + c, 0);
+  return Math.max(0, Math.min(sub, code.kind === "percent" ? Math.round(sub * code.value / 100) : code.kind === "vials" ? free() : code.value));
+};
 (() => {
 const app = document.getElementById("app");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -508,7 +516,8 @@ async function neworder() {
     let sub = 0, n = 0;
     document.querySelectorAll("#noLines tr[data-pid]").forEach((row) => { const p = sellable.find((x) => String(x.id) === row.dataset.pid); const q = parseInt(row.querySelector("[data-qty]").value) || 0; row.querySelector("[data-amt]").textContent = q ? money(p.price_cents * q) : ""; sub += q * p.price_cents; n += q; });
     ful.forEach((f) => { const el = document.querySelector(`[data-fulamt="${f.key}"]`); if (el) el.textContent = shipCost(f, sub) ? money(shipCost(f, sub)) : "Free"; });
-    const off = !code || !sub || (code.minSubtotalCents && sub < code.minSubtotalCents) ? 0 : Math.max(0, Math.min(sub, code.kind === "percent" ? Math.round(sub * code.value / 100) : code.value));
+    const units = [...document.querySelectorAll("#noLines tr[data-pid]")].map((row) => { const p = sellable.find((x) => String(x.id) === row.dataset.pid); return { cents: p ? p.price_cents : 0, qty: parseInt(row.querySelector("[data-qty]").value) || 0 }; });
+    const off = codeOffFor(code, sub, units);
     const f = chosen(), sc = shipCost(f, sub);
     $("noTotals").innerHTML = `<div><span>${n} item${n === 1 ? "" : "s"}</span><span>${money(sub)}</span></div>${off ? `<div><span>Discount (${esc(code.code)})</span><span>−${money(off)}</span></div>` : ""}${f ? `<div><span>${esc(f.label)}</span><span>${sc ? money(sc) : "Free"}</span></div>` : ""}<div class="big"><span>Total</span><span>${money(sub - off + sc)}</span></div>`;
   };
@@ -526,9 +535,9 @@ async function neworder() {
     if (!c) { code = null; total(); return; }
     let sub = 0; document.querySelectorAll("#noLines tr[data-pid]").forEach((row) => { const p = sellable.find((x) => String(x.id) === row.dataset.pid); sub += (parseInt(row.querySelector("[data-qty]").value) || 0) * p.price_cents; });
     try {
-      const r = await fetch("/api/discount", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: c, subtotalCents: sub }) });
+      const r = await fetch("/api/discount", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: c, subtotalCents: sub, units: [...document.querySelectorAll("#noLines tr[data-pid]")].map((row) => { const p = sellable.find((x) => String(x.id) === row.dataset.pid); return { cents: p ? p.price_cents : 0, qty: parseInt(row.querySelector("[data-qty]").value) || 0 }; }) }) });
       const j = await r.json(); if (!r.ok) throw new Error(j.error || "That code didn't work.");
-      code = { code: j.code, kind: j.kind, value: j.value, minSubtotalCents: j.minSubtotalCents || 0 }; $("noCode").value = j.code; $("noCodeMsg").textContent = `${j.label} applied.`;
+      code = { code: j.code, kind: j.kind, value: j.value, minSubtotalCents: j.minSubtotalCents || 0, minVials: j.minVials || 0 }; $("noCode").value = j.code; $("noCodeMsg").textContent = `${j.label} applied.`;
     } catch (e) { code = null; $("noCodeMsg").textContent = e.message; }
     total();
   };
@@ -1616,8 +1625,9 @@ async function discounts() {
       <p class="muted">Customers type the code at checkout (sales reps can too). It comes off the product subtotal, before shipping. Commissions are paid on the discounted amount.</p>
       <div class="grid2" style="grid-template-columns:repeat(auto-fit,minmax(11rem,1fr))">
         <div class="field"><label class="eyebrow" for="dcCode">Code</label><div class="row2" style="flex-wrap:nowrap"><input id="dcCode" placeholder="e.g. WELCOME10" autocapitalize="characters" style="text-transform:uppercase;flex:1;min-width:0"><button class="btn" type="button" id="dcGen" title="Make a random code">Generate</button></div></div>
-        <div class="field"><label class="eyebrow" for="dcKind">Type</label><select id="dcKind"><option value="percent">Percent off</option><option value="amount">Dollars off</option></select></div>
-        <div class="field"><label class="eyebrow" for="dcValue">Amount</label><input id="dcValue" inputmode="decimal" placeholder="%"></div>
+        <div class="field"><label class="eyebrow" for="dcKind">Type</label><select id="dcKind"><option value="percent">Percent off</option><option value="amount">Dollars off ($)</option><option value="vials">Free vials (quantity)</option></select></div>
+        <div class="field"><label class="eyebrow" for="dcValue" id="dcValueLbl">Percent off</label><input id="dcValue" inputmode="decimal" placeholder="%"></div>
+        <div class="field"><label class="eyebrow" for="dcMinVials">Minimum vials in order (optional)</label><input id="dcMinVials" inputmode="numeric" placeholder="None"></div>
         <div class="field"><label class="eyebrow" for="dcMin">Minimum order $ (optional)</label><input id="dcMin" inputmode="decimal" placeholder="None"></div>
         <div class="field"><label class="eyebrow" for="dcUses">Number of uses (optional)</label><input id="dcUses" inputmode="numeric" placeholder="Unlimited"></div>
         <div class="field"><label class="eyebrow" for="dcExp">Expires (optional)</label><input id="dcExp" type="date" min="${today}"></div>
@@ -1628,10 +1638,10 @@ async function discounts() {
         ${codes.map((c) => { const [st, cls] = state(c); return `<tr data-id="${c.id}"><td class="mono"><strong>${esc(c.code)}</strong></td><td>${esc(c.label)}</td><td>${c.min_subtotal_cents ? money(c.min_subtotal_cents) : "—"}</td><td class="num">${c.used}${c.max_uses !== null ? ` / ${c.max_uses}` : ""}</td><td>${c.expires ? esc(String(c.expires).slice(0, 10)) : "—"}</td><td><span class="pill ${cls}">${st}</span></td><td class="num">${c.orders}</td><td class="num">${money(c.given_cents)}</td><td class="muted">${esc(c.note)}</td>
           <td class="row2" style="flex-wrap:nowrap"><button class="btn" data-copy="${esc(c.code)}">Copy</button><button class="btn" data-toggle="${c.active ? 0 : 1}">${c.active ? "Turn off" : "Turn on"}</button><button class="btn danger" data-del>Delete</button></td></tr>`; }).join("")}</table></div>` : `<p class="muted">No codes yet.</p>`}</div>`;
   const $ = (x) => document.getElementById(x);
-  $("dcKind").onchange = () => { $("dcValue").placeholder = $("dcKind").value === "percent" ? "%" : "$"; };
+  $("dcKind").onchange = () => { const k = $("dcKind").value; $("dcValue").placeholder = k === "percent" ? "%" : k === "vials" ? "e.g. 1" : "$"; $("dcValue").inputMode = k === "amount" ? "decimal" : "numeric"; $("dcValueLbl").textContent = k === "percent" ? "Percent off" : k === "vials" ? "How many vials free (the cheapest in the order)" : "Dollars off"; };
   $("dcGen").onclick = async () => { const r = await api("/discounts/new-code?prefix=" + encodeURIComponent($("dcCode").value.replace(/-.*$/, "").trim())); $("dcCode").value = r.code; };
   $("dcSave").onclick = async () => {
-    const body = { code: $("dcCode").value, kind: $("dcKind").value, value: $("dcValue").value, minSubtotal: $("dcMin").value, maxUses: $("dcUses").value, expires: $("dcExp").value, note: $("dcNote").value };
+    const body = { code: $("dcCode").value, kind: $("dcKind").value, value: $("dcValue").value, minSubtotal: $("dcMin").value, minVials: $("dcMinVials").value, maxUses: $("dcUses").value, expires: $("dcExp").value, note: $("dcNote").value };
     if (!body.code.trim()) { const r = await api("/discounts/new-code"); body.code = r.code; }
     const r = await api("/discounts", { method: "POST", body });
     toast(`Code ${r.code} created`); paneDirty = false; discounts();

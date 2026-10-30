@@ -352,7 +352,7 @@ async function createOrder({ name, email, phone, address, items, fulfillment, pa
     const codeText = normCode(discountCode);
     if (codeText) {
       const { rows: [dc] } = await client.query(`select ${DISCOUNT_COLS} from discount_codes where code = $1 for update`, [codeText]);
-      discount = discountValue(dc, subtotal); codeUsed = dc.code;
+      discount = discountValue(dc, subtotal, lines.map((l) => ({ cents: l.p.price_cents, qty: l.qty }))); codeUsed = dc.code;
       await client.query("update discount_codes set used = used + 1 where id = $1", [dc.id]);
     }
     let rate = null;
@@ -377,26 +377,31 @@ async function createOrder({ name, email, phone, address, items, fulfillment, pa
 }
 
 /* ---------- discount codes ---------- */
-const DISCOUNT_COLS = "id, code, kind, value, min_subtotal_cents, max_uses, used, expires, active, note, created_at, (expires is not null and expires < current_date) expired";
+const DISCOUNT_COLS = "id, code, kind, value, min_subtotal_cents, min_vials, max_uses, used, expires, active, note, created_at, (expires is not null and expires < current_date) expired";
+// "free vials": the cheapest N vials in the order come off
+const cheapestVials = (units, n) => units.flatMap((u) => Array(Math.max(0, u.qty | 0)).fill(Math.max(0, u.cents | 0))).sort((a, b) => a - b).slice(0, Math.max(0, n)).reduce((t, c) => t + c, 0);
 const normCode = (v) => String(v ?? "").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 24);
 // What a code takes off a subtotal; throws the reason a customer sees when it can't be used.
-function discountValue(dc, subtotal) {
+function discountValue(dc, subtotal, units = []) {
   if (!dc || !dc.active) throw new Error("That discount code isn't valid.");
   if (dc.expired) throw new Error("That discount code has expired.");
   if (dc.max_uses !== null && dc.used >= dc.max_uses) throw new Error("That discount code has already been used up.");
   if (dc.min_subtotal_cents && subtotal < dc.min_subtotal_cents) throw new Error(`That code needs an order of at least $${(dc.min_subtotal_cents / 100).toFixed(2)}.`);
-  const cents = dc.kind === "percent" ? Math.round(subtotal * dc.value / 100) : dc.value;
+  const vials = units.reduce((t, u) => t + (u.qty | 0), 0);
+  if (dc.min_vials && vials < dc.min_vials) throw new Error(`That code needs at least ${dc.min_vials} vials in the order (${vials} now).`);
+  const cents = dc.kind === "percent" ? Math.round(subtotal * dc.value / 100) : dc.kind === "vials" ? cheapestVials(units, dc.value) : dc.value;
   return Math.max(0, Math.min(subtotal, cents));
 }
-const codeOut = (d) => ({ ...d, label: d.kind === "percent" ? `${d.value}% off` : `$${(d.value / 100).toFixed(2)} off` });
+const codeOut = (d) => ({ ...d, label: (d.kind === "percent" ? `${d.value}% off` : d.kind === "vials" ? `${d.value} free vial${d.value === 1 ? "" : "s"}` : `$${(d.value / 100).toFixed(2)} off`) + (d.min_vials ? ` with ${d.min_vials}+ vials` : "") });
 // The store checks a code before the order is placed, to show the discount in the totals.
 app.post("/api/discount", limit("discount", 30, 15 * 60 * 1000), wrap(async (req, res) => {
   const code = normCode(req.body?.code), subtotal = Math.max(0, intOrNull(req.body?.subtotalCents) || 0);
+  const units = (Array.isArray(req.body?.units) ? req.body.units : []).slice(0, 200).map((u) => ({ cents: Math.max(0, intOrNull(u && u.cents) || 0), qty: Math.max(0, intOrNull(u && u.qty) || 0) }));
   if (!code) return bad(res, "Type a discount code.");
   const { rows: [dc] } = await q(`select ${DISCOUNT_COLS} from discount_codes where code = $1`, [code]);
   try {
-    const cents = discountValue(dc, subtotal);
-    res.json({ ok: true, code: dc.code, kind: dc.kind, value: dc.value, label: codeOut(dc).label, discountCents: cents, minSubtotalCents: dc.min_subtotal_cents });
+    const cents = discountValue(dc, subtotal, units);
+    res.json({ ok: true, code: dc.code, kind: dc.kind, value: dc.value, label: codeOut(dc).label, discountCents: cents, minSubtotalCents: dc.min_subtotal_cents, minVials: dc.min_vials || 0 });
   } catch (e) { bad(res, e.message); }
 }));
 
@@ -1166,7 +1171,7 @@ admin.post("/orders/:id/edit", wrap(async (req, res) => {
     // a discount code is recalculated on the new subtotal; a hand-set discount just can't exceed the products
     let discount = o.discount_cents;
     if (subtotal !== o.subtotal_cents) {
-      if (o.discount_code) { const { rows: [dc] } = await client.query("select kind, value from discount_codes where code = $1", [o.discount_code]); discount = dc ? Math.max(0, Math.min(subtotal, dc.kind === "percent" ? Math.round(subtotal * dc.value / 100) : dc.value)) : Math.min(discount, subtotal); }
+      if (o.discount_code) { const { rows: [dc] } = await client.query("select kind, value from discount_codes where code = $1", [o.discount_code]); discount = dc ? Math.max(0, Math.min(subtotal, dc.kind === "percent" ? Math.round(subtotal * dc.value / 100) : dc.kind === "vials" ? cheapestVials(lines.map((l) => ({ cents: l.unit_cents, qty: l.qty })), dc.value) : dc.value)) : Math.min(discount, subtotal); }
       else discount = Math.min(discount, subtotal);
     }
     const total = subtotal - discount + shipCents;
@@ -1965,9 +1970,9 @@ admin.get("/discounts", owner, wrap(async (req, res) => {
   res.json({ codes: rows.map(codeOut) });
 }));
 const codeFields = (b) => {
-  const kind = b.kind === "amount" ? "amount" : "percent";
-  const value = kind === "percent" ? Math.min(100, Math.max(0, intOrNull(b.value) || 0)) : Math.max(0, centsOrNull(b.value) || 0);
-  return { code: normCode(b.code), kind, value, min_subtotal_cents: Math.max(0, centsOrNull(b.minSubtotal) || 0), max_uses: intOrNull(b.maxUses) > 0 ? intOrNull(b.maxUses) : null,
+  const kind = ["amount", "vials"].includes(b.kind) ? b.kind : "percent";
+  const value = kind === "percent" ? Math.min(100, Math.max(0, intOrNull(b.value) || 0)) : kind === "vials" ? Math.min(100, Math.max(0, intOrNull(b.value) || 0)) : Math.max(0, centsOrNull(b.value) || 0);
+  return { code: normCode(b.code), kind, value, min_subtotal_cents: Math.max(0, centsOrNull(b.minSubtotal) || 0), min_vials: Math.max(0, Math.min(1000, intOrNull(b.minVials) || 0)), max_uses: intOrNull(b.maxUses) > 0 ? intOrNull(b.maxUses) : null,
     expires: /^\d{4}-\d{2}-\d{2}$/.test(String(b.expires || "")) ? b.expires : null, active: b.active !== false, note: str(b.note, 200) };
 };
 // a random, easy-to-read code: letters and digits that can't be mixed up
