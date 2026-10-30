@@ -694,8 +694,8 @@ async function customers() {
       ${isRep() ? "" : `<select id="cRep"><option value="">All reps</option><option value="none">No rep</option></select>`}
       <select id="cMonth" title="Month the customer was added"><option value="">Added: any month</option></select>
       <select id="cBuy"><option value="">Any orders</option><option value="buyers">Have ordered</option><option value="none">Never ordered</option><option value="open">Owes a balance</option></select>
-      <select id="cSort">${[["created", "Newest added"], ["spend", "Total spend"], ["orders", "Total orders"], ["paid", "Paid total"], ["open", "Open balance"], ["last", "Last order"], ["name", "Name A–Z"]].map(([k, l]) => `<option value="${k}">Sort: ${l}</option>`).join("")}</select></div>
-    <p class="muted" id="cSum"></p>
+      <select id="cSort">${[["created", "Newest added"], ["spend", "Total sales"], ["orders", "Total orders"], ["vials", "Vials"], ["paid", "Paid total"], ["open", "Open balance"], ["last", "Last order"], ["name", "Name A–Z"]].map(([k, l]) => `<option value="${k}">Sort: ${l}</option>`).join("")}</select></div>
+    <div class="row2" style="justify-content:space-between;align-items:center"><p class="muted" id="cSum" style="margin:0"></p><button class="btn" type="button" id="cAll">Expand all</button></div>
     <div class="tblwrap" id="ct"><p class="muted">Loading…</p></div>`;
   let term = "";
   const { reps: repList } = isRep() ? { reps: [] } : await api("/reps").catch(() => ({ reps: [] }));
@@ -718,10 +718,11 @@ async function customers() {
       : `<button class="btn" data-pin="set">Give PIN</button>`;
   };
   const F = (() => { try { return JSON.parse(localStorage.getItem("custView") || "{}"); } catch (e) { return {}; } })();
+  const openSet = new Set(); // customers expanded to show their details
   const st = { rep: F.rep || "", month: F.month || "", buy: F.buy || "", sort: F.sort || "created", dir: F.dir || "" };
   const ym = (d) => new Date(d).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }).slice(0, 7);
   const ymName = (k) => { const [y, m] = k.split("-"); return new Date(+y, +m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" }); };
-  const SORTS = { created: (c) => new Date(c.created_at).getTime(), spend: (c) => c.total_cents, orders: (c) => c.orders, paid: (c) => c.spent_cents, open: (c) => c.open_cents, last: (c) => (c.last_order ? new Date(c.last_order).getTime() : 0), name: (c) => (c.name || c.email || "").toLowerCase() };
+  const SORTS = { created: (c) => new Date(c.created_at).getTime(), spend: (c) => c.total_cents, orders: (c) => c.orders, vials: (c) => c.vials, paid: (c) => c.spent_cents, open: (c) => c.open_cents, last: (c) => (c.last_order ? new Date(c.last_order).getTime() : 0), name: (c) => (c.name || c.email || "").toLowerCase() };
   const view = (all) => {
     let l = all.filter((c) => (!st.rep || (st.rep === "none" ? !c.rep_id : String(c.rep_id) === st.rep)) && (!st.month || ym(c.created_at) === st.month)
       && (!st.buy || (st.buy === "buyers" ? c.orders > 0 : st.buy === "none" ? !c.orders : c.open_cents > 0)));
@@ -738,13 +739,20 @@ async function customers() {
     const rs = document.getElementById("cRep"); if (rs) rs.innerHTML = `<option value="">All reps</option><option value="none"${st.rep === "none" ? " selected" : ""}>No rep</option>` + repList.map((r) => `<option value="${r.id}"${st.rep === String(r.id) ? " selected" : ""}>${esc(r.name)}${r.active ? "" : " (off)"}</option>`).join("");
     document.getElementById("cBuy").value = st.buy; document.getElementById("cSort").value = st.sort;
     const list = view(all);
-    document.getElementById("cSum").textContent = list.length ? `${list.length} customer${list.length === 1 ? "" : "s"}${list.length !== all.length ? ` of ${all.length}` : ""} · ${list.reduce((t, c) => t + c.orders, 0)} orders · ${money(list.reduce((t, c) => t + c.total_cents, 0))} total spend · ${money(list.reduce((t, c) => t + c.spent_cents, 0))} paid · ${money(list.reduce((t, c) => t + c.open_cents, 0))} open` : "";
-    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl"><tr>${th("name", "Name")}<th>Email</th><th>Phone</th><th>Markup</th><th>Sales rep</th><th>Site PIN</th>${th("created", "Joined")}${th("orders", "Orders", " num")}${th("spend", "Total spend", " num")}${th("paid", "Paid total", " num")}${th("open", "Open", " num")}${th("last", "Last order")}<th>Active</th><th></th></tr>
-      ${list.map((c) => `<tr data-cid="${c.id}" data-cname="${esc(c.name || c.email)}"><td>${esc(c.name)}</td><td>${c.email ? `<a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a>` : `<a href="#" data-cust-orders="${esc(c.name)}" class="muted">no email</a>`}</td><td>${esc(c.phone)}</td>
-        <td>${markupCell(c)}</td><td>${repCell(c)}</td><td>${pinCell(c)}</td><td>${when(c.created_at)}</td>
-        <td class="num">${c.orders}</td><td class="num"><strong>${money(c.total_cents)}</strong></td><td class="num">${money(c.spent_cents)}</td><td class="num">${c.open_cents ? money(c.open_cents) : "—"}</td><td>${c.last_order ? when(c.last_order) : ""}</td>
-        <td><input type="checkbox" data-cact${c.active ? " checked" : ""}${ro()}></td>
-        ${isOwner() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-corder>New order</button><button class="btn" data-cedit>Edit</button><button class="btn" data-cdel>Delete</button></td>` : isRep() ? `<td class="row2" style="flex-wrap:nowrap"><button class="btn" data-corder>New order</button><button class="btn" data-cedit>Edit</button></td>` : `<td><button class="btn" data-corder>New order</button></td>`}</tr>`).join("")}</table>` : `<p class="muted">No customers yet.${isOwner() || isRep() ? " Use Add customer to set one up." : ""}</p>`;
+    document.getElementById("cSum").textContent = list.length ? `${list.length} customer${list.length === 1 ? "" : "s"}${list.length !== all.length ? ` of ${all.length}` : ""} · ${list.reduce((t, c) => t + c.orders, 0)} orders · ${list.reduce((t, c) => t + c.vials, 0)} vials · ${money(list.reduce((t, c) => t + c.total_cents, 0))} sales · ${money(list.reduce((t, c) => t + c.spent_cents, 0))} paid · ${money(list.reduce((t, c) => t + c.open_cents, 0))} open` : "";
+    const acts = isOwner() ? `<button class="btn" data-corder>New order</button><button class="btn" data-cedit>Edit</button><button class="btn danger" data-cdel>Delete</button>` : isRep() ? `<button class="btn" data-corder>New order</button><button class="btn" data-cedit>Edit</button>` : `<button class="btn" data-corder>New order</button>`;
+    const det = (lab, html) => `<div><div class="eyebrow" style="margin-bottom:.2rem">${lab}</div>${html}</div>`;
+    document.getElementById("ct").innerHTML = list.length ? `<table class="tbl ctbl"><tr>${th("name", "Customer")}${isRep() ? "" : "<th>Sales rep</th>"}${th("orders", "Orders", " num")}${th("vials", "Vials", " num")}${th("spend", "Sales", " num")}${th("paid", "Paid", " num")}${th("open", "Open", " num")}${th("last", "Last order")}</tr>
+      ${list.map((c) => { const open = openSet.has(c.id); return `<tr class="csum click" data-cid="${c.id}" data-cname="${esc(c.name || c.email)}" data-ctoggle aria-expanded="${open}"><td><span class="caret" style="display:inline-block;width:1rem;transition:transform .15s;${open ? "transform:rotate(90deg)" : ""}">▸</span><strong>${esc(c.name || c.email || "—")}</strong>${c.active ? "" : ' <span class="pill st-cancelled">off</span>'}${c.has_pin ? "" : ' <span class="pill" title="No PIN yet">no PIN</span>'}</td>
+        ${isRep() ? "" : `<td>${esc(c.rep_name || "—")}</td>`}<td class="num">${c.orders}</td><td class="num">${c.vials}</td><td class="num"><strong>${money(c.total_cents)}</strong></td><td class="num">${money(c.spent_cents)}</td><td class="num">${c.open_cents ? money(c.open_cents) : "—"}</td><td>${c.last_order ? when(c.last_order) : "—"}</td></tr>
+        <tr class="cdet" data-cid="${c.id}" data-cname="${esc(c.name || c.email)}"${open ? "" : " hidden"}><td colspan="${isRep() ? 7 : 8}" style="background:var(--ground,#f6f7f9)">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:.8rem 1.2rem;padding:.4rem .2rem">
+            ${det("Email", c.email ? `<a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a>` : `<a href="#" data-cust-orders="${esc(c.name)}" class="muted">no email · see orders</a>`)}
+            ${det("Phone", c.phone ? `<a href="tel:${esc(c.phone)}">${esc(c.phone)}</a>` : '<span class="muted">—</span>')}
+            ${det("Pricing", markupCell(c))}${isRep() ? "" : det("Sales rep", repCell(c))}${det("Site PIN", pinCell(c))}
+            ${det("Joined", when(c.created_at))}${det("Account", `<label class="chk"><input type="checkbox" data-cact${c.active ? " checked" : ""}${ro()}> Active</label>`)}
+            ${det("Average order", c.orders ? money(Math.round(c.total_cents / c.orders)) : "—")}</div>
+          <div class="row2" style="margin-top:.6rem">${acts}</div></td></tr>`; }).join("")}</table>` : `<p class="muted">No customers yet.${isOwner() || isRep() ? " Use Add customer to set one up." : ""}</p>`;
     lastList = list;
   };
   const save = () => { try { localStorage.setItem("custView", JSON.stringify(st)); } catch (e) {} };
@@ -752,6 +760,10 @@ async function customers() {
   document.getElementById("cBuy").onchange = (e) => { st.buy = e.target.value; save(); load(); };
   document.getElementById("cSort").onchange = (e) => { st.sort = e.target.value; st.dir = ""; save(); load(); };
   if (document.getElementById("cRep")) document.getElementById("cRep").onchange = (e) => { st.rep = e.target.value; save(); load(); };
+  document.getElementById("cAll").onclick = () => { const all = openSet.size < lastList.length; openSet.clear(); if (all) lastList.forEach((c) => openSet.add(c.id)); document.getElementById("cAll").textContent = all ? "Collapse all" : "Expand all";
+    document.querySelectorAll("#ct tr.cdet").forEach((r) => { r.hidden = !all; }); document.querySelectorAll("#ct tr.csum").forEach((r) => { r.setAttribute("aria-expanded", all); r.querySelector(".caret").style.transform = all ? "rotate(90deg)" : ""; }); };
+  document.getElementById("ct").addEventListener("click", (e) => { const t = e.target.closest("tr.csum"); if (!t || e.target.closest("a, button, input, select")) return; const id = +t.dataset.cid, det = t.nextElementSibling, open = det.hidden;
+    det.hidden = !open; t.setAttribute("aria-expanded", open); t.querySelector(".caret").style.transform = open ? "rotate(90deg)" : ""; if (open) openSet.add(id); else openSet.delete(id); });
   document.getElementById("ct").addEventListener("click", (e) => { const h = e.target.closest("[data-csort]"); if (!h) return; const k = h.dataset.csort;
     if (st.sort === k) st.dir = (st.dir ? st.dir === "asc" : k === "name") ? "desc" : "asc"; else { st.sort = k; st.dir = ""; } save(); load(); });
   let lastList = [];

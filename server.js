@@ -1435,7 +1435,8 @@ admin.get("/customers", wrap(async (req, res) => {
   const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.active, c.created_at, c.markup, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.rep_id, (select name from users where id = c.rep_id) rep_name,
       count(o.id) filter (where o.status <> 'cancelled')::int orders, coalesce(sum(o.total_cents) filter (where o.status in ('paid','shipped','delivered')), 0)::int spent_cents,
       coalesce(sum(o.total_cents) filter (where o.status <> 'cancelled'), 0)::int total_cents, coalesce(sum(o.total_cents) filter (where o.status <> 'cancelled' and o.paid_at is null), 0)::int open_cents,
-      max(o.created_at) filter (where o.status <> 'cancelled') last_order
+      max(o.created_at) filter (where o.status <> 'cancelled') last_order,
+      coalesce((select sum(i.qty) from order_items i join orders x on x.id = i.order_id where x.customer_id = c.id and x.status <> 'cancelled'), 0)::int vials
     from customers c left join orders o on o.customer_id = c.id
     where ($1 = '' or lower(c.name) like '%' || $1 || '%' or lower(c.email) like '%' || $1 || '%') ${isRep(req) ? "and c.rep_id = $2" : ""}
     group by c.id order by c.created_at desc limit 3000`, isRep(req) ? [term, req.user.id] : [term]);
