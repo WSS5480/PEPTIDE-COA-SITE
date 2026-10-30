@@ -100,8 +100,9 @@ function shell() {
 }
 /* the menu is grouped Rep / Manager / Admin (each folds; tapping its name opens it and closes the others), plus pills on top like the tracker */
 const NAV_GROUP = { orders: "Rep", neworder: "Rep", customers: "Rep", commissions: "Rep", ar: "Rep",
-  fill: "Manager", products: "Manager", inventory: "Manager", reports: "Manager", promo: "Manager", page: "Manager", settings: "Manager", analytics: "Manager",
-  reps: "Admin", discounts: "Admin", salescost: "Admin", pnl: "Admin", staff: "Admin", setup: "Admin", geo: "Admin" };
+  fill: "Manager", products: "Manager", inventory: "Manager", reports: "Manager", discounts: "Manager", promo: "Manager", page: "Manager", settings: "Manager", analytics: "Manager", salescost: "Manager", pnl: "Manager",
+  // Admin is the same list, in the same order, in the store and the case tracker
+  reps: "Admin", staff: "Admin", setup: "Admin", geo: "Admin", apps: "Admin", howto: "Admin", account: "Admin" };
 let navOpen = null;
 async function drawNav() {
   try { stats = await api("/stats"); } catch (e) { return; }
@@ -116,7 +117,7 @@ async function drawNav() {
   const sum = (l) => l.reduce((t, [k]) => t + (k === "orders" ? n : k === "fill" ? stats.toFill || 0 : k === "customers" ? stats.pinRequests || 0 : 0), 0);
   document.getElementById("nav").innerHTML = items.filter(([k]) => k === "dashboard").map(btn).join("") +
     groups.map(([g, l]) => `<button type="button" class="navgrp-h${navOpen === g ? " open" : ""}" data-grp="${g}"><span>${navOpen === g ? "▾" : "▸"} ${g}</span>${navOpen !== g && sum(l) ? `<span class="badge">${sum(l)}</span>` : ""}</button><div class="navgrp-items"${navOpen === g ? "" : " hidden"}>${l.map(btn).join("")}</div>`).join("") +
-    '<hr class="navline">' + items.filter(([k]) => k !== "dashboard" && !grpOf(k)).map(btn).join("");
+    (items.some(([k]) => k !== "dashboard" && !grpOf(k)) ? '<hr class="navline">' + items.filter(([k]) => k !== "dashboard" && !grpOf(k)).map(btn).join("") : "");
   // pills on top: every page, the open one lit; tapping the lit pill goes back to the Dashboard
   const pills = document.getElementById("pills");
   if (pills) { pills.innerHTML = items.map(([k, label]) => `<a href="#${k}" data-pill="${k}" class="${view === k ? "on" : ""}">${label}${badge(k)}</a>`).join("");
@@ -1102,10 +1103,10 @@ async function reps() {
 }
 
 /* ---------- commissions ---------- */
-let surgPick = "", commFilter = { rep: "", from: "", to: "", status: "" }, commView = localStorage.getItem("commView") || "combined", commMonth = new Date().toISOString().slice(0, 7);
+let surgPick = "", commFilter = { rep: "", from: "", to: "", status: "" }, commView = localStorage.getItem("commView") === "tracker" ? "tracker" : "store", /* no Combined view (owner request) */ commMonth = new Date().toISOString().slice(0, 7);
 const usd = (n) => "$" + (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const monthLabel = (ym) => new Date(ym + "-15T12:00:00").toLocaleDateString("en-US", { month: "long", year: "numeric" });
-const commSwitch = () => HUB.linked ? `<div class="seg" style="display:inline-flex;margin:0 0 .8rem">${[["combined", "Combined"], ["store", "Peptide store"], ["tracker", "Surgical cases"]].map(([k, l]) => `<button type="button" data-cv="${k}"${commView === k ? ' class="on"' : ""}>${l}</button>`).join("")}</div>` : "";
+const commSwitch = () => HUB.linked ? `<div class="seg" style="display:inline-flex;margin:0 0 .8rem">${[["store", "Peptide store"], ["tracker", "Surgical cases"]].map(([k, l]) => `<button type="button" data-cv="${k}"${commView === k ? ' class="on"' : ""}>${l}</button>`).join("")}</div>` : "";
 const wireCommSwitch = () => { document.querySelectorAll("[data-cv]").forEach((b) => { b.onclick = () => { commView = b.dataset.cv; localStorage.setItem("commView", commView); commissions(); }; }); };
 // the month the store rows use when the view is Combined / Case tracker
 const monthRange = (ym) => { const [y, m] = ym.split("-").map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate(); return { from: `${ym}-01`, to: `${ym}-${String(last).padStart(2, "0")}` }; };
@@ -2450,7 +2451,7 @@ function howto() {
     if (who === "owner") S.push(sec("Sales reps & commissions", "store", [
       `Reps use the ${b("Rep app")}: their own customers, orders and commission. Every order from one of their customers earns their rate on the product total after discount, before shipping — whether they placed it or the customer did.`,
       `${b("Pending")} until the order is paid → ${b("Earned")} → ${b("Paid")} when you include it in a payout (Commissions → pick the earned lines → Pay out). Cancelled orders are void.`,
-      `${b("Combined / Peptide store / Case tracker")} on the Commissions page: the combined view lines up each rep's store commission with their case-tracker commission for the month; goals and targets stay separate per app.`,
+      `${b("Peptide store / Surgical cases")} on the Commissions page: switch between each rep's store commission and their case-tracker commission for the month; goals and targets stay separate per app.`,
       `${b("Admins in the rep app:")} a "Viewing as" picker shows the app exactly as that rep sees it.`
     ]));
   }
