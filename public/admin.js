@@ -92,17 +92,40 @@ function shell() {
     <div class="sref-row"><button type="button" class="sref" data-refresh title="Reload this screen"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="vertical-align:-2px"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg> Refresh</button></div>
     <nav id="nav"></nav>
     <div class="who"><span>${esc(me.name || me.email)} · ${esc(me.role)}</span><button type="button" data-install>Download admin app</button><button type="button" id="lo">Sign out</button></div>
-  </aside><section class="pane" id="pane"></section></div>`;
+  </aside><div class="pwrap"><nav class="jump" id="pills" aria-label="Pages"></nav><section class="pane" id="pane"></section></div></div>`;
   document.getElementById("lo").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };
   fetch("/api/build").then((r) => r.json()).then((b) => { BUILD = b; const line = `v${b.version} · updated ${when(b.updated)}`; const bl = document.getElementById("buildLine"); if (bl) bl.textContent = line; document.getElementById("buildTop").textContent = line; const d = document.getElementById("dashBuild"); if (d) d.textContent = line; }).catch(() => {});
   document.getElementById("mm").onclick = () => document.getElementById("adm").classList.toggle("menu");
   go(view, orderId);
 }
+/* the menu is grouped Rep / Manager / Admin (each folds; tapping its name opens it and closes the others), plus pills on top like the tracker */
+const NAV_GROUP = { orders: "Rep", neworder: "Rep", customers: "Rep", commissions: "Rep", ar: "Rep",
+  fill: "Manager", products: "Manager", inventory: "Manager", reports: "Manager", promo: "Manager", page: "Manager", settings: "Manager", analytics: "Manager",
+  reps: "Admin", discounts: "Admin", salescost: "Admin", pnl: "Admin", staff: "Admin", setup: "Admin", geo: "Admin" };
+let navOpen = null;
 async function drawNav() {
   try { stats = await api("/stats"); } catch (e) { return; }
   const n = stats.byStatus.new || 0;
-  document.getElementById("nav").innerHTML = NAV.filter(([k]) => k !== "geo" || HUB.linked).map(([k, label, who]) => k === "line" ? (isRep() ? "" : '<hr class="navline">') : k === "line2" ? '<hr class="navline">' : !canSee(who) ? "" : `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}${k === "fill" && stats.toFill ? `<span class="badge">${stats.toFill}</span>` : ""}${k === "customers" && stats.pinRequests ? `<span class="badge" title="PIN requests">${stats.pinRequests}</span>` : ""}</button>`).join("");
+  const items = NAV.filter(([k, , who]) => k !== "line" && k !== "line2" && (k !== "geo" || HUB.linked) && canSee(who));
+  const badge = (k) => `${k === "orders" && n ? `<span class="badge">${n}</span>` : ""}${k === "fill" && stats.toFill ? `<span class="badge">${stats.toFill}</span>` : ""}${k === "customers" && stats.pinRequests ? `<span class="badge" title="PIN requests">${stats.pinRequests}</span>` : ""}`;
+  const btn = ([k, label]) => `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${label}${badge(k)}</button>`;
+  const grpOf = (k) => (isRep() ? "" : NAV_GROUP[k] || "");
+  if (navOpen === null || (grpOf(view) && navOpen !== grpOf(view) && !drawNav.manual)) navOpen = grpOf(view) || "";
+  drawNav.manual = false;
+  const groups = ["Rep", "Manager", "Admin"].map((g) => [g, items.filter(([k]) => grpOf(k) === g)]).filter(([, l]) => l.length);
+  const sum = (l) => l.reduce((t, [k]) => t + (k === "orders" ? n : k === "fill" ? stats.toFill || 0 : k === "customers" ? stats.pinRequests || 0 : 0), 0);
+  document.getElementById("nav").innerHTML = items.filter(([k]) => k === "dashboard").map(btn).join("") +
+    groups.map(([g, l]) => `<button type="button" class="navgrp-h${navOpen === g ? " open" : ""}" data-grp="${g}"><span>${navOpen === g ? "▾" : "▸"} ${g}</span>${navOpen !== g && sum(l) ? `<span class="badge">${sum(l)}</span>` : ""}</button><div class="navgrp-items"${navOpen === g ? "" : " hidden"}>${l.map(btn).join("")}</div>`).join("") +
+    '<hr class="navline">' + items.filter(([k]) => k !== "dashboard" && !grpOf(k)).map(btn).join("");
+  // pills on top: every page, the open one lit; tapping the lit pill goes back to the Dashboard
+  const pills = document.getElementById("pills");
+  if (pills) { pills.innerHTML = items.map(([k, label]) => `<a href="#${k}" data-pill="${k}" class="${view === k ? "on" : ""}">${label}${badge(k)}</a>`).join("");
+    const on = pills.querySelector("a.on"); if (on && pills.scrollWidth > pills.clientWidth) pills.scrollLeft = Math.max(0, on.offsetLeft - 16); }
 }
+document.addEventListener("click", (e) => {
+  const h = e.target.closest(".navgrp-h"); if (h) { navOpen = navOpen === h.dataset.grp ? "" : h.dataset.grp; drawNav.manual = true; drawNav(); return; }
+  const p = e.target.closest("[data-pill]"); if (p) { e.preventDefault(); const k = p.dataset.pill; go(view === k && k !== "dashboard" ? "dashboard" : k); }
+});
 let paneDirty = false; // something typed on this screen and not saved yet
 document.addEventListener("input", (e) => { if (e.target.closest("#pane")) paneDirty = true; });
 async function go(v, id, opts = {}) {
@@ -150,7 +173,11 @@ async function dashboard() {
     box.innerHTML = lone.length ? `<div class="panel"><strong>${lone.length} lab report${lone.length === 1 ? " isn't" : "s aren't"} attached to a product:</strong><span class="muted">${lone.map((r) => esc(`${r.product} ${r.strength}${r.sample ? " (" + r.sample + ")" : ""}`)).join(", ")}</span><div><button class="btn" data-nav="reports">Open lab reports</button></div></div>` : "";
   }).catch(() => {});
   const b = s.byStatus;
+  const apv = [["orders:new", "🆕", "New orders to confirm", b.new || 0, "Confirm"], ["fill", "📦", "Orders to fill / ship", s.toFill || 0, "Fill"], ["customers", "🔑", "Customer PIN requests", s.pinRequests || 0, "Review"],
+    ["ar", "⏰", "Invoices past due" + (s.overdue && s.overdue.cents ? " · " + money(s.overdue.cents) : ""), (s.overdue && s.overdue.n) || 0, "Open AR"], ["inventory", "📉", "Low or out of stock", (s.lowStock || []).length, "Reorder"], ["products", "🏷", "Products without a price", s.unpriced || 0, "Set prices"]].filter((x) => x[3] > 0);
   pane().innerHTML = `<header><h1>Dashboard</h1><span class="muted" id="dashBuild">${BUILD ? `v${BUILD.version} · updated ${when(BUILD.updated)}` : ""}</span></header>
+    ${apv.length ? `<div class="panel" data-nofold style="border:2px solid var(--amber,#d97706);background:#fff8eb"><h2 style="margin:0">⚠️ ${apv.reduce((t, x) => t + x[3], 0)} need your attention</h2>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr));gap:.5rem">${apv.map(([go, ic, lab, n, btn]) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;background:#fff;border:1px solid var(--line);border-radius:10px;padding:.5rem .7rem"><span>${ic} <strong>${n}</strong> ${esc(lab)}</span><button class="btn solid" type="button" style="white-space:nowrap;flex:none" ${go.includes(":") ? `data-go="${go}"` : `data-nav="${go}"`}>${btn}</button></div>`).join("")}</div></div>` : `<div class="panel" data-nofold style="border-color:var(--green,#0a7)"><strong>✓ Nothing waiting on you.</strong></div>`}
     <dl class="kpis">
       <div class="kpi" data-go="orders:new"><dt>New orders</dt><dd>${b.new || 0}</dd></div>
       <div class="kpi" data-go="orders:confirmed"><dt>Waiting for payment</dt><dd>${b.confirmed || 0}</dd></div>
