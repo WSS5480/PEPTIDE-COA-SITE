@@ -80,7 +80,7 @@ function drawLogin(msg) {
 /* ---------- shell ---------- */
 // [key, label, who]: "all" = owner, staff and sales reps · "team" = owner and staff · "owner" · "ownerrep" = owner and reps. "line" draws the divider:
 // sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
-const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["ar", "Invoices & AR", "all"], ["analytics", "Analytics", "all"], ["line"],
+const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["ar", "Invoices & AR", "all"], ["analytics", "Analytics", "all"], ["salescost", "Sales & cost", "owner"], ["line"],
   ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["promo", "Promo banner", "team"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["line2"],
   // below the second line: the things you reach from either app (the case tracker links here too)
   ["staff", "Team logins", "owner"], ["setup", "Email & approvals", "owner"], ["geo", "Geofencing", "owner"], ["apps", "Apps & downloads", "all"], ["howto", "How to", "all"], ["account", "My account", "all"]];
@@ -113,7 +113,7 @@ async function go(v, id, opts = {}) {
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  await ({ dashboard, orders, neworder, fill, promo, ar, analytics, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps, geo, howto }[v] || dashboard)();
+  await ({ dashboard, orders, neworder, fill, promo, ar, analytics, salescost, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps, geo, howto }[v] || dashboard)();
   if (v === "dashboard" && document.getElementById("hubKpi")) fillHubKpi();
   if (!opts.keepScroll) window.scrollTo(0, 0);
 }
@@ -256,6 +256,58 @@ const barChart = (data, { label, value, fmt, color = "var(--blue, #2563eb)", h =
     <div style="display:grid;grid-template-columns:repeat(${data.length},1fr);font-size:.68rem;color:var(--muted);text-align:center;gap:2px;margin-top:4px">${data.map((r) => `<span title="${esc(fmt(value(r)))}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(r))}</span>`).join("")}</div>
     <div style="display:grid;grid-template-columns:repeat(${data.length},1fr);font-size:.66rem;text-align:center;gap:2px">${data.map((r) => `<span style="overflow:hidden;white-space:nowrap">${esc(fmt(value(r)))}</span>`).join("")}</div>`;
 };
+/* ---------- sales & cost (admins): day / week / month / year, each period against the same period a year earlier ---------- */
+let scG = "month", scN = 0;
+async function salescost() {
+  if (!isOwner()) return dashboard();
+  const j = await api(`/sales-cost?g=${scG}${scN ? `&n=${scN}` : ""}`);
+  const D = (iso) => new Date(iso + "T12:00:00Z"), iso = (d) => d.toISOString().slice(0, 10);
+  const add = (d, k) => { const x = new Date(d); if (scG === "day") x.setUTCDate(x.getUTCDate() + k); else if (scG === "week") x.setUTCDate(x.getUTCDate() + 7 * k); else if (scG === "month") x.setUTCMonth(x.getUTCMonth() + k); else x.setUTCFullYear(x.getUTCFullYear() + k); return x; };
+  const lyKey = (b) => { const d = D(b); if (scG === "week") d.setUTCDate(d.getUTCDate() - 364); else d.setUTCFullYear(d.getUTCFullYear() - 1); return iso(d); };
+  const lyRow = (b) => { const k = lyKey(b); return j.prior.find((r) => r.b === k) || (scG === "week" ? j.prior.find((r) => Math.abs(D(r.b) - D(k)) < 4 * 864e5) : null); };
+  const B = []; for (let d = D(j.from); iso(d) <= j.to; d = add(d, 1)) B.push(iso(d));
+  const Z = { orders: 0, units: 0, sales: 0, cost: 0, nocost: 0 };
+  const rows = B.map((b) => ({ b, ...(j.rows.find((r) => r.b === b) || Z), ly: lyRow(b) || Z }));
+  const sum = (arr, k) => arr.reduce((t, r) => t + (r[k] || 0), 0);
+  const T = { sales: sum(rows, "sales"), cost: sum(rows, "cost"), orders: sum(rows, "orders"), units: sum(rows, "units"), nocost: sum(rows, "nocost") };
+  const L = { sales: rows.reduce((t, r) => t + r.ly.sales, 0), cost: rows.reduce((t, r) => t + r.ly.cost, 0), orders: rows.reduce((t, r) => t + r.ly.orders, 0) };
+  const gp = (r) => r.sales - r.cost, mg = (r) => (r.sales ? Math.round((gp(r) / r.sales) * 1000) / 10 + "%" : "—");
+  const yoy = (a, b) => (b ? `<span style="color:${a >= b ? "var(--green,#0a7)" : "var(--red,#c33)"}">${a >= b ? "▲" : "▼"} ${Math.abs(Math.round(((a - b) / Math.abs(b)) * 100))}%</span>` : a ? '<span class="muted">new</span>' : '<span class="muted">—</span>');
+  const lab = (b) => { const d = D(b), o = { timeZone: "UTC" }; return scG === "day" ? d.toLocaleDateString("en-US", { ...o, month: "short", day: "numeric" }) : scG === "week" ? "Wk " + d.toLocaleDateString("en-US", { ...o, month: "short", day: "numeric" }) : scG === "month" ? d.toLocaleDateString("en-US", { ...o, month: "short", year: "2-digit" }) : String(d.getUTCFullYear()); };
+  const k = (c) => (Math.abs(c) >= 100000 ? "$" + (c / 100000).toFixed(1) + "k" : money(c));
+  // paired bars: this period (solid) vs a year earlier (light), gross profit as a dot
+  const max = Math.max(1, ...rows.map((r) => Math.max(r.sales, r.ly.sales))), w = 100 / rows.length, H = 60, every = Math.ceil(rows.length / 12);
+  const chart = `<svg viewBox="0 0 100 ${H}" preserveAspectRatio="none" style="width:100%;height:200px;display:block" role="img" aria-label="Sales this year vs last year">${rows.map((r, i) => { const a = (r.sales / max) * (H - 2), c = (r.ly.sales / max) * (H - 2), g = Math.max(0, (gp(r) / max) * (H - 2)); return `<rect x="${i * w + w * 0.12}" y="${H - c}" width="${w * 0.36}" height="${c}" fill="#9fb3d1"><title>${esc(lab(r.b))} last year ${money(r.ly.sales)}</title></rect><rect x="${i * w + w * 0.5}" y="${H - a}" width="${w * 0.38}" height="${a}" fill="var(--blue,#2563eb)"><title>${esc(lab(r.b))} sales ${money(r.sales)} · cost ${money(r.cost)} · GP ${money(gp(r))}</title></rect>${r.sales ? `<rect x="${i * w + w * 0.5}" y="${H - g - 0.6}" width="${w * 0.38}" height="1.2" fill="#0a7"/>` : ""}`; }).join("")}</svg>
+    <div style="display:grid;grid-template-columns:repeat(${rows.length},1fr);font-size:.64rem;color:var(--muted);text-align:center;margin-top:4px">${rows.map((r, i) => `<span style="overflow:hidden;white-space:nowrap">${i % every === 0 ? esc(lab(r.b)) : ""}</span>`).join("")}</div>
+    <div class="row2" style="gap:1rem;font-size:.75rem;margin-top:.4rem"><span><i style="display:inline-block;width:10px;height:10px;background:var(--blue,#2563eb)"></i> Sales</span><span><i style="display:inline-block;width:10px;height:10px;background:#9fb3d1"></i> Same period last year</span><span><i style="display:inline-block;width:10px;height:3px;background:#0a7;vertical-align:middle"></i> Gross profit</span></div>`;
+  const N = { day: [7, 14, 31, 60, 92], week: [8, 13, 26, 52], month: [6, 12, 24, 36], year: [3, 5, 10] }[scG], unitName = { day: "days", week: "weeks", month: "months", year: "years" }[scG];
+  pane().innerHTML = `<header><h1>Sales &amp; cost</h1><div class="row2" style="flex-wrap:wrap"><div class="seg">${[["day", "Day"], ["week", "Week"], ["month", "Month"], ["year", "Year"]].map(([v, l]) => `<button type="button" data-scg="${v}"${scG === v ? ' class="on"' : ""}>${l}</button>`).join("")}</div>
+      <select id="scN">${N.map((x) => `<option value="${x}"${j.n === x ? " selected" : ""}>Last ${x} ${unitName}</option>`).join("")}</select><a class="btn" id="scCsv" href="#">Export CSV</a></div></header>
+    <p class="muted">Sales = products after discounts, before shipping; cancelled orders excluded. Cost = each line's cost at the time of sale. Every period is compared with the same period a year earlier (YoY). ${esc(lab(j.from))} – ${esc(lab(j.to))}${scG === "day" || scG === "week" ? "" : " (current period to date)"}.</p>
+    <dl class="kpis">
+      <div class="kpi"><dt>Sales</dt><dd>${money(T.sales)}</dd><small class="muted">${yoy(T.sales, L.sales)} YoY · LY ${money(L.sales)}</small></div>
+      <div class="kpi"><dt>Cost</dt><dd>${money(T.cost)}</dd><small class="muted">${yoy(T.cost, L.cost)} YoY · LY ${money(L.cost)}</small></div>
+      <div class="kpi green"><dt>Gross profit</dt><dd>${money(gp(T))}</dd><small class="muted">${yoy(gp(T), gp(L))} YoY · LY ${money(gp(L))}</small></div>
+      <div class="kpi"><dt>Margin</dt><dd>${mg(T)}</dd><small class="muted">LY ${mg(L)}</small></div>
+      <div class="kpi"><dt>Orders</dt><dd>${T.orders}</dd><small class="muted">${yoy(T.orders, L.orders)} YoY · LY ${L.orders}</small></div>
+      <div class="kpi"><dt>Avg order</dt><dd>${T.orders ? money(Math.round(T.sales / T.orders)) : "—"}</dd><small class="muted">LY ${L.orders ? money(Math.round(L.sales / L.orders)) : "—"}</small></div>
+    </dl>
+    ${T.nocost ? `<div class="panel" style="border-color:var(--amber,#d97706)"><strong>${T.nocost} unit${T.nocost === 1 ? "" : "s"} sold had no cost on file</strong><span class="muted"> — they count as $0 cost, so profit reads high. Add costs under Products &amp; prices; new orders pick them up.</span></div>` : ""}
+    <div class="panel" data-nofold><h2>Sales vs last year</h2>${chart}</div>
+    <div class="panel" data-nofold><h2>By ${scG}</h2><div class="tblwrap"><table class="tbl compact"><thead><tr><th>${scG[0].toUpperCase() + scG.slice(1)}</th><th class="num">Orders</th><th class="num">Units</th><th class="num">Sales</th><th class="num">Cost</th><th class="num">Gross profit</th><th class="num">Margin</th><th class="num">Sales LY</th><th class="num">Sales YoY</th><th class="num">GP LY</th><th class="num">GP YoY</th></tr></thead><tbody>
+      ${rows.slice().reverse().map((r) => `<tr><td><strong>${esc(lab(r.b))}</strong></td><td class="num">${r.orders}</td><td class="num">${r.units}</td><td class="num">${money(r.sales)}</td><td class="num">${money(r.cost)}</td><td class="num"><strong>${money(gp(r))}</strong></td><td class="num">${mg(r)}</td><td class="num">${money(r.ly.sales)}</td><td class="num">${yoy(r.sales, r.ly.sales)}</td><td class="num">${money(gp(r.ly))}</td><td class="num">${yoy(gp(r), gp(r.ly))}</td></tr>`).join("")}
+      <tr><td><strong>Total</strong></td><td class="num">${T.orders}</td><td class="num">${T.units}</td><td class="num">${money(T.sales)}</td><td class="num">${money(T.cost)}</td><td class="num"><strong>${money(gp(T))}</strong></td><td class="num">${mg(T)}</td><td class="num">${money(L.sales)}</td><td class="num">${yoy(T.sales, L.sales)}</td><td class="num">${money(gp(L))}</td><td class="num">${yoy(gp(T), gp(L))}</td></tr></tbody></table></div></div>
+    <div class="panel" data-nofold><h2>By product · ${esc(lab(j.from))} – ${esc(lab(j.to))}</h2>${j.products.length ? `<div class="tblwrap"><table class="tbl compact"><thead><tr><th>Product</th><th class="num">Units</th><th class="num">Sales</th><th class="num">Cost</th><th class="num">Gross profit</th><th class="num">Margin</th></tr></thead><tbody>
+      ${j.products.map((p) => `<tr><td>${esc(p.product)}${p.nocost ? ' <span class="pill st-cancelled" title="Some units had no cost on file">no cost</span>' : ""}</td><td class="num">${p.units}</td><td class="num">${money(p.sales)}</td><td class="num">${money(p.cost)}</td><td class="num"><strong>${money(gp(p))}</strong></td><td class="num">${mg(p)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">No sales in this period.</p>'}</div>`;
+  document.querySelectorAll("[data-scg]").forEach((b) => { b.onclick = () => { scG = b.dataset.scg; scN = 0; salescost(); }; });
+  document.getElementById("scN").onchange = (e) => { scN = +e.target.value; salescost(); };
+  document.getElementById("scCsv").onclick = (e) => {
+    e.preventDefault();
+    const c = (v) => `"${String(v).replace(/"/g, '""')}"`, d = (x) => (x / 100).toFixed(2);
+    const csv = [["Period", "Orders", "Units", "Sales", "Cost", "Gross profit", "Margin %", "Sales LY", "Cost LY", "GP LY"].map(c).join(",")].concat(rows.map((r) => [lab(r.b), r.orders, r.units, d(r.sales), d(r.cost), d(gp(r)), r.sales ? ((gp(r) / r.sales) * 100).toFixed(1) : "", d(r.ly.sales), d(r.ly.cost), d(gp(r.ly))].map(c).join(","))).join("\n");
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = `sales-cost-${scG}-${j.to}.csv`; a.click();
+  };
+}
 async function analytics() {
   const j = await api(`/analytics?months=${anMonths}${anRep ? `&rep=${anRep}` : ""}`);
   const ymLabel = (ym) => { const [y, m] = ym.split("-"); return new Date(+y, +m - 1, 1).toLocaleDateString("en-US", { month: "short" }) + (m === "01" ? ` ’${y.slice(2)}` : ""); };
@@ -2422,7 +2474,7 @@ if (window.AppRefresh) window.AppRefresh.init({
   if (m) { view = "orders"; orderId = m[1]; history.replaceState(null, "", location.pathname); }
   if (location.hash === "#customers") { view = "customers"; history.replaceState(null, "", location.pathname); }
   if (new URLSearchParams(location.search).get("embed") === "1") document.body.classList.add("embed");
-  if (/^#(staff|setup|apps|account|settings|commissions|reps|geo|howto)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
+  if (/^#(staff|setup|apps|account|settings|commissions|reps|geo|howto|salescost|analytics)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
   const sso = new URLSearchParams(location.search).get("sso");
   if (sso) { const name = new URLSearchParams(location.search).get("name"); history.replaceState(null, "", location.pathname); window.__ssoMsg = sso === "expired" ? "That link from the case tracker expired — go back and tap it again." : `There's no store login for ${name || "that tracker sign-in"} yet. Sign in here, or an admin can add one under Team logins (same email).`; }
   const res = await fetch("/api/admin/me");

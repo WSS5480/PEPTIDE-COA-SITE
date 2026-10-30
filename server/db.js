@@ -235,6 +235,9 @@ alter table customers add column if not exists markup numeric(6,2);
 alter table customer_sessions add column if not exists seen timestamptz not null default now();
 alter table sessions add column if not exists seen timestamptz not null default now();
 alter table orders add column if not exists price_markup numeric(6,2);
+alter table order_items add column if not exists cost_cents int;
+-- cost at the time of sale; lines from before this existed take the product's cost once
+update order_items i set cost_cents = p.cost_cents from products p where i.cost_cents is null and p.id = i.product_id and p.cost_cents is not null;
 -- visitors without a PIN can ask for one; the office turns a request into a customer + PIN
 create table if not exists pin_requests (
   id serial primary key,

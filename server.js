@@ -366,7 +366,7 @@ async function createOrder({ name, email, phone, address, items, fulfillment, pa
       [number, name, email, phone, JSON.stringify(address), shipName, shipCents, subtotal, discount, codeUsed, total, str(note, 1000), customerId, repId, rate, placedBy, fulfil, payMethod === "card" ? "card" : "request", markup, Math.max(0, Math.round(Number(settings.invoiceTermsDays ?? 30)) || 0)]); // the invoice terms in force when it was placed
     for (const { p, qty } of lines) {
       // the maker goes into the line name so orders show which one was bought
-      await client.query("insert into order_items(order_id,product_id,name,strength,unit_cents,qty) values ($1,$2,$3,$4,$5,$6)", [o.id, p.id, p.manufacturer ? `${p.name} (${p.manufacturer})` : p.name, p.strength, p.price_cents, qty]);
+      await client.query("insert into order_items(order_id,product_id,name,strength,unit_cents,qty,cost_cents) values ($1,$2,$3,$4,$5,$6,$7)", [o.id, p.id, p.manufacturer ? `${p.name} (${p.manufacturer})` : p.name, p.strength, p.price_cents, qty, p.cost_cents ?? null]);
       if (p.stock !== null) await moveStock(client, p.id, -qty, { reason: "Order", ref: number, who: placedBy === "Customer" ? name : placedBy });
     }
     await client.query("insert into order_events(order_id, who, text) values ($1, $2, $3)", [o.id, placedBy, event + (codeUsed ? `; discount code ${codeUsed} (−$${(discount / 100).toFixed(2)})` : "")]);
@@ -1112,6 +1112,29 @@ admin.get("/analytics", wrap(async (req, res) => {
   const { rows: reps } = req.user.role === "rep" ? { rows: [] } : await q("select id, name from users where role = 'rep' order by name");
   res.json({ months, rep: repId || null, reps, monthly: monthly.rows.map(num), weekly: weekly.rows.map(num), byRep: byRep.rows.map(num), repMonthly: repMonthly.rows.map(num), products: products.rows.map(num), customers: customers.rows.map(num), totals: num(totals.rows[0]) });
 }));
+/* ---------- sales & cost (admins only): day / week / month / year buckets, each with the same bucket a year earlier ---------- */
+admin.get("/sales-cost", owner, wrap(async (req, res) => {
+  const G = { day: ["day", 31, "1 day"], week: ["week", 13, "1 week"], month: ["month", 12, "1 month"], year: ["year", 5, "1 year"] };
+  const gran = G[req.query.g] ? String(req.query.g) : "month", [unit, defN, step] = G[gran];
+  const n = Math.min(gran === "day" ? 92 : gran === "week" ? 104 : gran === "month" ? 60 : 10, Math.max(1, intOrNull(req.query.n) || defN));
+  const local = "(o.created_at at time zone 'America/Chicago')";
+  const now = `date_trunc('${unit}', now() at time zone 'America/Chicago')`;
+  const from = `${now} - interval '${step}' * ${n - 1}`;
+  const line = `(select coalesce(sum(i.unit_cents * i.qty),0) s, coalesce(sum(coalesce(i.cost_cents,0) * i.qty),0) c, coalesce(sum(i.qty),0) u, coalesce(sum(case when i.cost_cents is null then i.qty end),0) nc from order_items i where i.order_id = o.id)`;
+  // product lines carry the discount in proportion, so sales here = products after discount (before shipping), the same as Analytics
+  const sel = (lo, hi) => `select to_char(date_trunc('${unit}', ${local}), 'YYYY-MM-DD') b, count(*)::int orders, sum(l.u)::int units, sum(o.subtotal_cents - o.discount_cents)::bigint sales, sum(l.c)::bigint cost, sum(l.nc)::int nocost
+      from orders o cross join lateral ${line} l where o.status <> 'cancelled' and ${local} >= ${lo} and ${local} < ${hi} group by 1`;
+  const end = `${now} + interval '${step}'`;
+  const [cur, prior, prods] = await Promise.all([
+    q(sel(from, end)), q(sel(`${from} - interval '1 year'`, `${end} - interval '1 year'`)),
+    q(`select i.name || case when i.strength <> '' then ' ' || i.strength else '' end product, sum(i.qty)::int units,
+         sum(round(i.unit_cents * i.qty * case when o.subtotal_cents > 0 then (o.subtotal_cents - o.discount_cents)::numeric / o.subtotal_cents else 1 end))::bigint sales,
+         sum(coalesce(i.cost_cents,0) * i.qty)::bigint cost, sum(case when i.cost_cents is null then i.qty else 0 end)::int nocost
+       from order_items i join orders o on o.id = i.order_id where o.status <> 'cancelled' and ${local} >= ${from} and ${local} < ${end} group by 1 order by sales desc limit 40`)]);
+  const { rows: [b] } = await q(`select to_char(${from}, 'YYYY-MM-DD') f, to_char(${now}, 'YYYY-MM-DD') t`);
+  const num = (r) => ({ b: r.b, orders: +r.orders, units: +r.units, sales: +r.sales, cost: +r.cost, nocost: +r.nocost });
+  res.json({ g: gran, n, from: b.f, to: b.t, rows: cur.rows.map(num), prior: prior.rows.map(num), products: prods.rows.map((r) => ({ product: r.product, units: +r.units, sales: +r.sales, cost: +r.cost, nocost: +r.nocost })) });
+}));
 /* ---------- promo banner (admins and managers) ---------- */
 admin.get("/banner", wrap(async (req, res) => { const s = await getSettings(); res.json({ text: s.announcement || "", on: !!s.announcementOn, scroll: s.bannerScroll !== false, tone: s.bannerTone || "navy", until: s.bannerUntil || "", link: s.bannerLink || "", speed: Math.min(90, Math.max(6, Number(s.bannerSpeed) || 30)), sticky: s.bannerSticky !== false }); }));
 admin.put("/banner", wrap(async (req, res) => {
@@ -1247,7 +1270,7 @@ admin.post("/orders/:id/edit", wrap(async (req, res) => {
           let unit = existing.unit_cents;
           if (own && l.unitCents !== undefined && l.unitCents !== null && l.unitCents !== "") { const u = Math.max(0, intOrNull(l.unitCents) ?? existing.unit_cents); if (u !== existing.unit_cents) { changes.push(`${`${existing.name} ${existing.strength}`.trim()}: price ${$(existing.unit_cents)} → ${$(u)}`); unit = u; } }
           if (qty !== existing.qty) changes.push(`${`${existing.name} ${existing.strength}`.trim()}: ${existing.qty} → ${qty}`);
-          lines.push({ item: existing, product_id: existing.product_id, name: existing.name, strength: existing.strength, unit_cents: unit, qty });
+          lines.push({ item: existing, product_id: existing.product_id, name: existing.name, strength: existing.strength, unit_cents: unit, qty, cost_cents: existing.cost_cents ?? null });
         } else {
           const { rows: [p] } = await client.query("select id, name, strength, manufacturer, price_cents, cost_cents, stock, max_per_order from products where id = $1 and active", [intOrNull(l.productId)]);
           if (!p) throw new Error("A product you added isn't available any more. Reload and try again.");
@@ -1258,7 +1281,7 @@ admin.post("/orders/:id/edit", wrap(async (req, res) => {
           if (p.max_per_order && qty > p.max_per_order) throw new Error(`${p.name} ${p.strength} is limited to ${p.max_per_order} per order.`);
           const name = p.manufacturer ? `${p.name} (${p.manufacturer})` : p.name;
           changes.push(`Added ${qty} × ${`${name} ${p.strength}`.trim()} @ ${$(unit)}`);
-          lines.push({ item: null, product_id: p.id, name, strength: p.strength, unit_cents: unit, qty });
+          lines.push({ item: null, product_id: p.id, name, strength: p.strength, unit_cents: unit, qty, cost_cents: p.cost_cents ?? null });
         }
       }
       for (const i of old) if (!lines.some((x) => x.item && x.item.id === i.id)) changes.push(`Removed ${i.qty} × ${`${i.name} ${i.strength}`.trim()}`);
@@ -1275,7 +1298,7 @@ admin.post("/orders/:id/edit", wrap(async (req, res) => {
         await moveStock(client, +pid, -delta, { reason: "Order edited", ref: o.number, who });
       }
       await client.query("delete from order_items where order_id = $1", [id]);
-      for (const l of lines) await client.query("insert into order_items(order_id, product_id, name, strength, unit_cents, qty) values ($1,$2,$3,$4,$5,$6)", [id, l.product_id, l.name, l.strength, l.unit_cents, l.qty]);
+      for (const l of lines) await client.query("insert into order_items(order_id, product_id, name, strength, unit_cents, qty, cost_cents) values ($1,$2,$3,$4,$5,$6,$7)", [id, l.product_id, l.name, l.strength, l.unit_cents, l.qty, l.cost_cents]);
     }
     // --- customer, address, note, ship/deliver ---
     const sets = {}, s = await getSettings();
