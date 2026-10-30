@@ -900,15 +900,16 @@ async function customers() {
 
 /* ---------- sales reps ---------- */
 async function reps() {
+  const PLAN_ON = isOwner() ? await api("/commissions/plan").then((j) => j.on).catch(() => false) : false;
   if (!isOwner()) return dashboard();
   const $ = (x) => document.getElementById(x);
   const { reps: list } = await api("/reps");
   pane().innerHTML = `<header><h1>Sales reps</h1><button class="btn solid" id="addRep">Add sales rep</button></header>
     <p class="muted">Reps sign in at <a href="/rep" target="_blank">/rep</a> (the rep app). They add their own customers and place orders for them; every order from one of their customers earns their commission rate, whether the rep or the customer placed it. Change the rate here; it applies to new orders.</p>
     <div id="repForm"></div>
-    <div class="tblwrap"><table class="tbl" id="rt"><tr><th>Name</th><th>Email</th><th>Phone</th><th class="num">Rate %</th><th class="num">Customers</th><th class="num">Orders</th><th class="num">Sales (all)</th><th class="num">This month</th><th class="num">Owed now</th><th class="num">Paid out</th><th>Active</th><th>New password</th><th></th></tr>
+    <div class="tblwrap"><table class="tbl" id="rt"><tr><th>Name</th><th>Email</th><th>Phone</th><th class="num">Commission</th><th class="num">Customers</th><th class="num">Orders</th><th class="num">Sales (all)</th><th class="num">This month</th><th class="num">Owed now</th><th class="num">Paid out</th><th>Active</th><th>New password</th><th></th></tr>
     ${list.map((r) => `<tr data-rid="${r.id}"><td><input data-k="name" value="${esc(r.name)}"></td><td>${esc(r.email)}</td><td><input data-k="phone" value="${esc(r.phone)}" style="min-width:7rem"></td>
-      <td class="num"><input data-k="rate" value="${r.commission_rate}" inputmode="decimal" style="width:4.5rem;text-align:right"></td>
+      <td class="num">${planPick(r, PLAN_ON)}</td>
       <td class="num">${r.customers}</td><td class="num">${r.orders}</td><td class="num">${money(r.sales_cents)}</td><td class="num">${money(r.month_cents)}</td><td class="num"><strong>${money(r.commission.earned)}</strong></td><td class="num">${money(r.commission.paid)}</td>
       <td><input type="checkbox" data-k="active"${r.active ? " checked" : ""}></td><td><input data-k="password" type="password" placeholder="Leave blank" autocomplete="new-password" style="min-width:7rem"></td>
       <td class="row2" style="flex-wrap:nowrap"><button class="btn" data-save>Save</button><button class="btn" data-comm="${r.id}">Commissions</button></td></tr>`).join("")}
@@ -924,6 +925,7 @@ async function reps() {
       toast("Rep added. Send them /rep and their temporary password."); paneDirty = false; reps();
     };
   };
+  $("rt").addEventListener("change", planToggle);
   $("rt").onclick = async (e) => {
     const c = e.target.closest("[data-comm]"); if (c) { commFilter.rep = c.dataset.comm; go("commissions"); return; }
     if (!e.target.closest("[data-save]")) return;
@@ -941,6 +943,11 @@ const commSwitch = () => HUB.linked ? `<div class="seg" style="display:inline-fl
 const wireCommSwitch = () => { document.querySelectorAll("[data-cv]").forEach((b) => { b.onclick = () => { commView = b.dataset.cv; localStorage.setItem("commView", commView); commissions(); }; }); };
 // the month the store rows use when the view is Combined / Case tracker
 const monthRange = (ym) => { const [y, m] = ym.split("-").map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate(); return { from: `${ym}-01`, to: `${ym}-${String(last).padStart(2, "0")}` }; };
+/* each rep's commission: the tiered plan (Commissions → Commission plan) or their own flat % */
+const planPick = (u, planOn, isRepRow = true) => { const tiered = u.comm_tiered !== false;
+  return `<div class="row2 planpick" style="flex-wrap:nowrap;align-items:center;gap:.3rem;justify-content:flex-end"${isRepRow ? "" : " hidden"}><select data-k="plan" title="Tiered = the Commission plan under Commissions; Flat = this rep's own percent"><option value="tiered"${tiered ? " selected" : ""}>Tiered plan${planOn ? "" : " (not on yet)"}</option><option value="flat"${tiered ? "" : " selected"}>Flat %</option></select>
+    <span data-flat${tiered ? " hidden" : ""} style="white-space:nowrap"><input data-k="rate" inputmode="decimal" value="${esc(Number(u.commission_rate ?? 0))}" placeholder="10" style="width:4rem;text-align:right">%</span></div>`; };
+const planToggle = (e) => { const s = e.target.closest('[data-k="plan"]'); if (!s) return false; const f = s.parentElement.querySelector("[data-flat]"); if (f) f.hidden = s.value !== "flat"; return true; };
 /* ---------- tiered commission plan (admins) ---------- */
 async function commPlanPanel(box, reload) {
   const P = await api("/commissions/plan");
@@ -2266,6 +2273,7 @@ function apps() {
 }
 /* ---------- staff ---------- */
 async function staff() {
+  const PLAN_ON = isOwner() ? await api("/commissions/plan").then((j) => j.on).catch(() => false) : false;
   if (!isOwner()) return dashboard();
   const { users } = await api("/users");
   const ROLE = { owner: "Admin", staff: "Manager", rep: "Sales rep" };
@@ -2276,7 +2284,7 @@ async function staff() {
     <div class="tblwrap"><table class="tbl compact" id="ut"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Phone</th><th class="num">Commission %</th><th class="num">Customers</th><th>Apps</th><th>PIN</th><th>Active</th><th>New password</th><th></th></tr></thead><tbody>
     ${users.map((u) => `<tr data-id="${u.id}" data-role="${u.role}"><td class="namecol"><input data-k="name" value="${esc(u.name)}" style="min-width:9rem">${u.id === me.id ? '<div class="muted" style="font-size:.75rem">you</div>' : u.signed_in ? '<div class="muted" style="font-size:.75rem">signed in</div>' : ""}</td><td>${esc(u.email)}</td>
       <td>${roleSel(u.role)}</td><td><input data-k="phone" value="${esc(u.phone || "")}" style="width:8rem"></td>
-      <td class="num"><input data-k="rate" inputmode="decimal" value="${u.role === "rep" ? esc(Number(u.commission_rate ?? 0)) : ""}" placeholder="${u.role === "rep" ? "10" : "—"}" style="width:4.5rem;text-align:right"${u.role === "rep" ? "" : " disabled"}></td>
+      <td class="num">${planPick(u, PLAN_ON, u.role === "rep")}${u.role === "rep" ? "" : '<span class="muted" data-noplan>—</span>'}</td>
       <td class="num">${u.role === "rep" ? u.customers : ""}</td>
       <td style="white-space:nowrap"><label class="chk" style="display:block"><input type="checkbox" data-app="store"${!u.apps || u.apps.store !== false ? " checked" : ""}> Peptide store</label><label class="chk" style="display:block"><input type="checkbox" data-app="tracker"${u.apps && u.apps.tracker !== undefined ? (u.apps.tracker ? " checked" : "") : (u.role === "owner" ? " checked" : "")}> Case tracker</label></td>
       <td><input data-k="pin" inputmode="numeric" placeholder="${u.pin_set ? "Set · type to change" : "4–10 digits"}" style="width:7rem" title="Name + PIN sign-in for both apps"></td>
@@ -2288,7 +2296,7 @@ async function staff() {
       <div class="field"><label class="eyebrow" for="nu-p">Temporary password (8+ characters)</label><input id="nu-p" type="password" autocomplete="new-password"></div>
       <div class="field"><label class="eyebrow" for="nu-r">Role</label>${roleSel("staff", "nu-r")}</div>
       <div class="field"><label class="eyebrow" for="nu-ph">Phone (optional)</label><input id="nu-ph"></div>
-      <div class="field" id="nu-rateWrap" hidden><label class="eyebrow" for="nu-rate">Commission %</label><input id="nu-rate" inputmode="decimal" placeholder="10"></div>
+      <div class="field" id="nu-rateWrap" hidden><label class="eyebrow" for="nu-plan">Commission</label><div class="row2" style="flex-wrap:nowrap;align-items:center;gap:.3rem"><select id="nu-plan"><option value="tiered">Tiered plan${PLAN_ON ? "" : " (not on yet)"}</option><option value="flat">Flat %</option></select><span id="nu-flat" hidden style="white-space:nowrap"><input id="nu-rate" inputmode="decimal" placeholder="10" style="width:4.5rem">%</span></div></div>
       <div class="field"><label class="eyebrow" for="nu-pin">PIN (optional, 4–10 digits)</label><input id="nu-pin" inputmode="numeric" placeholder="Name + PIN sign-in"></div>
       <div class="field"><span class="eyebrow">Apps</span><label class="chk"><input type="checkbox" id="nu-store" checked> Peptide store</label><label class="chk"><input type="checkbox" id="nu-tracker"> Case tracker</label></div></div>
       <div class="row2"><button class="btn solid" id="nuAdd">Add login</button><span class="muted">Send them the email and temporary password; they can change it under My account.</span></div></div>
@@ -2296,6 +2304,7 @@ async function staff() {
       <p class="muted">Quota, commission plan, pay and territory for each rep with the Case tracker ticked above. Names, PINs and on/off come from the logins table; add or remove reps up there. Team quotas are set here.</p>
       ${HOSTABLE ? `<iframe class="hubframe" title="Reps and plans" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=reps-card")}" style="width:100%;height:40rem;min-height:24rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<a class="btn solid" href="${switchHref("/admin")}"${FRAMED ? ' target="_top"' : ""}>Open reps and plans in the case tracker ↗</a><p class="muted" style="margin-top:.4rem">This browser doesn't show the tracker inside the page.</p>`}</div>` : ""}`;
   document.getElementById("nu-r").onchange = () => { document.getElementById("nu-rateWrap").hidden = document.getElementById("nu-r").value !== "rep"; };
+  document.getElementById("nu-plan").onchange = (e) => { document.getElementById("nu-flat").hidden = e.target.value !== "flat"; };
   api("/hub/tracker-reps").then((r) => {
     const box = document.getElementById("trackerImport"); if (!box) return;
     if (!r.ok) { box.innerHTML = `<p class="muted">Case tracker: ${esc(r.error)}</p>`; return; }
@@ -2318,7 +2327,7 @@ async function staff() {
       if (e.target.id === "impReps") { let n = 0; for (let i = 0; i < missing.length; i++) if (await addOne(i)) n++; toast(`Added ${n} login${n === 1 ? "" : "s"}`); staff(); }
     };
   }).catch(() => {});
-  document.getElementById("ut").onchange = (e) => { if (e.target.matches('[data-k="role"]')) { const tr = e.target.closest("tr"), rate = tr.querySelector('[data-k="rate"]'); rate.disabled = e.target.value !== "rep"; if (e.target.value === "rep" && !rate.value) rate.value = "0"; } };
+  document.getElementById("ut").onchange = (e) => { if (planToggle(e)) return; if (e.target.matches('[data-k="role"]')) { const tr = e.target.closest("tr"), pp = tr.querySelector(".planpick"), np = tr.querySelector("[data-noplan]"); pp.hidden = e.target.value !== "rep"; if (np) np.hidden = e.target.value === "rep"; } };
   document.getElementById("ut").onclick = async (e) => {
     if (e.target.closest("[data-del]")) {
       const tr = e.target.closest("tr"), nm = tr.querySelector('[data-k="name"]').value;
@@ -2334,7 +2343,7 @@ async function staff() {
   };
   document.getElementById("nuAdd").onclick = async () => {
     const g = (x) => document.getElementById(x).value;
-    const r = await api("/users", { method: "POST", body: { name: g("nu-n"), email: g("nu-e"), password: g("nu-p"), role: g("nu-r"), phone: g("nu-ph"), rate: g("nu-rate"), pin: g("nu-pin"), apps: { store: document.getElementById("nu-store").checked, tracker: document.getElementById("nu-tracker").checked } } });
+    const r = await api("/users", { method: "POST", body: { name: g("nu-n"), email: g("nu-e"), password: g("nu-p"), role: g("nu-r"), phone: g("nu-ph"), rate: g("nu-rate"), plan: g("nu-plan"), pin: g("nu-pin"), apps: { store: document.getElementById("nu-store").checked, tracker: document.getElementById("nu-tracker").checked } } });
     toast(`${ROLE[g("nu-r")]} login added`); staff();
   };
 }

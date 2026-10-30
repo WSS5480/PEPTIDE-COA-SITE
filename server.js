@@ -1812,7 +1812,7 @@ admin.post("/reports/clear", owner, wrap(async (req, res) => {
 
 /* ---------- admin: sales reps ---------- */
 admin.get("/reps", wrap(async (req, res) => {
-  const { rows } = await q(`select u.id, u.name, u.email, u.phone, u.commission_rate, u.active, u.created_at,
+  const { rows } = await q(`select u.id, u.name, u.email, u.phone, u.commission_rate, u.comm_tiered, u.active, u.created_at,
       (select count(*)::int from customers c where c.rep_id = u.id) customers,
       (select count(*)::int from orders o where o.rep_id = u.id and o.status <> 'cancelled') orders,
       coalesce((select sum(o.subtotal_cents - o.discount_cents) from orders o where o.rep_id = u.id and o.status <> 'cancelled'), 0)::int sales_cents,
@@ -1836,6 +1836,7 @@ admin.patch("/reps/:id", owner, wrap(async (req, res) => {
   const id = intOrNull(req.params.id), b = req.body || {};
   const { rows: [u] } = await q("select id from users where id = $1 and role = 'rep'", [id]);
   if (!u) return bad(res, "Rep not found", 404);
+  if (b.plan === "tiered" || b.plan === "flat") await q("update users set comm_tiered = $1 where id = $2", [b.plan === "tiered", id]);
   if (b.name !== undefined) await q("update users set name = $1 where id = $2", [str(b.name, 80), id]);
   if (b.phone !== undefined) await q("update users set phone = $1 where id = $2", [str(b.phone, 40), id]);
   if (b.rate !== undefined) { const r = rateOf(b.rate); if (r === null) return bad(res, "Enter the commission as a percent."); await q("update users set commission_rate = $1 where id = $2", [r, id]); }
@@ -2249,7 +2250,7 @@ admin.put("/pin", owner, wrap(async (req, res) => {
 /* ---------- admin: users (owner only) ---------- */
 const ROLES = ["owner", "staff", "rep"]; // shown as Admin · Manager · Sales rep
 admin.get("/users", owner, wrap(async (req, res) => {
-  const { rows } = await q(`select u.id, u.email, u.name, u.role, u.phone, u.commission_rate, u.active, u.created_at, u.apps, (u.pin_hash is not null) pin_set,
+  const { rows } = await q(`select u.id, u.email, u.name, u.role, u.phone, u.commission_rate, u.comm_tiered, u.active, u.created_at, u.apps, (u.pin_hash is not null) pin_set,
       (select count(*)::int from customers c where c.rep_id = u.id) customers,
       exists(select 1 from sessions se where se.user_id = u.id and se.expires > now()) signed_in
     from users u order by case u.role when 'owner' then 0 when 'staff' then 1 else 2 end, u.active desc, u.name, u.email`);
@@ -2260,13 +2261,13 @@ admin.post("/users", owner, wrap(async (req, res) => {
   if (!str(b.name, 80)) return bad(res, "Enter their name.");
   if (!isEmail(email)) return bad(res, "Enter a valid email");
   if (pass.length < 8) return bad(res, "Password needs at least 8 characters");
-  const rate = role === "rep" ? rateOf(b.rate === undefined || b.rate === "" ? "0" : b.rate) : 0;
+  const rate = role === "rep" ? rateOf(b.rate === undefined || b.rate === "" ? "0" : b.rate) : 0, tiered = b.plan !== "flat";
   if (role === "rep" && rate === null) return bad(res, "Enter the rep's commission as a percent, e.g. 10.");
   try {
     const apps = JSON.stringify({ store: !(b.apps && b.apps.store === false), tracker: !!(b.apps && b.apps.tracker) });
     const pin = String(b.pin || "").replace(/\D/g, "");
     if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits.");
-    const { rows: [u] } = await q("insert into users(email,name,role,pass_hash,phone,commission_rate,apps,pin_hash) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id", [email, str(b.name, 80), role, await bcrypt.hash(pass, 11), str(b.phone, 40), rate, apps, pin ? await bcrypt.hash(pin, 11) : null]);
+    const { rows: [u] } = await q("insert into users(email,name,role,pass_hash,phone,commission_rate,apps,pin_hash,comm_tiered) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id", [email, str(b.name, 80), role, await bcrypt.hash(pass, 11), str(b.phone, 40), rate, apps, pin ? await bcrypt.hash(pin, 11) : null, tiered]);
     pokeTracker(); res.json({ ok: true, id: u.id });
   } catch (e) { return bad(res, "That email already has a login"); }
 }));
@@ -2296,6 +2297,7 @@ admin.patch("/users/:id", owner, wrap(async (req, res) => {
   if (b.phone !== undefined) await q("update users set phone = $1 where id = $2", [str(b.phone, 40), id]);
   if (b.apps && typeof b.apps === "object") await q("update users set apps = $1 where id = $2", [JSON.stringify({ store: b.apps.store !== false, tracker: !!b.apps.tracker }), id]);
   if (b.pin !== undefined) { const pin = String(b.pin || "").replace(/\D/g, ""); if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits."); if (pin || b.pin === "") await q("update users set pin_hash = $1, pin_version = pin_version + 1 where id = $2", [pin ? await bcrypt.hash(pin, 11) : null, id]); }
+  if (b.plan === "tiered" || b.plan === "flat") await q("update users set comm_tiered = $1 where id = $2", [b.plan === "tiered", id]);
   if (b.rate !== undefined && b.rate !== "" && (b.role === "rep" || u.role === "rep")) { const r = rateOf(b.rate); if (r === null) return bad(res, "Enter the commission as a percent."); await q("update users set commission_rate = $1 where id = $2", [r, id]); }
   if (b.password) {
     if (String(b.password).length < 8) return bad(res, "Password needs at least 8 characters");
