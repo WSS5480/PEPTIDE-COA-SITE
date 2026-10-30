@@ -46,7 +46,7 @@ const SID_ATTRS = () => (process.env.HUB_SECRET && process.env.TRACKER_URL) ? "S
 
 function publicSettings(s) {
   const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy",
-    "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote", "pricesRequireLogin", "showSoldOut"];
+    "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote", "pricesRequireLogin", "showSoldOut", "stockDisplay", "stockLowAt"];
   // card payments only work once the Stripe key is on the host, so the store is told the effective state
   const out = { ...Object.fromEntries(keys.map((k) => [k, s[k]])), cardPayments: !!(s.cardPayments && stripe), bannerTone: s.bannerTone || "navy", bannerLink: s.bannerLink || "", bannerSpeed: Math.min(90, Math.max(6, Number(s.bannerSpeed) || 30)), bannerSticky: s.bannerSticky !== false };
   // the promo banner stops on its own after its end date (Central time)
@@ -241,7 +241,7 @@ app.get("/api/store", wrap(async (req, res) => {
   const markup = cust && cust.markup !== null ? Number(cust.markup) : null;
   const guest = !cust && !house, guestUp = guest && s.guestPricesOn ? Math.max(0, Number(s.guestMarkup) || 0) : 0;
   const hide = !!s.pricesRequireLogin && guest && !s.guestPricesOn;
-  const out = products.map(({ cost_cents, ...p }) => ({ ...p, stock: s.showSoldOut ? p.stock : null, price_cents: hide ? null : guestPrice(priceFor({ ...p, cost_cents }, markup), guestUp) })); // stock counts stay private unless sold-out messages are on
+  const out = products.map(({ cost_cents, ...p }) => ({ ...p, stock: s.showSoldOut || (s.stockDisplay && s.stockDisplay !== "none") ? p.stock : null, price_cents: hide ? null : guestPrice(priceFor({ ...p, cost_cents }, markup), guestUp) })); // stock counts stay private unless sold-out messages are on
   res.set("Cache-Control", "no-store");
   res.json({ settings: publicSettings(s), products: out, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents, pricing: markup !== null ? { markup } : null, pricesHidden: hide, signedIn: !!cust || !!(house && !cust), house: !!(house && !cust) });
 }));
@@ -2294,6 +2294,8 @@ admin.put("/settings", owner, wrap(async (req, res) => {
     if (k === "custIdleMin" || k === "staffIdleMin") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 43200) return bad(res, "Idle sign-out: enter minutes (0 = never, up to 43200)."); }
     if (k === "custCloseOut" || k === "showSoldOut" || k === "lowStockEmailOn") v = !!v;
     if (k === "invoiceTermsDays") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 365) return bad(res, "Invoice terms: days from 0 to 365."); }
+    if (k === "stockDisplay") v = ["none", "low", "words", "count"].includes(v) ? v : "none";
+    if (k === "stockLowAt") { v = Math.round(Number(v)); if (!isFinite(v) || v < 1 || v > 1000) return bad(res, "Low stock: enter a whole number from 1."); }
     if (k === "guestMarkup") { v = Number(String(v).replace(/[%\s]/g, "")); if (!isFinite(v) || v < 0 || v > 500) return bad(res, "Visitor markup: enter a percent between 0 and 500."); v = Math.round(v * 100) / 100; }
     if (k === "lowStockAt") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 100000) return bad(res, "Low-stock alert: enter a whole number."); }
     if (k === "mailFrom" && v && !/^[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+$/.test(String(v).trim()) && !/^[^<>]+<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>$/.test(String(v).trim())) return bad(res, 'The From address should look like "Name <you@domain.com>" or just the address.');

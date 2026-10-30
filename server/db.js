@@ -326,6 +326,8 @@ const DEFAULT_SETTINGS = {
   guestPricesOn: false,      // …unless this is on: visitors who aren't signed in see prices (and can order) at the store price plus guestMarkup %
   guestMarkup: 0,
   minAge: 21,
+  stockDisplay: "none", // what shoppers see about stock: none · low ("Only 3 left") · words ("In stock" / "Low stock") · count ("12 in stock")
+  stockLowAt: 5,
   showSoldOut: false,   // the store never says "sold out" unless this is on; orders are taken and stock can go negative (backordered)
   lowStockEmailOn: true, lowStockAt: 5, // email the admins as soon as a product drops below this many
   custIdleMin: 30,      // customers are signed out after this many minutes without using the store (0 = never)

@@ -19,6 +19,14 @@ function toast(msg) { const t = document.createElement("div"); t.className = "to
 
 let cat = "";
 let coaOnly = !!store.get("coaOnly");
+// what shoppers see about stock (Site settings): nothing, "Only 3 left", "In stock" / "Low stock", or the count
+function stockText(p) {
+  const mode = S.stockDisplay || "none", low = Number(S.stockLowAt) || 5;
+  if (mode === "none" || p.stock === null || p.stock === undefined || p.stock <= 0) return "";
+  if (mode === "low") return p.stock <= low ? `<span class="stockline low">Only ${p.stock} left</span>` : "";
+  if (mode === "words") return p.stock <= low ? `<span class="stockline low">Low stock</span>` : `<span class="stockline">In stock</span>`;
+  return `<span class="stockline${p.stock <= low ? " low" : ""}">${p.stock} in stock</span>`;
+}
 /* top banner: plain, or scrolling right to left when bannerScroll is on */
 // locked banner: it pins to the top and the (already pinned) header sits right under it
 function pinBanner(el, on) {
@@ -112,7 +120,7 @@ function drawProducts() {
     const purity = r ? ((r.results || []).find(([n]) => isPurity(n)) || [])[1] : "";
     const sold = !!S.showSoldOut && p.stock !== null && p.stock <= 0; // "sold out" only when the office turns it on; otherwise it's a backorder
     const price = HIDDEN ? `<p class="p-price ask">Sign in for pricing</p>` : p.price_cents !== null ? `<p class="p-price">${money(p.price_cents)}</p>` : `<p class="p-price ask">Ask for price</p>`;
-    const stock = (p.store_note ? `<span class="stockline note">${esc(p.store_note)}</span>` : "") + (sold ? `<span class="soldout">Sold out</span>` : S.showSoldOut && p.stock !== null && p.stock > 0 && p.stock <= 5 ? `<span class="stockline low">Only ${p.stock} left</span>` : ""); // stock counts show only when the office turns sold-out messages on
+    const stock = (p.store_note ? `<span class="stockline note">${esc(p.store_note)}</span>` : "") + (sold ? `<span class="soldout">Sold out</span>` : stockText(p)); // Site settings → what shoppers see about stock
     const buy = HIDDEN ? `<button class="btn solid" type="button" data-signin>Sign in to order</button>`
       : p.price_cents === null ? (S.contact ? `<span class="stockline">Contact us: ${esc(S.contact)}</span>` : "")
       : sold ? "" : `<button class="btn solid" type="button" data-add="${p.id}">Add to cart${inCart(p.id) ? ` (${inCart(p.id)})` : ""}</button>`;

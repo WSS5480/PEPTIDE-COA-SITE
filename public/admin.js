@@ -2227,6 +2227,9 @@ async function settings(part = "site") {
     <div class="panel"><h2>Store</h2>
       <label class="chk"><input type="checkbox" id="s-storeOpen"${s.storeOpen ? " checked" : ""}${ro()}> Taking orders (untick to pause checkout)</label>
       <label class="chk"><input type="checkbox" id="s-showSoldOut"${s.showSoldOut ? " checked" : ""}${ro()}> Show "Sold out" and block orders when stock is 0</label>
+      <div class="row2" style="flex-wrap:wrap;gap:.4rem .8rem;align-items:center;margin:.2rem 0 .4rem"><label class="eyebrow" for="s-stockDisplay" style="margin:0">What shoppers see about stock</label>
+        <select id="s-stockDisplay"${ro()}>${[["none", "Nothing (default)"], ["low", "\"Only 3 left\" when low"], ["words", "\"In stock\" / \"Low stock\""], ["count", "The count (\"12 in stock\")"]].map(([k, l]) => `<option value="${k}"${(s.stockDisplay || "none") === k ? " selected" : ""}>${l}</option>`).join("")}</select>
+        <span style="white-space:nowrap">Low = <input id="s-stockLowAt" value="${esc(s.stockLowAt ?? 5)}" inputmode="numeric" style="width:4rem;display:inline-block"${ro()}> or fewer</span></div>
       <p class="muted">Off (the default): the store never says sold out — orders still go through and the product's Available count goes negative (backordered) so you know what to ship later. Use the <strong>Store note</strong> column under Products to say something like "Sold out — ships in 2 weeks" on a product when you choose to.</p>
       <label class="chk"><input type="checkbox" id="s-pricesRequireLogin"${s.pricesRequireLogin ? " checked" : ""}${ro()}> Show prices and the cart only after a customer signs in with their PIN (each customer sees their own pricing)</label>
       <div style="margin:-.2rem 0 .4rem 1.6rem;display:flex;flex-wrap:wrap;gap:.4rem .8rem;align-items:center"><label class="chk" style="margin:0"><input type="checkbox" id="s-guestPricesOn"${s.guestPricesOn ? " checked" : ""}${ro()}> Visitors who aren't signed in still see prices and can order, at</label>
@@ -2307,7 +2310,7 @@ async function settings(part = "site") {
     const body = {};
     ["brand", "tagline", "contact", "distributorOf", "brandUrl", "paymentInstructions", "priceNote", "shippingLabel", "shippingNote", "fedexAccount", "deliveryLabel", "deliveryNote", "orderEmail", "cooEmail"].forEach((k) => { body[k] = v(k).value; });
     ["storeOpen", "pricesRequireLogin", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn", "repEmailOn", "lowStockEmailOn", "showSoldOut", "guestPricesOn"].forEach((k) => { body[k] = v(k).checked; });
-    body.guestMarkup = v("guestMarkup").value;
+    body.guestMarkup = v("guestMarkup").value; body.stockDisplay = v("stockDisplay").value; body.stockLowAt = v("stockLowAt").value;
     body.lowStockAt = v("lowStockAt").value;
     body.minAge = v("minAge").value; body.custIdleMin = v("custIdleMin").value; body.staffIdleMin = v("staffIdleMin").value; body.custCloseOut = v("custCloseOut").checked;
     const cents = (id) => Math.max(0, Math.round(parseFloat(String(v(id).value).replace(/[$,]/g, "") || 0) * 100));
