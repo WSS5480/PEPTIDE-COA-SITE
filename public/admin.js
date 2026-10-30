@@ -765,7 +765,7 @@ async function commissionsHub() {
 async function products() {
   const [{ products: list }, { reports: reps }] = await Promise.all([api("/products"), api("/reports")]);
   const repFor = (p) => reps.filter((r) => r.active && reportMatches(p, r));
-  const COLS = [["name", "Name"], ["strength", "Size"], ["description", "Description (line 1: peptides + mg · then - benefits)"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["cost", "Cost $"], ["price", "Price $"], ["stock", "Stock"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["report", "Lab report"], ["docs", "Docs"]];
+  const COLS = [["name", "Name"], ["strength", "Size"], ["description", "Description (line 1: peptides + mg · then - benefits)"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["cost", "Cost $"], ["price", "Price $"], ["stock", "Stock"], ["storeNote", "Store note"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["report", "Lab report"], ["docs", "Docs"]];
   const NUM = new Set(["cost", "price", "stock", "maxPerOrder", "sort"]);
   const inp = (k, v, ph = "", extra = "") => `<input data-k="${k}" value="${esc(v)}" placeholder="${ph}"${extra}${ro()}>`;
   const row = (p) => `<tr data-id="${p ? p.id : ""}"${p ? "" : ' class="dirty"'}>
@@ -777,6 +777,7 @@ async function products() {
     <td>${inp("cost", usd(p?.cost_cents), "—", ' inputmode="decimal" style="min-width:4.5rem" title="Our cost per vial (staff never see it on the store)"')}</td>
     <td>${inp("price", usd(p?.price_cents), "Ask", ' inputmode="decimal" style="min-width:5rem"')}</td>
     <td>${inp("stock", p?.stock ?? "", "∞", ' inputmode="numeric" style="min-width:4rem"')}</td>
+    <td>${inp("storeNote", p?.store_note ?? "", "e.g. Sold out — 2 weeks", ' maxlength="80" style="min-width:11rem" title="Shown on the store under the product (optional)"')}</td>
     <td>${inp("maxPerOrder", p?.max_per_order ?? "", "—", ' inputmode="numeric" style="min-width:4rem"')}</td>
     <td>${inp("sort", p?.sort ?? 0, "", ' inputmode="numeric" style="min-width:3.5rem"')}</td>
     <td><input type="checkbox" data-k="active"${!p || p.active ? " checked" : ""}${ro()}></td>
@@ -990,6 +991,11 @@ async function inventory() {
       <div class="kpi" data-invf="out"><dt>Out of stock</dt><dd>${counts.out}</dd></div>
       <div class="kpi" data-invf="expiring"><dt>Lots expiring ≤ 60 days</dt><dd>${counts.expiring}</dd></div>
     </dl>
+    ${(() => { const need = items.filter((p) => status(p) === "low" || status(p) === "out").sort((a, b) => a.stock - b.stock); const sug = (p) => Math.max(0, Math.max((p.reorder_point ?? 5) * 2, p.sold_30d || 0) - p.stock);
+      return `<div class="panel" id="needPanel"><div class="row2" style="justify-content:space-between;align-items:center"><h2 style="margin:0">Need to order${need.length ? ` · ${need.length}` : ""}</h2><a class="btn" href="/api/admin/inventory/reorder.csv" download>Download list (CSV)</a></div>
+      ${need.length ? `<p class="muted">Products at or under their reorder point. Suggested order brings each back to twice its reorder point, or last month's sales if higher. Negative Available = backordered (sold but not on the shelf).</p>
+      <div class="tblwrap"><table class="tbl compact"><thead><tr><th>Product</th><th class="num">Available</th><th class="num">Reorder at</th><th class="num">Sold 30 d</th><th class="num">Suggested order</th>${own ? '<th class="num">Est. cost</th>' : ""}</tr></thead><tbody>
+      ${need.map((p) => `<tr><td>${esc(label(p))}<div class="muted" style="font-size:.75rem">${esc(sub(p))}</div></td><td class="num">${p.stock <= 0 ? `<span class="pill st-cancelled">${p.stock}</span>` : p.stock}</td><td class="num">${p.reorder_point ?? 5}</td><td class="num">${p.sold_30d || 0}</td><td class="num"><strong>${sug(p)}</strong></td>${own ? `<td class="num">${p.cost_cents ? money(p.cost_cents * sug(p)) : "—"}</td>` : ""}</tr>`).join("")}</tbody></table></div>` : `<p class="muted">Nothing to order — every tracked product is above its reorder point.</p>`}</div>`; })()}
     <div id="invPanel"></div>
     <div class="filters"><input id="invQ" type="search" placeholder="Search name, maker or code">
       ${[["all", "All"], ["low", "Low"], ["out", "Out"], ["expiring", "Expiring"], ["untracked", "Not tracked"]].map(([k, l]) => `<button class="chip${invFilter === k ? " on" : ""}" type="button" data-invf="${k}">${l}${counts[k] ? ` (${counts[k]})` : ""}</button>`).join("")}</div>
@@ -1633,6 +1639,7 @@ async function settings(part = "site") {
       <label class="chk"><input type="checkbox" id="s-orderEmailOn"${s.orderEmailOn ? " checked" : ""}${ro()}> Email me every order</label>
       <label class="chk"><input type="checkbox" id="s-customerEmailOn"${s.customerEmailOn ? " checked" : ""}${ro()}> Email the customer a confirmation (and a receipt when they pay by card)</label>
       <label class="chk"><input type="checkbox" id="s-repEmailOn"${s.repEmailOn !== false ? " checked" : ""}${ro()}> Email the customer's sales rep every order and update (with their commission on it)</label>
+      <div class="row2" style="align-items:center"><label class="chk"><input type="checkbox" id="s-lowStockEmailOn"${s.lowStockEmailOn !== false ? " checked" : ""}${ro()}> Email every admin as soon as a product drops below</label><input id="s-lowStockAt" value="${esc(s.lowStockAt ?? 5)}" inputmode="numeric" style="width:4.5rem"${ro()}><span class="muted">units (once per product, again after it's restocked)</span></div>
       <h2 style="font-size:1.05rem;margin-top:.4rem">Sending account</h2>
       <p class="muted">How the store sends. <strong>Microsoft 365 app</strong> is the one to use here: no mailbox password, unaffected by MFA, and it can send straight from the shared noreply@ address. (The store's host blocks plain mail-server connections on its free plan, so the "mailbox login" option only works on a paid host plan and without MFA.)</p>
       <div class="grid2">
@@ -1674,6 +1681,8 @@ async function settings(part = "site") {
   pane().innerHTML = `<header><h1>Site settings</h1></header>
     <div class="panel"><h2>Store</h2>
       <label class="chk"><input type="checkbox" id="s-storeOpen"${s.storeOpen ? " checked" : ""}${ro()}> Taking orders (untick to pause checkout)</label>
+      <label class="chk"><input type="checkbox" id="s-showSoldOut"${s.showSoldOut ? " checked" : ""}${ro()}> Show "Sold out" and block orders when stock is 0</label>
+      <p class="muted">Off (the default): the store never says sold out — orders still go through and the product's Available count goes negative (backordered) so you know what to ship later. Use the <strong>Store note</strong> column under Products to say something like "Sold out — ships in 2 weeks" on a product when you choose to.</p>
       <label class="chk"><input type="checkbox" id="s-pricesRequireLogin"${s.pricesRequireLogin ? " checked" : ""}${ro()}> Show prices and the cart only after a customer signs in with their PIN (each customer sees their own pricing)</label>
       <div class="grid2">${t("brand", "Store name", "Shown top left and in the footer")}${t("tagline", "Tagline (optional)")}${t("contact", "Contact for customers", "Phone, text or email")}
       ${t("distributorOf", "Brand you distribute", 'Shows "Authorized ___ distributor"')}${t("brandUrl", "Brand's website (https)")}</div>
@@ -1749,7 +1758,8 @@ async function settings(part = "site") {
     const v = (k) => document.getElementById("s-" + k) || { value: Array.isArray(s[k]) ? s[k].join("\n") : (s[k] ?? ""), checked: !!s[k] }; // email fields live on the Email & approvals page: keep what's saved
     const body = {};
     ["brand", "tagline", "contact", "distributorOf", "brandUrl", "paymentInstructions", "priceNote", "shippingLabel", "shippingNote", "fedexAccount", "deliveryLabel", "deliveryNote", "orderEmail", "cooEmail"].forEach((k) => { body[k] = v(k).value; });
-    ["storeOpen", "pricesRequireLogin", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn", "repEmailOn"].forEach((k) => { body[k] = v(k).checked; });
+    ["storeOpen", "pricesRequireLogin", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn", "repEmailOn", "lowStockEmailOn", "showSoldOut"].forEach((k) => { body[k] = v(k).checked; });
+    body.lowStockAt = v("lowStockAt").value;
     body.minAge = v("minAge").value; body.custIdleMin = v("custIdleMin").value; body.staffIdleMin = v("staffIdleMin").value; body.custCloseOut = v("custCloseOut").checked;
     const cents = (id) => Math.max(0, Math.round(parseFloat(String(v(id).value).replace(/[$,]/g, "") || 0) * 100));
     body.minOrderCents = cents("minOrder"); body.shippingCents = cents("shippingAmt"); body.shippingFreeOverCents = cents("shippingFree");
@@ -1775,7 +1785,7 @@ async function settings(part = "site") {
     const p = prov.value;
     return { mailMode: p === "resend" ? "resend" : p === "graph" ? "graph" : p ? "smtp" : "", mailHost: v("mailHost").value, mailPort: v("mailPort").value, mailUser: v("mailUser").value, mailPass: v("mailPass").value, mailFrom: v("mailFrom").value, resendKey: v("resendKey").value,
       graphTenant: v("graphTenant").value, graphClient: v("graphClient").value, graphSecret: v("graphSecret").value,
-      orderEmail: v("orderEmail").value, cooEmail: v("cooEmail").value, orderEmailOn: v("orderEmailOn").checked, customerEmailOn: v("customerEmailOn").checked, repEmailOn: v("repEmailOn").checked };
+      orderEmail: v("orderEmail").value, cooEmail: v("cooEmail").value, orderEmailOn: v("orderEmailOn").checked, customerEmailOn: v("customerEmailOn").checked, repEmailOn: v("repEmailOn").checked, lowStockEmailOn: v("lowStockEmailOn").checked, lowStockAt: v("lowStockAt").value };
   };
   if (document.getElementById("mailSave")) document.getElementById("mailSave").onclick = async () => {
     const b = mailBody();

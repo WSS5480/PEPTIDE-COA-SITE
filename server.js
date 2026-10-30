@@ -46,7 +46,7 @@ const SID_ATTRS = () => (process.env.HUB_SECRET && process.env.TRACKER_URL) ? "S
 
 function publicSettings(s) {
   const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy",
-    "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote", "pricesRequireLogin"];
+    "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote", "pricesRequireLogin", "showSoldOut"];
   // card payments only work once the Stripe key is on the host, so the store is told the effective state
   return { ...Object.fromEntries(keys.map((k) => [k, s[k]])), cardPayments: !!(s.cardPayments && stripe) };
 }
@@ -180,8 +180,31 @@ async function moveStock(db, productId, change, info = {}) {
   await db.query(`insert into stock_moves(product_id, change, balance, reason, ref, lot, expires, cost_cents, supplier, note, who, count_id)
     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     [productId, delta, r.stock, info.reason || "Adjustment", info.ref || "", info.lot || "", info.expires || null, info.costCents ?? null, info.supplier || "", info.note || "", info.who || "", info.countId || null]);
+  if (delta < 0) setImmediate(() => lowStockAlert(productId, r.stock, info).catch((e) => console.error("Low-stock email failed:", e.message)));
   return r.stock;
 }
+// as soon as a product drops below the alert level, every admin gets one email (another only after it has been restocked above the level)
+async function lowStockAlert(productId, stock, info) {
+  const s = await getSettings(); if (s.lowStockEmailOn === false) return;
+  const at = Number(s.lowStockAt); const level = isFinite(at) ? at : 5;
+  if (stock >= level) { await q("update products set low_alerted_at = null where id = $1 and low_alerted_at is not null", [productId]); return; }
+  const { rows: [p] } = await q("select id, name, strength, manufacturer, stock, reorder_point, low_alerted_at from products where id = $1 and active", [productId]);
+  if (!p || p.low_alerted_at) return;
+  const { rows: admins } = await q("select email, name from users where role = 'owner' and active and email is not null");
+  const to = admins.map((a) => a.email).filter(isEmail); if (!to.length) return;
+  await q("update products set low_alerted_at = now() where id = $1", [productId]);
+  const label = `${p.name} ${p.strength}`.trim(), left = stock < 0 ? `${-stock} backordered` : `${stock} left`;
+  const { rows: others } = await q("select name, strength, stock from products where active and stock is not null and stock < $1 and id <> $2 order by stock, name", [level, productId]);
+  const link = BASE_URL ? `${BASE_URL}/admin#inventory` : "";
+  const subject = `Low stock: ${label} · ${left}`;
+  const text = [`${label}${p.manufacturer ? ` (${p.manufacturer})` : ""} is down to ${left}${info && info.ref ? ` after ${info.reason || "order"} ${info.ref}` : ""}.`, "", others.length ? "Also below the line: " + others.map((o) => `${o.name} ${o.strength} (${o.stock})`).join(", ") + "." : "", link ? `Need-to-order list: ${link}` : "", "", `— ${s.brand}`].filter((x) => x !== "").join("\n");
+  const html = emailHtml(s, { eyebrow: "Inventory", kicker: "Low stock", title: label, preheader: left, badge: { text: stock < 0 ? "Backordered" : "Low", tone: stock <= 0 ? "bad" : "warn" },
+    intro: `${escHtml(label)} is down to <strong>${escHtml(left)}</strong>${info && info.ref ? ` after ${escHtml(info.reason || "order")} ${escHtml(info.ref)}` : ""}. The alert level is ${level}.`,
+    facts: [["Available", String(stock)], ["Reorder at", String(p.reorder_point ?? level)], ...(others.length ? [["Also low", escHtml(others.map((o) => `${o.name} ${o.strength} (${o.stock})`).join(", "))]] : [])],
+    button: link ? { text: "Open the need-to-order list", url: link } : null, footer: `Sent to the store's admins. Turn this off or change the level under Email & approvals.` });
+  await mail.send({ to: to.join(", "), subject, text, html }, s);
+}
+
 
 /* ---------- build info: version from package.json, "last updated" = when these files were deployed ---------- */
 const BUILD = (() => {
@@ -203,7 +226,7 @@ app.get("/api/version", wrap(async (req, res) => {
 app.get("/api/store", wrap(async (req, res) => {
   const s = await getSettings();
   const [{ rows: products }, { rows: reports }, cust, house] = await Promise.all([
-    q("select id,name,strength,manufacturer,category,description,price_cents,cost_cents,stock,max_per_order,vial_label,media_v,(image is not null) has_image,(logo is not null) has_logo from products where active order by sort, name, strength, manufacturer, id"),
+    q("select id,name,strength,manufacturer,category,description,price_cents,cost_cents,stock,max_per_order,store_note,vial_label,media_v,(image is not null) has_image,(logo is not null) has_logo from products where active order by sort, name, strength, manufacturer, id"),
     q(`select ${REPORT_COLS} from reports where active order by product, tested desc nulls last`),
     customerFrom(req), houseFrom(req)
   ]);
@@ -310,7 +333,7 @@ async function createOrder({ name, email, phone, address, items, fulfillment, pa
       p.price_cents = priceFor(p, markup); // the customer's own price when they have a markup
       if (p.price_cents === null) throw new Error(`${p.name} ${p.strength} has no price yet. Remove it or set a price first.`);
       if (p.max_per_order && qty > p.max_per_order) throw new Error(`${p.name} ${p.strength} is limited to ${p.max_per_order} per order.`);
-      if (p.stock !== null && qty > p.stock) throw new Error(p.stock > 0 ? `Only ${p.stock} of ${p.name} ${p.strength} left.` : `${p.name} ${p.strength} is sold out.`);
+      if (p.stock !== null && qty > p.stock && (await getSettings()).showSoldOut) throw new Error(p.stock > 0 ? `Only ${p.stock} of ${p.name} ${p.strength} left.` : `${p.name} ${p.strength} is sold out.`); // otherwise it's a backorder: stock goes negative and the admins hear about it
       subtotal += p.price_cents * qty;
       lines.push({ p, qty });
     }
@@ -1069,7 +1092,7 @@ admin.post("/orders/:id/edit", wrap(async (req, res) => {
         const delta = (now[pid] || 0) - (was[pid] || 0); if (!delta) continue;
         const { rows: [p] } = await client.query("select name, strength, stock from products where id = $1 for update", [+pid]);
         if (!p || p.stock === null) continue;
-        if (delta > 0 && delta > p.stock) throw new Error(p.stock > 0 ? `Only ${p.stock} more of ${p.name} ${p.strength} available.` : `${p.name} ${p.strength} is sold out.`);
+        if (delta > 0 && delta > p.stock && (await getSettings()).showSoldOut) throw new Error(p.stock > 0 ? `Only ${p.stock} more of ${p.name} ${p.strength} available.` : `${p.name} ${p.strength} is sold out.`);
         await moveStock(client, +pid, -delta, { reason: "Order edited", ref: o.number, who });
       }
       await client.query("delete from order_items where order_id = $1", [id]);
@@ -1318,7 +1341,7 @@ admin.patch("/customers/:id", (req, res, next) => (isRep(req) ? next() : owner(r
 /* ---------- admin: products ---------- */
 admin.get("/products", wrap(async (req, res) => {
   const { rows } = await q(`select p.id, p.name, p.strength, p.manufacturer, p.category, p.description, p.price_cents, p.stock, p.max_per_order,
-      p.active, p.sort, p.created_at, p.reorder_point, p.cost_cents, p.vial_label, p.media_v, (p.image is not null) has_image, (p.logo is not null) has_logo,
+      p.active, p.sort, p.created_at, p.reorder_point, p.store_note, p.cost_cents, p.vial_label, p.media_v, (p.image is not null) has_image, (p.logo is not null) has_logo,
       (select count(*)::int from documents d where d.product_id = p.id) doc_count from products p order by sort, name, strength, manufacturer, id`);
   res.json({ products: rows });
 }));
@@ -1326,7 +1349,7 @@ function productFields(b) {
   return {
     name: str(b.name, 120), strength: str(b.strength, 40), manufacturer: str(b.manufacturer, 80), category: str(b.category, 60) || "Research peptide",
     description: str(b.description, 2000), price_cents: centsOrNull(b.price), stock: intOrNull(b.stock), max_per_order: intOrNull(b.maxPerOrder),
-    active: b.active !== false, sort: intOrNull(b.sort) ?? 0,
+    active: b.active !== false, sort: intOrNull(b.sort) ?? 0, ...(b.storeNote !== undefined ? { store_note: str(b.storeNote, 80) } : {}),
     ...(b.cost !== undefined ? { cost_cents: centsOrNull(String(b.cost).replace(/[$,\s]/g, "")) } : {}) // our cost per vial, for markups
   };
 }
@@ -1980,7 +2003,8 @@ admin.put("/settings", owner, wrap(async (req, res) => {
     if (k === "mailPass" || k === "resendKey" || k === "graphSecret") { v = String(v || ""); if (!v.trim()) continue; v = v.trim().slice(0, 300); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; } // blank = keep the saved one
     if (k === "mailMode") v = ["smtp", "resend", "graph"].includes(v) ? v : "";
     if (k === "custIdleMin" || k === "staffIdleMin") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 43200) return bad(res, "Idle sign-out: enter minutes (0 = never, up to 43200)."); }
-    if (k === "custCloseOut") v = !!v;
+    if (k === "custCloseOut" || k === "showSoldOut" || k === "lowStockEmailOn") v = !!v;
+    if (k === "lowStockAt") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 100000) return bad(res, "Low-stock alert: enter a whole number."); }
     if (k === "mailFrom" && v && !/^[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+$/.test(String(v).trim()) && !/^[^<>]+<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>$/.test(String(v).trim())) return bad(res, 'The From address should look like "Name <you@domain.com>" or just the address.');
     if (k === "perks") {
       const ICONS = ["flask", "doc", "key", "shield", "truck", "star", "lock", "chat", "box", "check"];
@@ -2213,6 +2237,18 @@ admin.delete("/hub/tracker-reps/:rep", owner, wrap(async (req, res) => {
     const r = await fetch(`${TRACKER_URL}/api/hub/rep-remove`, { method: "POST", headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify({ rep: String(req.params.rep || "") }), signal: AbortSignal.timeout(12000) });
     const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `The case tracker answered ${r.status}`); res.json({ ok: true });
   } catch (e) { bad(res, e.message); }
+}));
+// Need-to-order list as a file
+admin.get("/inventory/reorder.csv", wrap(async (req, res) => {
+  const s = await getSettings(), level = Number(s.lowStockAt) || 5;
+  const { rows } = await q(`select p.name, p.strength, p.manufacturer, p.stock, coalesce(p.reorder_point, $1) reorder_at, p.cost_cents,
+      coalesce((select sum(i.qty) from order_items i join orders o on o.id = i.order_id where i.product_id = p.id and o.status <> 'cancelled' and o.created_at > now() - interval '30 days'), 0)::int sold_30d
+    from products p where p.active and p.stock is not null and p.stock <= coalesce(p.reorder_point, $1) order by p.stock, p.name, p.strength`, [level]);
+  const suggest = (r) => Math.max(0, Math.max(r.reorder_at * 2, r.sold_30d) - r.stock);
+  const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const lines = [["Product", "Size", "Manufacturer", "Available", "Reorder at", "Sold 30 days", "Suggested order", "Cost each", "Est. cost"].map(esc).join(",")];
+  for (const r of rows) lines.push([r.name, r.strength, r.manufacturer, r.stock, r.reorder_at, r.sold_30d, suggest(r), r.cost_cents != null && req.user.role === "owner" ? (r.cost_cents / 100).toFixed(2) : "", r.cost_cents != null && req.user.role === "owner" ? ((r.cost_cents * suggest(r)) / 100).toFixed(2) : ""].map(esc).join(","));
+  res.set("Content-Type", "text/csv; charset=utf-8").set("Content-Disposition", `attachment; filename="need-to-order-${new Date().toISOString().slice(0, 10)}.csv"`).send(lines.join("\r\n"));
 }));
 app.use("/api/admin", admin);
 

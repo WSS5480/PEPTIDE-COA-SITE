@@ -157,6 +157,8 @@ alter table customers add column if not exists pin_version int not null default 
 alter table customers add column if not exists pin_set_at timestamptz;
 alter table customers add column if not exists pin_used_at timestamptz;
 alter table products add column if not exists reorder_point int;
+alter table products add column if not exists store_note text not null default '';
+alter table products add column if not exists low_alerted_at timestamptz;
 alter table products add column if not exists image bytea;
 alter table products add column if not exists image_type text;
 alter table products add column if not exists logo bytea;
@@ -305,6 +307,8 @@ const DEFAULT_SETTINGS = {
   storeOpen: true,
   pricesRequireLogin: true,   // prices (and the cart) show only once a customer signs in with their PIN
   minAge: 21,
+  showSoldOut: false,   // the store never says "sold out" unless this is on; orders are taken and stock can go negative (backordered)
+  lowStockEmailOn: true, lowStockAt: 5, // email the admins as soon as a product drops below this many
   custIdleMin: 30,      // customers are signed out after this many minutes without using the store (0 = never)
   custCloseOut: true,   // …and when the browser / app is closed
   staffIdleMin: 720,    // admin and rep app: 12 hours idle
