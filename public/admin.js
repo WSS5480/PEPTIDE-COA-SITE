@@ -80,7 +80,7 @@ function drawLogin(msg) {
 /* ---------- shell ---------- */
 // [key, label, who]: "all" = owner, staff and sales reps · "team" = owner and staff · "owner" · "ownerrep" = owner and reps. "line" draws the divider:
 // sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
-const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["ar", "Invoices & AR", "all"], ["analytics", "Analytics", "all"], ["salescost", "Sales & cost", "owner"], ["line"],
+const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["ar", "Invoices & AR", "all"], ["analytics", "Analytics", "all"], ["salescost", "Sales & cost", "owner"], ["pnl", "Profit / loss", "owner"], ["line"],
   ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["promo", "Promo banner", "team"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["line2"],
   // below the second line: the things you reach from either app (the case tracker links here too)
   ["staff", "Team logins", "owner"], ["setup", "Email & approvals", "owner"], ["geo", "Geofencing", "owner"], ["apps", "Apps & downloads", "all"], ["howto", "How to", "all"], ["account", "My account", "all"]];
@@ -113,7 +113,7 @@ async function go(v, id, opts = {}) {
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  await ({ dashboard, orders, neworder, fill, promo, ar, analytics, salescost, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps, geo, howto }[v] || dashboard)();
+  await ({ dashboard, orders, neworder, fill, promo, ar, analytics, salescost, pnl, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps, geo, howto }[v] || dashboard)();
   if (v === "dashboard" && document.getElementById("hubKpi")) fillHubKpi();
   if (!opts.keepScroll) window.scrollTo(0, 0);
 }
@@ -307,6 +307,58 @@ async function salescost() {
     const csv = [["Period", "Orders", "Units", "Sales", "Cost", "Gross profit", "Margin %", "Sales LY", "Cost LY", "GP LY"].map(c).join(",")].concat(rows.map((r) => [lab(r.b), r.orders, r.units, d(r.sales), d(r.cost), d(gp(r)), r.sales ? ((gp(r) / r.sales) * 100).toFixed(1) : "", d(r.ly.sales), d(r.ly.cost), d(gp(r.ly))].map(c).join(","))).join("\n");
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = `sales-cost-${scG}-${j.to}.csv`; a.click();
   };
+}
+/* ---------- profit / loss (admins) ---------- */
+let pnlP = "month", pnlFrom = "", pnlTo = "";
+async function pnl() {
+  if (!isOwner()) return dashboard();
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" }), [Y, M] = today.split("-").map(Number);
+  const iso = (y, m, d) => new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10);
+  const PRE = { month: ["This month", iso(Y, M, 1), today], last: ["Last month", iso(Y, M - 1, 1), iso(Y, M, 0)], quarter: ["This quarter", iso(Y, Math.floor((M - 1) / 3) * 3 + 1, 1), today],
+    ytd: ["Year to date", iso(Y, 1, 1), today], t12: ["Last 12 months", iso(Y, M - 11, 1), today], lastyear: ["Last year", iso(Y - 1, 1, 1), iso(Y - 1, 12, 31)], custom: ["Custom", pnlFrom || iso(Y, M, 1), pnlTo || today] };
+  const [, from, to] = PRE[pnlP] || PRE.month;
+  const j = await api(`/pnl?from=${from}&to=${to}`);
+  const C = j.cur, L = j.ly;
+  const calc = (x) => { const net = x.gross - x.discounts, rev = net + x.shipping, gp = net - x.cogs, exp = x.commission, np = gp + x.shipping - exp; return { net, rev, gp, exp, np, gm: net ? gp / net : null, nm: rev ? np / rev : null }; };
+  const c = calc(C), l = calc(L);
+  const pctTxt = (v) => (v === null || !isFinite(v) ? "—" : Math.round(v * 1000) / 10 + "%");
+  const chg = (a, b, goodUp = true) => { if (!b) return a ? '<span class="muted">new</span>' : '<span class="muted">—</span>'; const up = a >= b, good = up === goodUp; return `<span style="color:${good ? "var(--green,#0a7)" : "var(--red,#c33)"}">${up ? "▲" : "▼"} ${Math.abs(Math.round(((a - b) / Math.abs(b)) * 100))}%</span>`; };
+  const neg = (v) => (v ? "(" + money(v) + ")" : money(0));
+  const line = (lab, a, b, opt = {}) => `<tr${opt.total ? ' style="font-weight:700;border-top:2px solid var(--line-strong,#c9d1dc)"' : ""}><td${opt.indent ? ' style="padding-left:1.6rem"' : ""}>${lab}</td><td class="num">${opt.minus ? neg(a) : money(a)}</td><td class="num">${opt.minus ? neg(b) : money(b)}</td><td class="num">${opt.nochg ? "" : chg(a, b, !opt.minus)}</td></tr>`;
+  const head = (lab) => `<tr><td colspan="4" class="eyebrow" style="padding-top:1rem">${lab}</td></tr>`;
+  const lyLabel = `${j.ly_from} – ${j.ly_to}`;
+  const mLabel = (ym) => new Date(ym + "-15T12:00:00Z").toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
+  const turn = C.cogs ? j.inventory.value / (C.cogs / Math.max(1, (new Date(to) - new Date(from)) / 864e5 + 1)) : null; // days of stock at this period's pace
+  pane().innerHTML = `<header><h1>Profit / loss</h1><div class="row2" style="flex-wrap:wrap"><select id="plP">${Object.entries(PRE).map(([k, v]) => `<option value="${k}"${pnlP === k ? " selected" : ""}>${v[0]}</option>`).join("")}</select>
+      <span id="plCustom"${pnlP === "custom" ? "" : " hidden"}><input type="date" id="plF" value="${from}"> – <input type="date" id="plT" value="${to}"> <button class="btn" type="button" id="plGo">Show</button></span></div></header>
+    <p class="muted">${esc(from)} – ${esc(to)}, compared with the same dates last year (${esc(lyLabel)}). Cancelled orders left out. Cost of goods = each order line's cost at the time of sale. Commissions = what reps earn on these orders (pending, earned and paid out). Expenses not kept in this app (card fees, rent, payroll) aren't included.</p>
+    <dl class="kpis">
+      <div class="kpi"><dt>Revenue</dt><dd>${money(c.rev)}</dd><small class="muted">${chg(c.rev, l.rev)} vs LY ${money(l.rev)}</small></div>
+      <div class="kpi"><dt>Gross profit</dt><dd>${money(c.gp)}</dd><small class="muted">${pctTxt(c.gm)} margin · LY ${pctTxt(l.gm)}</small></div>
+      <div class="kpi ${c.np >= 0 ? "green" : ""}"><dt>${c.np >= 0 ? "Net profit" : "Net loss"}</dt><dd style="${c.np < 0 ? "color:var(--red,#c33)" : ""}">${c.np < 0 ? "(" + money(-c.np) + ")" : money(c.np)}</dd><small class="muted">${chg(c.np, l.np)} vs LY ${money(l.np)}</small></div>
+      <div class="kpi"><dt>Net margin</dt><dd>${pctTxt(c.nm)}</dd><small class="muted">LY ${pctTxt(l.nm)}</small></div>
+    </dl>
+    ${C.nocost ? `<div class="panel" style="border-color:var(--amber,#d97706)"><strong>${C.nocost} unit${C.nocost === 1 ? "" : "s"} sold had no cost on file</strong><span class="muted"> — counted at $0, so profit reads high. Add costs under Products &amp; prices.</span></div>` : ""}
+    <div class="panel" data-nofold><h2>Statement</h2><div class="tblwrap"><table class="tbl compact" data-noflip style="min-width:0"><thead><tr><th></th><th class="num">This period</th><th class="num">Last year</th><th class="num">Change</th></tr></thead><tbody>
+      ${head("Revenue")}${line("Product sales (before discounts)", C.gross, L.gross, { indent: 1 })}${line("Discounts", C.discounts, L.discounts, { indent: 1, minus: 1 })}${line("Net product sales", c.net, l.net, { indent: 1 })}${line("Shipping charged", C.shipping, L.shipping, { indent: 1 })}${line("Total revenue", c.rev, l.rev, { total: 1 })}
+      ${head("Cost of goods sold")}${line("Product cost of what sold", C.cogs, L.cogs, { indent: 1, minus: 1 })}${line(`Gross profit · ${pctTxt(c.gm)} of net sales`, c.gp, l.gp, { total: 1 })}
+      ${head("Expenses")}${line("Sales rep commissions", C.commission, L.commission, { indent: 1, minus: 1 })}
+      ${line(c.np >= 0 ? "Net profit" : "Net loss", c.np, l.np, { total: 1 })}</tbody></table></div></div>
+    <hr style="border:0;border-top:2px dashed var(--line-strong,#c9d1dc);margin:1.4rem 0 .4rem"><p class="eyebrow" style="margin:0 0 .6rem">Below the line · inventory &amp; purchases</p>
+    <dl class="kpis">
+      <div class="kpi"><dt>Inventory on hand · at cost</dt><dd>${money(j.inventory.value)}</dd><small class="muted">${j.inventory.units} units today${j.inventory.nocost ? ` · ${j.inventory.nocost} tracked products have no cost` : ""}</small></div>
+      <div class="kpi"><dt>Purchases · received at cost</dt><dd>${money(C.purchases)}</dd><small class="muted">${C.purchased_units} units · LY ${money(L.purchases)}</small></div>
+      <div class="kpi"><dt>Cost of what sold</dt><dd>${money(C.cogs)}</dd><small class="muted">${C.units} units sold</small></div>
+      <div class="kpi"><dt>Purchases vs sales</dt><dd>${C.cogs ? (C.purchases / C.cogs).toFixed(2) + "×" : "—"}</dd><small class="muted">${C.purchases >= C.cogs ? `Stock grew ${money(C.purchases - C.cogs)} at cost` : `Stock drew down ${money(C.cogs - C.purchases)} at cost`}</small></div>
+      <div class="kpi"><dt>Counts &amp; manual changes · at cost</dt><dd>${C.adjustments < 0 ? "(" + money(-C.adjustments) + ")" : money(C.adjustments)}</dd><small class="muted">Physical counts, imports and edits to stock (setting starting stock shows here too)</small></div>
+      <div class="kpi"><dt>Days of stock</dt><dd>${turn ? Math.round(turn) : "—"}</dd><small class="muted">On-hand value ÷ this period's daily cost of sales</small></div>
+    </dl>
+    <div class="panel" data-nofold><h2>Purchases vs sales by month</h2><div class="tblwrap"><table class="tbl compact"><thead><tr><th>Month</th><th class="num">Net sales</th><th class="num">Cost of what sold</th><th class="num">Purchases</th><th class="num">Purchases − cost sold</th></tr></thead><tbody>
+      ${j.months.map((m) => `<tr><td><strong>${esc(mLabel(m.ym))}</strong></td><td class="num">${money(m.sales)}</td><td class="num">${money(m.cogs)}</td><td class="num">${money(m.purchases)}</td><td class="num" style="color:${m.purchases - m.cogs >= 0 ? "inherit" : "var(--red,#c33)"}">${m.purchases - m.cogs < 0 ? "(" + money(m.cogs - m.purchases) + ")" : money(m.purchases - m.cogs)}</td></tr>`).join("")}
+      <tr style="font-weight:700"><td>Total</td><td class="num">${money(j.months.reduce((t, m) => t + m.sales, 0))}</td><td class="num">${money(j.months.reduce((t, m) => t + m.cogs, 0))}</td><td class="num">${money(j.months.reduce((t, m) => t + m.purchases, 0))}</td><td class="num">${(() => { const v = j.months.reduce((t, m) => t + m.purchases - m.cogs, 0); return v < 0 ? "(" + money(-v) + ")" : money(v); })()}</td></tr></tbody></table></div>
+      <p class="muted">Purchases come from Inventory → Receive shipment (at the cost entered there). Positive = bought more than sold (stock building); in brackets = sold more than bought. Whole months shown.</p></div>`;
+  document.getElementById("plP").onchange = (e) => { pnlP = e.target.value; pnl(); };
+  if (document.getElementById("plGo")) document.getElementById("plGo").onclick = () => { pnlFrom = document.getElementById("plF").value; pnlTo = document.getElementById("plT").value; if (pnlFrom && pnlTo && pnlFrom <= pnlTo) pnl(); else toast("Pick a start date before the end date"); };
 }
 async function analytics() {
   const j = await api(`/analytics?months=${anMonths}${anRep ? `&rep=${anRep}` : ""}`);
@@ -2537,7 +2589,7 @@ if (window.AppRefresh) window.AppRefresh.init({
   if (m) { view = "orders"; orderId = m[1]; history.replaceState(null, "", location.pathname); }
   if (location.hash === "#customers") { view = "customers"; history.replaceState(null, "", location.pathname); }
   if (new URLSearchParams(location.search).get("embed") === "1") document.body.classList.add("embed");
-  if (/^#(staff|setup|apps|account|settings|commissions|reps|geo|howto|salescost|analytics)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
+  if (/^#(staff|setup|apps|account|settings|commissions|reps|geo|howto|salescost|pnl|analytics)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
   const sso = new URLSearchParams(location.search).get("sso");
   if (sso) { const name = new URLSearchParams(location.search).get("name"); history.replaceState(null, "", location.pathname); window.__ssoMsg = sso === "expired" ? "That link from the case tracker expired — go back and tap it again." : `There's no store login for ${name || "that tracker sign-in"} yet. Sign in here, or an admin can add one under Team logins (same email).`; }
   const res = await fetch("/api/admin/me");

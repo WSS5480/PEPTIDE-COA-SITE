@@ -1135,6 +1135,43 @@ admin.get("/sales-cost", owner, wrap(async (req, res) => {
   const num = (r) => ({ b: r.b, orders: +r.orders, units: +r.units, sales: +r.sales, cost: +r.cost, nocost: +r.nocost });
   res.json({ g: gran, n, from: b.f, to: b.t, rows: cur.rows.map(num), prior: prior.rows.map(num), products: prods.rows.map((r) => ({ product: r.product, units: +r.units, sales: +r.sales, cost: +r.cost, nocost: +r.nocost })) });
 }));
+/* ---------- profit & loss (admins): a date range and the same range a year earlier; below the line, inventory and purchases vs sales ---------- */
+admin.get("/pnl", owner, wrap(async (req, res) => {
+  const okD = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ""));
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  const from = okD(req.query.from) ? String(req.query.from) : today.slice(0, 8) + "01", to = okD(req.query.to) ? String(req.query.to) : today;
+  const shift = (d) => { const [y, m, dd] = d.split("-").map(Number); const x = new Date(Date.UTC(y - 1, m - 1, dd)); if (x.getUTCMonth() !== m - 1) x.setUTCDate(0); return x.toISOString().slice(0, 10); };
+  const local = "(o.created_at at time zone 'America/Chicago')", mlocal = "(m.at at time zone 'America/Chicago')";
+  const period = async (f, t) => {
+    const [{ rows: [o] }, { rows: [m] }, comm] = await Promise.all([
+      q(`select count(*)::int orders, coalesce(sum(o.subtotal_cents),0)::bigint gross, coalesce(sum(o.discount_cents),0)::bigint discounts, coalesce(sum(o.shipping_cents),0)::bigint shipping,
+           coalesce(sum((select sum(coalesce(i.cost_cents,0) * i.qty) from order_items i where i.order_id = o.id)),0)::bigint cogs,
+           coalesce(sum((select sum(i.qty) from order_items i where i.order_id = o.id)),0)::int units,
+           coalesce(sum((select sum(i.qty) from order_items i where i.order_id = o.id and i.cost_cents is null)),0)::int nocost
+         from orders o where o.status <> 'cancelled' and ${local}::date between $1::date and $2::date`, [f, t]),
+      q(`select coalesce(sum(case when m.reason = 'Received' then m.change * coalesce(m.cost_cents, p.cost_cents, 0) end),0)::bigint purchases,
+           coalesce(sum(case when m.reason = 'Received' then m.change end),0)::int purchased_units,
+           coalesce(sum(case when m.reason in ('Physical count','Edited in Products','Spreadsheet import') then m.change * coalesce(p.cost_cents, 0) end),0)::bigint adjustments
+         from stock_moves m join products p on p.id = m.product_id where ${mlocal}::date between $1::date and $2::date`, [f, t]),
+      commissionRows({ from: f, to: t })]);
+    const n = (v) => Number(v) || 0;
+    const commission = comm.filter((r) => r.comm_status !== "void" && new Date(r.created_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) <= t).reduce((a, r) => a + r.commission_cents, 0);
+    return { orders: n(o.orders), units: n(o.units), gross: n(o.gross), discounts: n(o.discounts), shipping: n(o.shipping), cogs: n(o.cogs), nocost: n(o.nocost), commission,
+      purchases: n(m.purchases), purchased_units: n(m.purchased_units), adjustments: n(m.adjustments) };
+  };
+  const [cur, ly, inv, byMonth] = await Promise.all([period(from, to), period(shift(from), shift(to)),
+    q(`select coalesce(sum(greatest(0, p.stock + coalesce(c.held,0)) * coalesce(p.cost_cents,0)),0)::bigint value, coalesce(sum(greatest(0, p.stock + coalesce(c.held,0))),0)::int units,
+         count(*) filter (where p.stock is not null and p.cost_cents is null)::int nocost
+       from products p left join (select i.product_id, sum(i.qty) held from order_items i join orders o on o.id = i.order_id where o.status in ('new','confirmed','paid') group by 1) c on c.product_id = p.id
+       where p.stock is not null`),
+    q(`select to_char(d, 'YYYY-MM') ym,
+         (select coalesce(sum(o.subtotal_cents - o.discount_cents),0) from orders o where o.status <> 'cancelled' and to_char(${local}, 'YYYY-MM') = to_char(d, 'YYYY-MM'))::bigint sales,
+         (select coalesce(sum(i.qty * coalesce(i.cost_cents,0)),0) from order_items i join orders o on o.id = i.order_id where o.status <> 'cancelled' and to_char(${local}, 'YYYY-MM') = to_char(d, 'YYYY-MM'))::bigint cogs,
+         (select coalesce(sum(m.change * coalesce(m.cost_cents, p.cost_cents, 0)),0) from stock_moves m join products p on p.id = m.product_id where m.reason = 'Received' and to_char(${mlocal}, 'YYYY-MM') = to_char(d, 'YYYY-MM'))::bigint purchases
+       from generate_series(date_trunc('month', $1::date), date_trunc('month', $2::date), interval '1 month') d order by 1`, [from, to])]);
+  res.json({ from, to, ly_from: shift(from), ly_to: shift(to), cur, ly, inventory: { value: Number(inv.rows[0].value), units: inv.rows[0].units, nocost: inv.rows[0].nocost },
+    months: byMonth.rows.map((r) => ({ ym: r.ym, sales: Number(r.sales), cogs: Number(r.cogs), purchases: Number(r.purchases) })) });
+}));
 /* ---------- promo banner (admins and managers) ---------- */
 admin.get("/banner", wrap(async (req, res) => { const s = await getSettings(); res.json({ text: s.announcement || "", on: !!s.announcementOn, scroll: s.bannerScroll !== false, tone: s.bannerTone || "navy", until: s.bannerUntil || "", link: s.bannerLink || "", speed: Math.min(90, Math.max(6, Number(s.bannerSpeed) || 30)), sticky: s.bannerSticky !== false }); }));
 admin.put("/banner", wrap(async (req, res) => {
