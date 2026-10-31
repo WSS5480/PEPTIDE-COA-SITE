@@ -2435,6 +2435,13 @@ app.post("/api/hub/check-pin", hubAuth, wrap(async (req, res) => {
   const ok = !!(u && appsOf(u).tracker && pin.length >= 4 && (await bcrypt.compare(pin, u.pin_hash)));
   res.json({ ok, user: ok ? hubUser(u) : null });
 }));
+// the tracker's email sign-in: the same email + password as the store admin (one login for both apps)
+app.post("/api/hub/check-pass", hubAuth, wrap(async (req, res) => {
+  const email = str(req.body?.email, 160).toLowerCase();
+  const { rows: [u] } = email ? await q("select * from users where lower(email) = $1 and active", [email]) : { rows: [] };
+  const ok = !!(u && appsOf(u).tracker && (await bcrypt.compare(String(req.body?.password || ""), u.pass_hash)));
+  res.json({ ok, noTracker: !!(u && !appsOf(u).tracker), user: ok ? hubUser(u) : null });
+}));
 // the one email setup: Microsoft 365 app + the COO address, so the tracker sends with it too
 app.get("/api/hub/mail", hubAuth, wrap(async (req, res) => {
   const s = await getSettings();
