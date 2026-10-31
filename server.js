@@ -117,7 +117,7 @@ const owner = (req, res, next) => (req.user.role === "owner" ? next() : bad(res,
 /* ---------- site PIN ---------- */
 // When the owner turns the PIN on, nothing on the store (pages, products, lab reports, orders)
 // is served until the visitor enters it. The admin, its login and the files it needs stay open.
-const PIN_OPEN = [/^\/api\/hub\//, /^\/invoice\/[A-Za-z0-9-]+$/, /^\/sso$/, /^\/(admin|rep)\/(sso|tracker|go\/tracker)$/, /^\/go\/tracker$/, /^\/api\/rep-list$/, /^\/xlsx\.full\.min\.js$/, /^\/collapse\.js$/, /^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/api\/stripe\//, /^\/pay\//,
+const PIN_OPEN = [/^\/api\/hub\//, /^\/invoice\/[A-Za-z0-9-]+$/, /^\/sso$/, /^\/(admin|rep)\/(sso|tracker|go\/tracker)$/, /^\/go\/tracker$/, /^\/api\/rep-list$/, /^\/xlsx\.full\.min\.js$/, /^\/collapse\.js$/, /^\/uni-(render|admin|rep)\.js$/, /^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/api\/stripe\//, /^\/pay\//,
   /^\/store\.css$/, /^\/install\.js$/, /^\/refresh\.js$/, /^\/sw\.js$/, /^\/manifest\.webmanifest$/, /^\/vial\.js$/, /^\/vial-logo$/, /^\/site-logo$/, /^\/vial-photo$/, /^\/vial-photo\.jpg$/, /^\/brand-(logo|mark|vial-logo)\.png$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
 let pinCache = { at: 0, on: false, hash: "", secret: "", customerPins: 0 };
 async function pinState() {
@@ -934,6 +934,9 @@ const REP_OK = [[/^\/stats$/, "GET"], [/^\/orders(\.csv)?$/, "GET"], [/^\/orders
   [/^\/customers$/, "GET"], [/^\/customers$/, "POST"], [/^\/customers\/\d+$/, "PATCH"], [/^\/commissions(\.csv)?$/, "GET"],
   [/^\/catalog$/, "GET"], [/^\/orders$/, "POST"], [/^\/hub\/commissions$/, "GET"],
   [/^\/ar$/, "GET"], [/^\/analytics$/, "GET"], [/^\/orders\/\d+\/invoice(-link)?$/, "GET"]];
+// a case-tracker-only rep is signed in here just for 360 University
+const uniOnly = (u) => u.role === "rep" && !appsOf(u).store;
+admin.use((req, res, next) => (uniOnly(req.user) && !/^\/hub$/.test(req.path) ? bad(res, "Your login is for 360 University only.", 403) : next()));
 admin.use((req, res, next) => (req.user.role !== "rep" || REP_OK.some(([re, m]) => re.test(req.path) && m === req.method) ? next() : bad(res, "Sales reps can only see their own customers, orders and commissions.", 403)));
 const isRep = (req) => req.user.role === "rep";
 
@@ -961,7 +964,7 @@ admin.get("/stats", wrap(async (req, res) => {
     from products p cross join lateral (select coalesce((select sum(i.qty) from order_items i join orders o on o.id = i.order_id where i.product_id = p.id and o.status in ${OPEN_ORDER}), 0)::int held) c
     where p.stock is not null`);
   res.json({ byStatus: Object.fromEntries(byStatus.map((r) => [r.status, r.n])), month: m, lowStock: low, unpriced: np.n, pinRequests: pr.n, toFill: tf.n, overdue: { n: od.n, cents: Number(od.cents) },
-    count: { lastAt: lc.at, done: lc.n, dueDays: COUNT_DUE_DAYS }, stockValue: req.user.role === "owner" ? { cents: Number(sv.cents), units: sv.units, tracked: sv.tracked } : null });
+    count: { lastAt: lc.at, done: lc.n, dueDays: COUNT_DUE_DAYS }, uniLocked: await UNI.lockedCount().catch(() => 0), stockValue: req.user.role === "owner" ? { cents: Number(sv.cents), units: sv.units, tracked: sv.tracked } : null });
 }));
 
 /* ---------- admin: orders (owner + staff) ---------- */
@@ -1920,6 +1923,7 @@ admin.post("/reps", owner, wrap(async (req, res) => {
   const rate = rateOf(b.rate); if (rate === null) return bad(res, "Enter the commission as a percent, e.g. 10.");
   try {
     const { rows: [u] } = await q("insert into users(email,name,role,pass_hash,phone,commission_rate) values ($1,$2,'rep',$3,$4,$5) returning id", [email, str(b.name, 80), await bcrypt.hash(pass, 11), str(b.phone, 40), rate]);
+    try { if (Array.isArray(b.courses)) await UNI.setAssignments(u.id, b.courses, req.user.name || req.user.email); else await UNI.autoAssign(u.id, { store: true, tracker: false }, req.user.name || req.user.email); } catch (e) { console.error("University assign failed:", e.message); }
     res.json({ ok: true, id: u.id });
   } catch (e) { bad(res, "That email already has a login."); }
 }));
@@ -2366,6 +2370,7 @@ admin.post("/users", owner, wrap(async (req, res) => {
     const pin = String(b.pin || "").replace(/\D/g, "");
     if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits.");
     const { rows: [u] } = await q("insert into users(email,name,role,pass_hash,phone,commission_rate,apps,pin_hash,comm_tiered) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id", [email, str(b.name, 80), role, await bcrypt.hash(pass, 11), str(b.phone, 40), rate, apps, pin ? await bcrypt.hash(pin, 11) : null, tiered]);
+    if (role === "rep") { try { if (Array.isArray(b.courses)) await UNI.setAssignments(u.id, b.courses, req.user.name || req.user.email); else await UNI.autoAssign(u.id, JSON.parse(apps), req.user.name || req.user.email); } catch (e) { console.error("University assign failed:", e.message); } }
     pokeTracker(); res.json({ ok: true, id: u.id });
   } catch (e) { return bad(res, "That email already has a login"); }
 }));
@@ -2483,7 +2488,8 @@ app.get(["/sso", "/admin/sso", "/rep/sso"], wrap(async (req, res) => { // in-sco
   // the tracker's own owner login (COO PIN) has no store email: it is the same office, so it comes in as the store's admin account
   if (!u && !email && t.coo === true) ({ rows: [u] } = await q("select * from users where role = 'owner' and active order by id limit 1")); // only the bare COO-PIN session, never a token that carried an email
   if (!u) return miss("nouser", t.name);
-  if (!appsOf(u).store) return miss("noapp", u.name);
+  // a rep with only the case tracker may still come into the rep app for 360 University (and nothing else there)
+  if (!appsOf(u).store && !(u.role === "rep" && next.startsWith("/rep"))) return miss("noapp", u.name);
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '1 day')", [token, u.id]); // hop-in sessions are short; the switch mints a fresh one each time
   res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=${14 * 86400}`);
@@ -2569,6 +2575,7 @@ const rep = express.Router();
 rep.use(wrap(auth));
 // a rep works as themselves; an admin / manager can open the rep app "as" one of the reps (?as=<id>) to see and do exactly what that rep would
 rep.use(wrap(async (req, res, next) => {
+  if (uniOnly(req.user) && !/^\/(uni(\/|$)|me$)/.test(req.path)) return bad(res, "Your login is for 360 University only.", 403);
   if (req.user.role === "rep") { req.repId = req.user.id; return next(); }
   const as = intOrNull(req.query.as);
   const { rows: [r] } = as ? await q("select id, name, email, phone, commission_rate, role, apps from users where id = $1 and role = 'rep' and active", [as]) : { rows: [] };
@@ -2657,6 +2664,15 @@ rep.get("/commissions", wrap(async (req, res) => {
   const { rows: payouts } = await q("select amount_cents, orders, note, paid_at from commission_payouts where rep_id = $1 order by paid_at desc", [req.repId]);
   res.json({ rows: rows.map(({ rep_email, ...r }) => r), totals: commTotals(rows), payouts });
 }));
+// 360 University: courses, tests and assignments (server/university.js)
+const UNI = require("./server/university")({ app, admin, rep, q, wrap, bad, str, intOrNull, mail, getSettings, emailHtml, escHtml, isEmail, BASE_URL,
+  notifyTracker: (title, body) => { if (!HUB_SECRET || !TRACKER_URL) return; fetch(`${TRACKER_URL}/api/hub/notify`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }) }, body: JSON.stringify({ title, body }), signal: AbortSignal.timeout(8000) }).catch(() => {}); } });
+// the tracker asks how a rep is doing in 360 University (shown on their tracker dashboard)
+app.get("/api/hub/uni", hubAuth, wrap(async (req, res) => {
+  const email = str(req.query.email, 160).toLowerCase(); const { rows: [u] } = email ? await q("select id from users where lower(email) = $1 and active", [email]) : { rows: [] };
+  if (!u) return res.json({ ok: true, n: 0 });
+  const [r] = await UNI.summary([u.id]); res.json({ ok: true, n: r ? r.n : 0, passed: r ? r.passed : 0, locked: r ? r.locked : 0 });
+}));
 app.use("/api/rep", rep);
 
 
@@ -2675,6 +2691,7 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
 /* ---------- start ---------- */
 (async () => {
   await init();
+  await UNI.init().catch((e) => console.error("360 University setup failed:", e.message));
   // First owner login comes from OWNER_EMAIL / OWNER_PASSWORD set on the host. Only used while no owner exists.
   const { rows: [{ n }] } = await q("select count(*)::int n from users where role = 'owner'");
   if (n === 0 && process.env.OWNER_EMAIL && process.env.OWNER_PASSWORD) {

@@ -81,7 +81,7 @@ function drawLogin(msg) {
 // [key, label, who]: "all" = owner, staff and sales reps · "team" = owner and staff · "owner" · "ownerrep" = owner and reps. "line" draws the divider:
 // sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
 const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["ar", "Invoices & AR", "all"], ["analytics", "Analytics", "all"], ["salescost", "Sales & cost", "owner"], ["pnl", "Profit / loss", "owner"], ["line"],
-  ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["promo", "Promo banner", "team"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["line2"],
+  ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["promo", "Promo banner", "team"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["university", "🎓 360 University", "team"], ["line2"],
   // below the second line: the things you reach from either app (the case tracker links here too)
   ["staff", "Team logins", "owner"], ["setup", "Email & approvals", "owner"], ["geo", "Geofencing", "owner"], ["apps", "Apps & downloads", "all"], ["howto", "How to", "all"], ["account", "My account", "all"]];
 const canSee = (who) => who === "all" || (who === "owner" && isOwner()) || (who === "team" && !isRep()) || (who === "ownerrep" && (isOwner() || isRep()));
@@ -100,7 +100,7 @@ function shell() {
 }
 /* the menu is grouped Rep / Manager / Admin (each folds; tapping its name opens it and closes the others), plus pills on top like the tracker */
 const NAV_GROUP = { orders: "Rep", neworder: "Rep", customers: "Rep", commissions: "Rep", ar: "Rep",
-  fill: "Manager", products: "Manager", inventory: "Manager", reports: "Manager", discounts: "Manager", promo: "Manager", page: "Manager", settings: "Manager", analytics: "Manager", salescost: "Manager", pnl: "Manager",
+  fill: "Manager", products: "Manager", inventory: "Manager", reports: "Manager", discounts: "Manager", promo: "Manager", page: "Manager", settings: "Manager", analytics: "Manager", salescost: "Manager", pnl: "Manager", university: "Manager",
   // Admin is the same list, in the same order, in the store and the case tracker
   reps: "Admin", staff: "Admin", setup: "Admin", geo: "Admin", apps: "Admin", howto: "Admin", account: "Admin" };
 let navOpen = null;
@@ -137,11 +137,12 @@ async function go(v, id, opts = {}) {
   view = v; orderId = id || null;
   const adm = document.getElementById("adm"); if (adm) adm.classList.remove("menu");
   drawNav();
-  await ({ dashboard, orders, neworder, fill, promo, ar, analytics, salescost, pnl, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps, geo, howto }[v] || dashboard)();
+  await ({ dashboard, orders, neworder, fill, promo, ar, analytics, salescost, pnl, customers, reps, commissions, products, inventory, reports, discounts, page, settings, staff, account, setup, apps, geo, howto, university: window.university || dashboard }[v] || dashboard)();
   if (v === "dashboard" && document.getElementById("hubKpi")) fillHubKpi();
   if (!opts.keepScroll) window.scrollTo(0, 0);
 }
 const pane = () => document.getElementById("pane");
+window.ADM = { api, pane, toast, esc, when, isOwner }; // shared with uni-admin.js (360 University)
 const ro = () => (isOwner() ? "" : " disabled");
 
 /* ---------- dashboard ---------- */
@@ -175,7 +176,7 @@ async function dashboard() {
   }).catch(() => {});
   const b = s.byStatus;
   const apv = [["orders:new", "🆕", "New orders to confirm", b.new || 0, "Confirm"], ["fill", "📦", "Orders to fill / ship", s.toFill || 0, "Fill"], ["customers", "🔑", "Customer PIN requests", s.pinRequests || 0, "Review"],
-    ["ar", "⏰", "Invoices past due" + (s.overdue && s.overdue.cents ? " · " + money(s.overdue.cents) : ""), (s.overdue && s.overdue.n) || 0, "Open AR"], ["inventory", "📉", "Low or out of stock", (s.lowStock || []).length, "Reorder"], ["products", "🏷", "Products without a price", s.unpriced || 0, "Set prices"]].filter((x) => x[3] > 0);
+    ["ar", "⏰", "Invoices past due" + (s.overdue && s.overdue.cents ? " · " + money(s.overdue.cents) : ""), (s.overdue && s.overdue.n) || 0, "Open AR"], ["inventory", "📉", "Low or out of stock", (s.lowStock || []).length, "Reorder"], ["products", "🏷", "Products without a price", s.unpriced || 0, "Set prices"], ["university", "🎓", "Reps locked out of a 360 University course", s.uniLocked || 0, "Unlock"]].filter((x) => x[3] > 0);
   pane().innerHTML = `<header><h1>Dashboard</h1><span class="muted" id="dashBuild">${BUILD ? `v${BUILD.version} · updated ${when(BUILD.updated)}` : ""}</span></header>
     ${apv.length ? `<div class="panel" data-nofold style="border:2px solid var(--amber,#d97706);background:#fff8eb"><h2 style="margin:0">⚠️ ${apv.reduce((t, x) => t + x[3], 0)} need your attention</h2>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr));gap:.5rem">${apv.map(([go, ic, lab, n, btn]) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;background:#fff;border:1px solid var(--line);border-radius:10px;padding:.5rem .7rem"><span>${ic} <strong>${n}</strong> ${esc(lab)}</span><button class="btn solid" type="button" style="white-space:nowrap;flex:none" ${go.includes(":") ? `data-go="${go}"` : `data-nav="${go}"`}>${btn}</button></div>`).join("")}</div></div>` : `<div class="panel" data-nofold style="border-color:var(--green,#0a7)"><strong>✓ Nothing waiting on you.</strong></div>`}
@@ -2538,12 +2539,19 @@ async function staff() {
       <div class="field"><label class="eyebrow" for="nu-ph">Phone (optional)</label><input id="nu-ph"></div>
       <div class="field" id="nu-rateWrap" hidden><label class="eyebrow" for="nu-plan">Commission</label><div class="row2" style="flex-wrap:nowrap;align-items:center;gap:.3rem"><select id="nu-plan"><option value="tiered">Tiered plan${PLAN_ON ? "" : " (not on yet)"}</option><option value="flat">Flat %</option></select><span id="nu-flat" hidden style="white-space:nowrap"><input id="nu-rate" inputmode="decimal" placeholder="10" style="width:4.5rem">%</span></div></div>
       <div class="field"><label class="eyebrow" for="nu-pin">PIN (optional, 4–10 digits)</label><input id="nu-pin" inputmode="numeric" placeholder="Name + PIN sign-in"></div>
-      <div class="field"><span class="eyebrow">Apps</span><label class="chk"><input type="checkbox" id="nu-store" checked> Peptide store</label><label class="chk"><input type="checkbox" id="nu-tracker"> Case tracker</label></div></div>
+      <div class="field"><span class="eyebrow">Apps</span><label class="chk"><input type="checkbox" id="nu-store" checked> Peptide store</label><label class="chk"><input type="checkbox" id="nu-tracker"> Case tracker</label></div>
+      <div class="field" id="nu-uniWrap" style="grid-column:1/-1" hidden><span class="eyebrow">🎓 360 University courses (reps)</span><div id="nu-uni" class="row2" style="flex-wrap:wrap;gap:.2rem 1rem"><span class="muted">Loading courses…</span></div><span class="muted" style="font-size:.78rem">Ticked by the apps above; change them as you like. Tests: 2 tries to pass, then the course locks and you're told.</span></div></div>
       <div class="row2"><button class="btn solid" id="nuAdd">Add login</button><span class="muted">Send them the email and temporary password; they can change it under My account.</span></div></div>
     ${HUB.linked && HUB.apps && HUB.apps.tracker ? `<div class="panel" id="plansPanel"><h2>Case tracker plans</h2>
       <p class="muted">Quota, commission plan, pay and territory for each rep with the Case tracker ticked above. Names, PINs and on/off come from the logins table; add or remove reps up there. Team quotas are set here.</p>
       ${HOSTABLE ? `<iframe class="hubframe" title="Reps and plans" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=reps-card")}" style="width:100%;height:40rem;min-height:24rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<a class="btn solid" href="${switchHref("/admin")}"${FRAMED ? ' target="_top"' : ""}>Open reps and plans in the case tracker ↗</a><p class="muted" style="margin-top:.4rem">This browser doesn't show the tracker inside the page.</p>`}</div>` : ""}`;
-  document.getElementById("nu-r").onchange = () => { document.getElementById("nu-rateWrap").hidden = document.getElementById("nu-r").value !== "rep"; };
+  // 360 University: the courses a new rep gets, ticked from the apps they're given (case tracker → surgical / wound / all; peptide store → peptide)
+  const uniTick = () => { const box = document.getElementById("nu-uni"); if (!box) return; const isRep = document.getElementById("nu-r").value === "rep"; document.getElementById("nu-uniWrap").hidden = !isRep;
+    const tr = document.getElementById("nu-tracker").checked, st = document.getElementById("nu-store").checked;
+    box.querySelectorAll("input").forEach((i) => { const a = i.dataset.aud; i.checked = (tr && /^(surgical|wound|all)$/.test(a)) || (st && a === "peptide"); }); };
+  api("/uni").then((u) => { const box = document.getElementById("nu-uni"); if (!box) return; box.innerHTML = u.courses.filter((c) => c.active).map((c) => `<label class="chk"><input type="checkbox" value="${c.id}" data-aud="${esc(c.audience)}"> ${esc(c.icon)} ${esc(c.title)}</label>`).join("") || '<span class="muted">No courses yet.</span>'; uniTick(); }).catch(() => { const w = document.getElementById("nu-uniWrap"); if (w) w.hidden = true; });
+  ["nu-store", "nu-tracker"].forEach((k) => document.getElementById(k).addEventListener("change", uniTick));
+  document.getElementById("nu-r").onchange = () => { document.getElementById("nu-rateWrap").hidden = document.getElementById("nu-r").value !== "rep"; uniTick(); };
   document.getElementById("nu-plan").onchange = (e) => { document.getElementById("nu-flat").hidden = e.target.value !== "flat"; };
   api("/hub/tracker-reps").then((r) => {
     const box = document.getElementById("trackerImport"); if (!box) return;
@@ -2584,7 +2592,7 @@ async function staff() {
   };
   document.getElementById("nuAdd").onclick = async () => {
     const g = (x) => document.getElementById(x).value;
-    const r = await api("/users", { method: "POST", body: { name: g("nu-n"), email: g("nu-e"), password: g("nu-p"), role: g("nu-r"), phone: g("nu-ph"), rate: g("nu-rate"), plan: g("nu-plan"), pin: g("nu-pin"), apps: { store: document.getElementById("nu-store").checked, tracker: document.getElementById("nu-tracker").checked } } });
+    const r = await api("/users", { method: "POST", body: { name: g("nu-n"), email: g("nu-e"), password: g("nu-p"), role: g("nu-r"), phone: g("nu-ph"), rate: g("nu-rate"), plan: g("nu-plan"), pin: g("nu-pin"), apps: { store: document.getElementById("nu-store").checked, tracker: document.getElementById("nu-tracker").checked }, courses: g("nu-r") === "rep" && document.querySelector("#nu-uni input") ? [...document.querySelectorAll("#nu-uni input:checked")].map((i) => +i.value) : undefined } });
     toast(`${ROLE[g("nu-r")]} login added`); staff();
   };
 }
@@ -2632,7 +2640,7 @@ if (window.AppRefresh) window.AppRefresh.init({
   if (m) { view = "orders"; orderId = m[1]; history.replaceState(null, "", location.pathname); }
   if (location.hash === "#customers") { view = "customers"; history.replaceState(null, "", location.pathname); }
   if (new URLSearchParams(location.search).get("embed") === "1") document.body.classList.add("embed");
-  if (/^#(staff|setup|apps|account|settings|commissions|reps|geo|howto|salescost|pnl|analytics)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
+  if (/^#(staff|setup|apps|account|settings|commissions|reps|geo|howto|salescost|pnl|analytics|university)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
   const sso = new URLSearchParams(location.search).get("sso");
   if (sso) { const name = new URLSearchParams(location.search).get("name"); history.replaceState(null, "", location.pathname); window.__ssoMsg = sso === "expired" ? "That link from the case tracker expired — go back and tap it again." : `There's no store login for ${name || "that tracker sign-in"} yet. Sign in here, or an admin can add one under Team logins (same email).`; }
   const res = await fetch("/api/admin/me");

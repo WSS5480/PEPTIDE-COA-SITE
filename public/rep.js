@@ -63,7 +63,7 @@ function drawLogin(msg) {
 }
 
 /* ---------- shell ---------- */
-const NAV = [["home", "Home"], ["customers", "Customers"], ["neworder", "New order"], ["orders", "Orders"], ["commissions", "Commissions"], ["account", "Account"]];
+const NAV = [["home", "Home"], ["customers", "Customers"], ["neworder", "New order"], ["orders", "Orders"], ["commissions", "Commissions"], ["university", "🎓 University"], ["account", "Account"]];
 async function loadRepList() {
   try { const r = await fetch("/api/rep-list", { credentials: "same-origin" }).then((x) => x.json()); REP_LIST = r.reps || []; } catch (e) { REP_LIST = []; }
   if (!REP_LIST.some((r) => String(r.id) === String(REP_AS))) REP_AS = REP_LIST.length ? String(REP_LIST[0].id) : "";
@@ -77,14 +77,16 @@ function shell() {
   fetch("/api/build").then((r) => r.json()).then((b) => { const v = $("rver"); if (v) v.textContent = `· v${b.version}`; }).catch(() => {});
   go(view);
 }
-function drawNav() { $("rnav").innerHTML = NAV.map(([k, l]) => `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${l}</button>`).join(""); }
+const uniOnly = () => !!(me && me.role === "rep" && me.apps && me.apps.store === false); // case-tracker-only reps come here just for 360 University
+const navItems = () => (uniOnly() ? NAV.filter(([k]) => k === "university" || k === "account") : NAV);
+function drawNav() { $("rnav").innerHTML = navItems().map(([k, l]) => `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${l}</button>`).join(""); }
 const pane = () => $("pane");
 function go(v, opts = {}) {
   if (paneDirty && !opts.silent && !confirm("Leave this page? What you typed hasn't been saved.")) return;
-  paneDirty = false; view = v;
+  paneDirty = false; if (uniOnly() && v !== "account") v = "university"; view = v;
   const pn = pane(); if (pn) { pn.onclick = null; pn.oninput = null; }
   drawNav();
-  ({ home, customers, neworder, orders, commissions, account }[v] || home)();
+  ({ home, customers, neworder, orders, commissions, account, university: () => window.UniRep ? window.UniRep.open(pane(), api, toast) : home() }[v] || home)();
   if (!opts.keepScroll) window.scrollTo(0, 0);
 }
 document.addEventListener("input", (e) => { if (e.target.closest("#pane")) paneDirty = true; });
@@ -93,6 +95,7 @@ document.addEventListener("click", (e) => { const n = e.target.closest("[data-na
 /* ---------- home ---------- */
 async function home() {
   const d = await api("/me");
+  api("/uni").then((u) => { const k = $("hUni"); if (!k || !u.courses.length) return; const todo = u.courses.filter((c) => c.status !== "passed").length, lk = u.courses.filter((c) => c.status === "locked").length; k.hidden = false; k.querySelector("dd").textContent = todo ? `${todo} to finish` : "All passed ✓"; if (lk) k.querySelector("dt").textContent = `🎓 360 University · ${lk} locked`; }).catch(() => {});
   pane().innerHTML = `<header><h1>Hi ${esc((d.rep.name || "").split(" ")[0] || "there")}</h1><span class="muted">Commission rate ${d.rep.commission_rate}%</span></header>
     <dl class="kpis">
       <div class="kpi green"><dt>Earned, not yet paid</dt><dd>${money(d.totals.earned)}</dd></div>
@@ -102,6 +105,7 @@ async function home() {
       <div class="kpi"><dt>Orders this month</dt><dd>${d.month.orders}</dd></div>
       <div class="kpi"><dt>My customers</dt><dd>${d.customers}</dd></div>
       <div class="kpi green" id="hSurg" data-surg hidden style="cursor:pointer"><dt>Surgical commission this month</dt><dd>…</dd></div>
+      <div class="kpi" id="hUni" data-nav="university" hidden style="cursor:pointer"><dt>🎓 360 University</dt><dd>…</dd></div>
     </dl>
     <div class="row2"><button class="btn solid rep" data-nav="neworder" style="height:2.8rem">Place an order</button><button class="btn" data-nav="customers" style="height:2.8rem">Add a customer</button></div>
     <div class="panel"><h2>How commissions work</h2><p class="muted">Peptide store: you earn ${d.rep.commission_rate}% of the product total (after any discount, before shipping) on every order from your customers, whether you place it or they order on the store themselves. Commission is <strong>pending</strong> until the office marks the order paid, then <strong>earned</strong> until it's paid out to you. Cancelled orders earn nothing.</p></div>`;
@@ -341,7 +345,7 @@ if (window.AppRefresh) window.AppRefresh.init({
 
 (async () => {
   if (new URLSearchParams(location.search).get("embed") === "1") document.body.classList.add("embed");
-  if (/^#(account|customers|orders|commissions)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
+  if (/^#(account|customers|orders|commissions|university)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
   const res = await fetch("/api/admin/me");
   if (res.ok) { me = (await res.json()).user; HUB = await fetch("/api/admin/hub", { credentials: "same-origin" }).then((r) => r.ok ? r.json() : HUB).catch(() => HUB); if (me.role !== "rep") await loadRepList(); shell(); } else drawLogin();
 })();
