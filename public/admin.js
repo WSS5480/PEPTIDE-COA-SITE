@@ -2394,7 +2394,7 @@ async function trackerMailPanel() {
 /* ---------- geofencing: the case tracker's own card, shown here ---------- */
 function geo() {
   pane().innerHTML = `<header><h1>Geofencing</h1></header>
-    ${HUB.linked ? `<p class="muted">Visit geofencing lives in the case tracker; this is its card. Changes save there.</p><iframe class="hubframe" title="Visit geofencing" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=geo-card")}" style="width:100%;height:calc(100vh - 9rem);min-height:32rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<p class="muted">The case tracker isn't linked to this store yet.</p>`}`;
+    ${HUB.linked ? `<p class="muted">Visit geofencing lives in the case tracker; this is its card. Changes save there.</p>${HOSTABLE ? `<iframe class="hubframe" title="Visit geofencing" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=geo-card")}" style="width:100%;height:calc(100vh - 9rem);min-height:32rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<a class="btn solid" href="${switchHref("/admin#hub-geo")}"${FRAMED ? ' target="_top"' : ""}>Open geofencing in the case tracker ↗</a><p class="muted" style="margin-top:.4rem">On iPhone and iPad it opens as its own page, already signed in.</p>`}` : `<p class="muted">The case tracker isn't linked to this store yet.</p>`}`;
 }
 /* ---------- how to: how the whole thing works, in plain words — written for the reader's own role ---------- */
 function howto() {
