@@ -17,6 +17,7 @@ app.disable("x-powered-by");
 // Stripe signs its webhook calls over the raw body, so that one route reads the body before the JSON parser
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req, res, next) => stripeWebhook(req, res).catch(next));
 app.use(express.json({ limit: "16mb" }));
+require("./server/migrate")(app, require("./server/db").pool); // moving workspaces: data copy + forwarding (off unless MIGRATE_SECRET / REDIRECT_TO are set)
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
   res.set("Referrer-Policy", "same-origin");

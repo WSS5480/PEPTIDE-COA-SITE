@@ -165,7 +165,6 @@ alter table orders add column if not exists terms_days int;
 alter table users add column if not exists comm_tiered boolean not null default true;
 alter table orders add column if not exists comm_paid_cents int; -- the commission actually paid out on this order (locked at payout)
 alter table orders add column if not exists pay_ref text not null default '';
-alter table discount_codes add column if not exists min_vials int not null default 0;
 alter table products add column if not exists low_alerted_at timestamptz;
 alter table products add column if not exists image bytea;
 alter table products add column if not exists image_type text;
@@ -264,6 +263,7 @@ create table if not exists discount_codes (
   note text not null default '',
   created_at timestamptz not null default now()
 );
+alter table discount_codes add column if not exists min_vials int not null default 0; -- after the table exists (a brand-new database failed here)
 create index if not exists orders_rep_idx on orders(rep_id);
 create index if not exists orders_customer_idx on orders(customer_id);
 create index if not exists orders_status_idx on orders(status);
