@@ -2747,6 +2747,27 @@ app.use((err, req, res, next) => { console.error(err); bad(res, "Something went 
       finally { client.release(); }
     }
   }
+  // INVENTORY_RESET on the host: each new value clears inventory once, ready for a first count. Every product's stock goes
+  // back to "not counted yet" and the stock history and count sheets are removed, so the next count (or quantity upload)
+  // posts as each product's opening count. Products, prices, orders and customers stay.
+  const invTag = String(process.env.INVENTORY_RESET || "").trim();
+  if (invTag) {
+    const { rows: [done] } = await q("select value from settings where key = 'inventoryResetMark'");
+    if (!done || done.value !== JSON.stringify(invTag) && done.value !== invTag) {
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        const { rowCount: lines } = await client.query("delete from stock_count_lines");
+        const { rowCount: counts } = await client.query("delete from stock_counts");
+        const { rowCount: moves } = await client.query("delete from stock_moves");
+        const { rowCount: prods } = await client.query("update products set stock = null where stock is not null");
+        await client.query("insert into settings(key,value) values ('inventoryResetMark',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(invTag)]);
+        await client.query("commit");
+        console.log(`Inventory reset (${invTag}): ${prods} products back to not counted, removed ${moves} stock moves, ${counts} counts (${lines} lines)`);
+      } catch (e) { await client.query("rollback").catch(() => {}); console.error("Inventory reset failed:", e.message); }
+      finally { client.release(); }
+    }
+  }
   // One-time: the blends get their market names (KLOW, GLOW, …); what's in each vial moves into the description.
   const { rows: [renamed] } = await q("select 1 from settings where key = 'blendNamesV2'");
   if (!renamed) {
