@@ -50,7 +50,8 @@ function banner(el, S) {
 let S = {}, PRODUCTS = [], REPORTS = [], FUL = [], DOCS = [];
 let CODE = null; // discount code applied at checkout: { code, kind, value, label, minSubtotalCents }
 let PRICING = null; // { markup } when the signed-in customer has their own pricing
-let HIDDEN = false; // prices are shown only after a customer signs in
+let HIDDEN = false; // (retired) prices hidden until sign-in
+let SIGN_TO_ORDER = false; // guests see prices but sign in with their PIN to order
 let cart = store.get("cart") || [];   // [{id, qty}]
 const saveCart = () => { store.set("cart", cart); drawCartCount(); };
 
@@ -121,7 +122,7 @@ function drawProducts() {
     const sold = !!S.showSoldOut && p.stock !== null && p.stock <= 0; // "sold out" only when the office turns it on; otherwise it's a backorder
     const price = HIDDEN ? `<p class="p-price ask">Sign in for pricing</p>` : p.price_cents !== null ? `<p class="p-price">${money(p.price_cents)}</p>` : `<p class="p-price ask">Ask for price</p>`;
     const stock = (p.store_note ? `<span class="stockline note">${esc(p.store_note)}</span>` : "") + (sold ? `<span class="soldout">Sold out</span>` : stockText(p)); // Site settings → what shoppers see about stock
-    const buy = HIDDEN ? `<button class="btn solid" type="button" data-signin>Sign in to order</button>`
+    const buy = HIDDEN || SIGN_TO_ORDER ? `<button class="btn solid" type="button" data-signin>Sign in to order</button>`
       : p.price_cents === null ? (S.contact ? `<span class="stockline">Contact us: ${esc(S.contact)}</span>` : "")
       : sold ? "" : `<button class="btn solid" type="button" data-add="${p.id}">Add to cart${inCart(p.id) ? ` (${inCart(p.id)})` : ""}</button>`;
     return `<article class="pcard">
@@ -160,8 +161,8 @@ function codeOff(sub) { return codeOffFor(CODE, sub, cartLines().map((l) => ({ c
 function drawCart() {
   const lines = cartLines();
   if (lines.length !== cart.length) { cart = lines.map(({ id, qty }) => ({ id, qty })); saveCart(); }
-  if (HIDDEN) {
-    $("cartBody").innerHTML = `<div class="empty"><p>Sign in with your PIN to see prices and order.</p></div>`;
+  if (HIDDEN || SIGN_TO_ORDER) {
+    $("cartBody").innerHTML = `<div class="empty"><p>Sign in with your PIN to order. Don't have one? Request a PIN and we'll set up your account pricing.</p></div>`;
     $("cartFoot").innerHTML = `<button class="btn solid wide" type="button" data-close data-signin>Sign in</button>`;
     return;
   }
@@ -553,7 +554,7 @@ async function load() {
   const res = await fetch("/api/store"); const j = await res.json();
   S = j.settings; PRODUCTS = j.products; REPORTS = j.reports; FUL = j.fulfillment || []; DOCS = j.documents || [];
   banner(document.getElementById("announce"), S);
-  PRICING = j.pricing || null; HIDDEN = !!j.pricesHidden;
+  PRICING = j.pricing || null; HIDDEN = !!j.pricesHidden; SIGN_TO_ORDER = !!j.signToOrder;
   if (first) {
     first = false;
     afterPayment();
@@ -597,7 +598,7 @@ async function load() {
     if (target) requestAnimationFrame(() => { const el = $(rid(target)); if (el) el.scrollIntoView({ block: "center" }); });
     gate();
   } else drawReports();
-  { const base = S.priceNote || ""; $("pNote").textContent = HIDDEN ? "Prices show once you sign in with your PIN." : PRICING ? `${base}${base ? " · " : ""}Your account pricing is applied.` : base; }
+  { const base = S.priceNote || ""; $("pNote").textContent = HIDDEN ? "Prices show once you sign in with your PIN." : SIGN_TO_ORDER ? "Store prices shown. Sign in with your PIN to order and see your account pricing." : PRICING ? `${base}${base ? " · " : ""}Your account pricing is applied.` : base; }
   drawProducts(); drawCartCount();
 }
 if (window.AppRefresh) window.AppRefresh.init({

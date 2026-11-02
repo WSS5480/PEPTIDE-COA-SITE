@@ -828,7 +828,7 @@ async function neworder() {
 /* ---------- customers ---------- */
 async function customers() {
   pane().innerHTML = `<header><h1>${isRep() ? "My customers" : "Customers"}</h1>${isOwner() || isRep() ? `<button class="btn solid" id="addC">Add customer</button>` : ""}</header>
-    ${isRep() ? `<p class="muted">Customers assigned to you. Orders they place (or you place for them) earn your commission. Ask the office to give them a PIN or special pricing.</p>` : `<p class="muted">Give a customer their own PIN to let them into the site. Their PIN works only for them: it unlocks the store and signs them into their account. Changing or revoking it, or turning the account off, ends their access right away. Turn the lock on under Site settings → Site PIN.</p>
+    ${isRep() ? `<p class="muted">Customers assigned to you. Orders they place (or you place for them) earn your commission. Ask the office to give them a PIN or special pricing.</p>` : `<p class="muted">Give a customer their own PIN to let them into the site. Their PIN works only for them: it unlocks the store and signs them into their account. Changing or revoking it, or turning the account off, ends their access right away.</p>
     <p class="muted"><strong>Markup:</strong> a customer with a markup pays our cost plus that percent on every product that has a cost (products without a cost stay at the store price). They see their prices as soon as they sign in; sales reps see them when they place that customer's order. "Store prices" = the normal Products &amp; prices list.</p>`}
     <div id="cNew"></div><div id="pinShow"></div><div id="pinReq"></div>
     <div class="filters" style="flex-wrap:wrap;gap:.5rem"><input id="cq" type="search" placeholder="Search customers">
@@ -2233,7 +2233,7 @@ async function settings(part = "site") {
         <select id="s-stockDisplay"${ro()}>${[["none", "Nothing (default)"], ["low", "\"Only 3 left\" when low"], ["words", "\"In stock\" / \"Low stock\""], ["count", "The count (\"12 in stock\")"]].map(([k, l]) => `<option value="${k}"${(s.stockDisplay || "none") === k ? " selected" : ""}>${l}</option>`).join("")}</select>
         <span style="white-space:nowrap">Low = <input id="s-stockLowAt" value="${esc(s.stockLowAt ?? 5)}" inputmode="numeric" style="width:4rem;display:inline-block"${ro()}> or fewer</span></div>
       <p class="muted">Off (the default): the store never says sold out — orders still go through and the product's Available count goes negative (backordered) so you know what to ship later. Use the <strong>Store note</strong> column under Products to say something like "Sold out — ships in 2 weeks" on a product when you choose to.</p>
-      <label class="chk"><input type="checkbox" id="s-pricesRequireLogin"${s.pricesRequireLogin ? " checked" : ""}${ro()}> Show prices and the cart only after a customer signs in with their PIN (each customer sees their own pricing)</label>
+      <label class="chk"><input type="checkbox" id="s-pricesRequireLogin"${s.pricesRequireLogin ? " checked" : ""}${ro()}> Guests see store prices but must sign in with their PIN to order (each customer then sees their own pricing)</label>
       <div style="margin:-.2rem 0 .4rem 1.6rem;display:flex;flex-wrap:wrap;gap:.4rem .8rem;align-items:center"><label class="chk" style="margin:0"><input type="checkbox" id="s-guestPricesOn"${s.guestPricesOn ? " checked" : ""}${ro()}> Visitors who aren't signed in still see prices and can order, at</label>
         <span style="white-space:nowrap"><input id="s-guestMarkup" value="${esc(s.guestMarkup ?? 0)}" inputmode="decimal" style="width:5rem;display:inline-block"${ro()}> % above the store price</span></div>
       <p class="muted" style="margin-top:0">Signed-in customers keep their own pricing. Example: store price $100 at +20% shows $120 to anyone not signed in.</p>
@@ -2265,9 +2265,8 @@ async function settings(part = "site") {
         <li>Back in Stripe: <strong>Developers → Webhooks → Add endpoint</strong>, URL <span class="mono">${esc(site)}/api/stripe/webhook</span>, event <span class="mono">checkout.session.completed</span>. Copy its <strong>Signing secret</strong> (<span class="mono">whsec_…</span>) into Render as <span class="mono">STRIPE_WEBHOOK_SECRET</span>.</li>
         <li>Reload this page: it should say <em>Stripe connected</em>. Tick the box above and Save.</li></ol></details></div>
     ${part === "email" ? emailPanel : ""}
-    ${isOwner() ? `<div class="panel" id="pinPanel"><h2>Site PIN</h2>
-      <p class="muted">When on, nobody can see the store, products, prices or lab reports until they enter a PIN. Two kinds work: the <strong>shared PIN</strong> below, which anyone can use, and each customer's <strong>own PIN</strong>, which you give out under Customers. Admin stays open to you. Changing the shared PIN makes everyone using it enter the new one.</p>
-      <label class="chk"><input type="checkbox" id="pinOn"> Require the PIN to view the store</label>
+    ${isOwner() ? `<div class="panel" id="pinPanel"><h2>Sign-in PINs</h2>
+      <p class="muted">The store is always open to view, with your store prices. PINs sign people in: each customer's <strong>own PIN</strong> (given out under Customers) shows their account pricing; the <strong>shared office PIN</strong> below signs the office in at store prices.</p>
       <div class="row2" style="align-items:end"><div class="field" style="max-width:14rem"><label class="eyebrow" for="pinNew">New PIN (4 to 8 digits)</label><input id="pinNew" type="password" inputmode="numeric" autocomplete="new-password" placeholder="Leave blank to keep"></div>
       <button class="btn solid" type="button" id="pinSave">Save PIN setting</button></div>
       <span class="muted" id="pinState"></span>
@@ -2290,22 +2289,21 @@ async function settings(part = "site") {
   const pin = await api("/pin");
   const pst = () => {
     const kinds = [pin.set ? "the shared PIN" : "", pin.customerPins ? `${pin.customerPins} customer PIN${pin.customerPins === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
-    document.getElementById("pinState").textContent = pin.on ? (kinds ? `Locked. Visitors can get in with ${kinds}.` : "Locked, and no PINs are active, so nobody can get in. Give a customer a PIN or set a shared one.") : kinds ? `Turned off, so the store is open. Ready to use: ${kinds}.` : "No PINs yet. Set a shared PIN here, or give customers their own under Customers.";
+    document.getElementById("pinState").textContent = kinds ? `The store is open to everyone. Sign-in PINs in use: ${kinds}.` : "The store is open to everyone. No PINs yet: set an office PIN here, or give customers their own under Customers.";
     document.getElementById("pinClear").hidden = !pin.set;
   };
   document.getElementById("pinClear").onclick = async () => {
     if (!confirm("Remove the shared PIN? Only customers with their own PIN will be able to get in.")) return;
-    await api("/pin", { method: "PUT", body: { on: document.getElementById("pinOn").checked && pin.customerPins > 0, clearShared: true } });
-    Object.assign(pin, await api("/pin")); document.getElementById("pinOn").checked = pin.on; pst(); toast("Shared PIN removed");
+    await api("/pin", { method: "PUT", body: { on: false, clearShared: true } });
+    Object.assign(pin, await api("/pin")); pst(); toast("Shared PIN removed");
   };
-  document.getElementById("pinOn").checked = pin.on; pst();
+  pst();
   document.getElementById("pinSave").onclick = async () => {
-    const on = document.getElementById("pinOn").checked, np = document.getElementById("pinNew").value.trim();
+    const on = false, np = document.getElementById("pinNew").value.trim();
     if (np && !/^\d{4,8}$/.test(np)) return toast("The PIN must be 4 to 8 digits");
-    if (on && !pin.set && !np && !pin.customerPins) return toast("Type a shared PIN, or give a customer a PIN first");
     await api("/pin", { method: "PUT", body: { on, pin: np } });
     Object.assign(pin, await api("/pin")); document.getElementById("pinNew").value = ""; pst();
-    toast(on ? "Store locked with PIN" : "PIN turned off");
+    toast(np ? "Office PIN saved" : "Saved");
   };
   document.getElementById("sSave").onclick = async () => {
     const v = (k) => document.getElementById("s-" + k) || { value: Array.isArray(s[k]) ? s[k].join("\n") : (s[k] ?? ""), checked: !!s[k] }; // email fields live on the Email & approvals page: keep what's saved

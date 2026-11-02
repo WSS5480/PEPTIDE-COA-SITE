@@ -128,8 +128,9 @@ async function pinState() {
   let secret = m.pinSecret;
   if (!secret) { secret = crypto.randomBytes(32).toString("hex"); await q("insert into settings(key,value) values ('pinSecret',$1) on conflict (key) do nothing", [JSON.stringify(secret)]); }
   const { rows: [c] } = await q("select count(*)::int n from customers where access_pin_key is not null and active");
-  // once the owner turns the lock on it stays on, even if every PIN is later revoked (then nobody gets in)
-  pinCache = { at: Date.now(), on: !!m.pinOn, hash: m.pinHash || "", secret, customerPins: c.n };
+  // The store is always open to view (v2.62): the old "require the PIN to view the store" lock is retired.
+  // PINs now only sign customers in for their own pricing (and the office/team for store prices).
+  pinCache = { at: Date.now(), on: false, hash: m.pinHash || "", secret, customerPins: c.n };
   return pinCache;
 }
 const hmac = (secret, text) => crypto.createHmac("sha256", secret).update(text).digest("hex");
@@ -148,6 +149,7 @@ async function passOk(st, t) {
   return !!c;
 }
 app.use(wrap(async (req, res, next) => {
+  if (/^\/pin(\.html)?$/.test(req.path)) { res.set("Cache-Control", "no-store"); return res.redirect(302, "/"); } // old lock page: straight to the store
   if (PIN_OPEN.some((r) => r.test(req.path))) return next();
   const st = await pinState();
   if (!st.on) return next();
@@ -243,10 +245,12 @@ app.get("/api/store", wrap(async (req, res) => {
   // With "prices only after sign-in" on, guests get the catalog without prices.
   const markup = cust && cust.markup !== null ? Number(cust.markup) : null;
   const guest = !cust && !house, guestUp = guest && s.guestPricesOn ? Math.max(0, Number(s.guestMarkup) || 0) : 0;
-  const hide = !!s.pricesRequireLogin && guest && !s.guestPricesOn;
+  // Everyone sees prices (the store's default prices, or their own once signed in). "Prices only after sign-in" now
+  // only means guests sign in with their PIN before they can order.
+  const hide = false, signToOrder = !!s.pricesRequireLogin && guest && !s.guestPricesOn;
   const out = products.map(({ cost_cents, ...p }) => ({ ...p, stock: s.showSoldOut || (s.stockDisplay && s.stockDisplay !== "none") ? p.stock : null, price_cents: hide ? null : guestPrice(priceFor({ ...p, cost_cents }, markup), guestUp) })); // stock counts stay private unless sold-out messages are on
   res.set("Cache-Control", "no-store");
-  res.json({ settings: publicSettings(s), products: out, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents, pricing: markup !== null ? { markup } : null, pricesHidden: hide, signedIn: !!cust || !!(house && !cust), house: !!(house && !cust) });
+  res.json({ settings: publicSettings(s), products: out, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents, pricing: markup !== null ? { markup } : null, pricesHidden: hide, signToOrder, signedIn: !!cust || !!(house && !cust), house: !!(house && !cust) });
 }));
 
 app.get("/coa/:id", wrap(async (req, res) => {
@@ -2345,7 +2349,7 @@ admin.put("/pin", owner, wrap(async (req, res) => {
   const { rows: [h] } = await q("select value from settings where key = 'pinHash'");
   const { rows: [cp] } = await q("select count(*)::int n from customers where access_pin_key is not null and active");
   if (b.on && !h && !cp.n) return bad(res, "Set a shared PIN or give at least one customer a PIN first.");
-  await q("insert into settings(key,value) values ('pinOn',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(!!b.on)]);
+  await q("insert into settings(key,value) values ('pinOn',$1) on conflict (key) do update set value = excluded.value", [JSON.stringify(false)]); // the view lock is retired
   pinCache.at = 0;
   res.json({ ok: true });
 }));
