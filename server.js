@@ -6,6 +6,7 @@ const bcrypt = require("bcryptjs");
 const { q, pool, init, getSettings, DEFAULT_SETTINGS } = require("./server/db");
 const mail = require("./server/mail");
 const sms = require("./server/sms");
+const webpush = require("web-push");
 
 /* ---------- Stripe: card payments, on once STRIPE_SECRET_KEY is set on the host ---------- */
 const STRIPE_KEY = String(process.env.STRIPE_SECRET_KEY || "").trim();
@@ -119,7 +120,7 @@ const owner = (req, res, next) => (req.user.role === "owner" ? next() : bad(res,
 /* ---------- site PIN ---------- */
 // When the owner turns the PIN on, nothing on the store (pages, products, lab reports, orders)
 // is served until the visitor enters it. The admin, its login and the files it needs stay open.
-const PIN_OPEN = [/^\/api\/hub\//, /^\/invoice\/[A-Za-z0-9-]+$/, /^\/sso$/, /^\/(admin|rep)\/(sso|tracker|go\/tracker)$/, /^\/go\/tracker$/, /^\/api\/rep-list$/, /^\/xlsx\.full\.min\.js$/, /^\/collapse\.js$/, /^\/uni-(render|admin|rep)\.js$/, /^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/api\/stripe\//, /^\/pay\//,
+const PIN_OPEN = [/^\/api\/hub\//, /^\/invoice\/[A-Za-z0-9-]+$/, /^\/sso$/, /^\/(admin|rep)\/(sso|tracker|go\/tracker)$/, /^\/go\/tracker$/, /^\/api\/rep-list$/, /^\/xlsx\.full\.min\.js$/, /^\/collapse\.js$/, /^\/uni-(render|admin|rep)\.js$/, /^\/push\.js$/, /^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/api\/stripe\//, /^\/pay\//,
   /^\/store\.css$/, /^\/install\.js$/, /^\/refresh\.js$/, /^\/sw\.js$/, /^\/manifest\.webmanifest$/, /^\/vial\.js$/, /^\/vial-logo$/, /^\/site-logo$/, /^\/vial-photo$/, /^\/vial-photo\.jpg$/, /^\/brand-(logo|mark|vial-logo)\.png$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
 let pinCache = { at: 0, on: false, hash: "", secret: "", customerPins: 0 };
 async function pinState() {
@@ -196,7 +197,8 @@ async function moveStock(db, productId, change, info = {}) {
 }
 // as soon as a product drops below the alert level, every admin gets one email (another only after it has been restocked above the level)
 async function lowStockAlert(productId, stock, info) {
-  const s = await getSettings(); if (s.lowStockEmailOn === false && !(s.smsLowStock !== false && officeNumbers(s).length)) return;
+  const s = await getSettings(); const pushIt = s.pushOn !== false && s.pushLowStock !== false;
+  if (s.lowStockEmailOn === false && !(s.smsLowStock !== false && officeNumbers(s).length) && !pushIt) return;
   const at = Number(s.lowStockAt); const level = isFinite(at) ? at : 5;
   if (stock >= level) { await q("update products set low_alerted_at = null where id = $1 and low_alerted_at is not null", [productId]); return; }
   const { rows: [p] } = await q("select id, name, strength, manufacturer, stock, reorder_point, low_alerted_at from products where id = $1 and active", [productId]);
@@ -204,9 +206,10 @@ async function lowStockAlert(productId, stock, info) {
   const { rows: admins } = await q("select email, name from users where role = 'owner' and active and email is not null");
   const to = s.lowStockEmailOn === false ? [] : admins.map((a) => a.email).filter(isEmail);
   const textIt = s.smsLowStock !== false && officeNumbers(s).length > 0;
-  if (!to.length && !textIt) return;
+  if (!to.length && !textIt && !pushIt) return;
   await q("update products set low_alerted_at = now() where id = $1", [productId]);
   const label = `${p.name} ${p.strength}`.trim(), left = stock < 0 ? `${-stock} backordered` : `${stock} left`;
+  if (pushIt) await pushOffice({ title: `Low stock · ${label}`, body: `${p.manufacturer ? p.manufacturer + " · " : ""}${left}`, url: "/admin#inventory", tag: `low-${p.id}` }, s).catch(() => {});
   if (textIt) await textOffice(`${s.brand || "360 Peptides"}: Low stock · ${label}${p.manufacturer ? ` (${p.manufacturer})` : ""} · ${left}.${BASE_URL ? `\n${BASE_URL}/admin#inventory` : ""}`, "low stock", s).catch(() => {});
   if (!to.length) return;
   const { rows: others } = await q("select name, strength, stock from products where active and stock is not null and stock < $1 and id <> $2 order by stock, name", [level, productId]);
@@ -614,6 +617,44 @@ async function textOrder(o, kind, extra, s) {
     }
   }
 }
+/* ---------- phone notifications (web push): free, every carrier; each person turns them on per device under My account ---------- */
+let vapidKeys = null;
+async function vapid() {
+  if (vapidKeys) return vapidKeys;
+  let { rows: [r] } = await q("select value from settings where key = 'vapidKeys'");
+  if (!r || !r.value || !r.value.publicKey) {
+    await q("insert into settings(key, value) values ('vapidKeys', $1) on conflict (key) do nothing", [JSON.stringify(webpush.generateVAPIDKeys())]);
+    r = (await q("select value from settings where key = 'vapidKeys'")).rows[0];
+  }
+  webpush.setVapidDetails(BASE_URL || "https://three60-medical-peptide-store.onrender.com", r.value.publicKey, r.value.privateKey);
+  return (vapidKeys = r.value);
+}
+// msg: { title, body, url }. Devices that are gone (unsubscribed / app removed) are dropped.
+async function pushUsers(ids, msg) {
+  if (!ids.length) return 0; await vapid(); let n = 0;
+  const { rows } = await q("select p.id, p.sub from push_subs p join users u on u.id = p.user_id where p.user_id = any($1) and u.active", [ids]);
+  for (const r of rows) {
+    try { await webpush.sendNotification(r.sub, JSON.stringify({ title: msg.title, body: msg.body, url: msg.url || "/admin", tag: msg.tag }), { TTL: 86400 }); n++; }
+    catch (e) { if (e.statusCode === 404 || e.statusCode === 410) await q("delete from push_subs where id = $1", [r.id]); else console.error("Push failed:", e.statusCode || e.message); }
+  }
+  return n;
+}
+async function pushOffice(msg, s) {
+  s = s || await getSettings(); if (s.pushOn === false) return 0;
+  const { rows } = await q("select distinct u.id from users u join push_subs p on p.user_id = u.id where u.active and u.role in ('owner','staff')");
+  return pushUsers(rows.map((r) => r.id), msg);
+}
+async function pushOrder(o, kind, extra, s) {
+  if (s.pushOn === false) return;
+  const $ = (c) => "$" + ((c || 0) / 100).toFixed(2), delivered = kind === "shipped" && o.status === "delivered";
+  if (!extra.repOnly && s.pushOrderOffice !== false && ["new", "paid"].includes(kind))
+    await pushOffice({ title: `${kind === "paid" ? "PAID" : "New"} order ${o.number} · ${$(kind === "paid" ? (o.paid_cents ?? o.total_cents) : o.total_cents)}`, body: `${o.name}${o.placed_by && o.placed_by !== "Customer" ? ` · placed by ${o.placed_by}` : ""}`, url: `/admin#order-${o.id}`, tag: `order-${o.id}-${kind}` }, s);
+  if (!extra.noRep && s.pushRepOn !== false && ["new", "paid", "shipped", "cancelled"].includes(kind)) {
+    const repId = o.rep_id || (o.customer_id ? (await q("select rep_id from customers where id = $1", [o.customer_id])).rows[0]?.rep_id : null);
+    const what = kind === "paid" ? "Paid" : kind === "cancelled" ? "Cancelled" : kind === "shipped" ? (delivered ? "Delivered" : "Shipped") : "New order";
+    if (repId) await pushUsers([repId], { title: `${what} · ${o.name}`, body: `Order ${o.number} · ${$(o.total_cents)}`, url: "/rep#orders", tag: `rep-order-${o.id}-${kind}` });
+  }
+}
 async function notifyOrder(orderId, kind, extra = {}) {
   const s = await getSettings();
   const { rows: [o] } = await q("select * from orders where id = $1", [orderId]);
@@ -743,6 +784,7 @@ Open the rep app: ${replink}` : "", "", `— ${s.brand}`].filter((x) => x !== ""
     results.push(r);
   }
   await textOrder(o, kind, extra, s).catch((e) => console.error("Order texts failed:", e.message));
+  await pushOrder(o, kind, extra, s).catch((e) => console.error("Order notifications failed:", e.message));
   return results;
 }
 
@@ -804,6 +846,7 @@ app.post("/api/pin-request", jsonOnly, limit("pinreq", 5, 60 * 60 * 1000), wrap(
   if (email && !isEmail(email)) return bad(res, "That email doesn't look right.");
   const { rows: [r] } = await q("insert into pin_requests(name, company, email, phone, note) values ($1,$2,$3,$4,$5) returning id", [name, company, email, phone, note]);
   const s = await getSettings();
+  if (s.pushOn !== false && s.pushOrderOffice !== false) pushOffice({ title: `PIN request · ${name}`, body: [company, phone, email].filter(Boolean).join(" · "), url: "/admin#customers", tag: `pinreq-${r.id}` }, s).catch(() => {});
   if (s.smsOrderOffice !== false) textOffice(`${s.brand || "360 Peptides"}: PIN request · ${name}${company ? ` (${company})` : ""}${phone ? ` · ${phone}` : ""}${email ? ` · ${email}` : ""}${BASE_URL ? `\n${BASE_URL}/admin#customers` : ""}`, "pin request", s).catch(() => {});
   if (s.orderEmailOn && isEmail(s.orderEmail || "")) {
     const text = [`PIN request from ${name}${company ? ` (${company})` : ""}`, "", email ? `Email: ${email}` : "", phone ? `Phone: ${phone}` : "", note ? `\nMessage: ${note}` : "", BASE_URL ? `\nApprove it under Customers in admin: ${BASE_URL}/admin#customers` : ""].filter((x) => x !== "").join("\n");
@@ -965,6 +1008,25 @@ app.post("/api/admin/my-pin", wrap(auth), wrap(async (req, res) => {
   if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits.");
   await q("update users set pin_hash = $1, pin_version = pin_version + 1 where id = $2", [pin ? await bcrypt.hash(pin, 11) : null, req.user.id]);
   res.json({ ok: true, pinSet: !!pin });
+}));
+// My account → Phone notifications: this device's push subscription (admins, managers, reps)
+app.get("/api/admin/my-push", wrap(auth), wrap(async (req, res) => {
+  const v = await vapid(); const { rows: [c] } = await q("select count(*)::int n from push_subs where user_id = $1", [req.user.id]);
+  res.json({ key: v.publicKey, devices: c.n });
+}));
+app.post("/api/admin/my-push", wrap(auth), wrap(async (req, res) => {
+  const sub = req.body?.sub; if (!sub || typeof sub.endpoint !== "string" || !/^https:\/\//.test(sub.endpoint) || !sub.keys) return bad(res, "This browser didn't give a notification address. Try again.");
+  await q(`insert into push_subs(user_id, endpoint, sub, ua) values ($1,$2,$3,$4) on conflict (endpoint) do update set user_id = excluded.user_id, sub = excluded.sub, ua = excluded.ua`, [req.user.id, sub.endpoint, JSON.stringify(sub), str(req.headers["user-agent"], 200)]);
+  res.json({ ok: true });
+}));
+app.post("/api/admin/my-push/off", wrap(auth), wrap(async (req, res) => {
+  await q("delete from push_subs where user_id = $1 and endpoint = $2", [req.user.id, String(req.body?.endpoint || "")]);
+  res.json({ ok: true });
+}));
+app.post("/api/admin/my-push/test", wrap(auth), limit("pushtest", 10, 15 * 60 * 1000), wrap(async (req, res) => {
+  const n = await pushUsers([req.user.id], { title: "Notifications are on", body: "This is a test from 360 Peptides.", url: req.user.role === "rep" ? "/rep" : "/admin", tag: "test" });
+  if (!n) return bad(res, "No device got it. Turn notifications on for this device first.");
+  res.json({ ok: true, sent: n });
 }));
 // My account → Text alerts: anyone signed in (admin, manager, rep) sets their own cell number and turns texts on or off
 app.get("/api/admin/my-sms", wrap(auth), wrap(async (req, res) => {
@@ -2331,7 +2393,7 @@ admin.delete("/discounts/:id", owner, wrap(async (req, res) => {
 admin.get("/settings", wrap(async (req, res) => {
   const st = await getSettings();
   const out = { ...st, mailPassSet: !!st.mailPass, resendKeySet: !!st.resendKey, graphSecretSet: !!st.graphSecret };
-  for (const k of ["pinHash", "pinSecret", "mailPass", "resendKey", "graphSecret"]) delete out[k];
+  for (const k of ["pinHash", "pinSecret", "mailPass", "resendKey", "graphSecret", "vapidKeys"]) delete out[k];
   res.json({ settings: out, stripe: stripeInfo(), mail: mail.info(st), baseUrl: BASE_URL });
 }));
 // forget the saved mail password / API key (then the host's settings, if any, are used again)
@@ -2367,6 +2429,10 @@ admin.get("/sms", owner, wrap(async (req, res) => {
   const { rows: log } = await q("select at, to_num, who, kind, body, ok, error from sms_log order by id desc limit 50");
   const { rows: people } = await q("select name, role, phone, sms_on from users where active and role = 'rep' order by name");
   res.json({ info: sms.info(), office: officeNumbers(s), people: people.map((u) => ({ name: u.name, role: u.role, phone: u.phone, on: !!u.sms_on, valid: !!sms.norm(u.phone) })), log });
+}));
+admin.get("/push", owner, wrap(async (req, res) => {
+  const { rows } = await q(`select u.name, u.role, count(p.id)::int devices from users u left join push_subs p on p.user_id = u.id where u.active group by u.id order by case u.role when 'owner' then 0 when 'staff' then 1 else 2 end, u.name`);
+  res.json({ people: rows });
 }));
 admin.post("/sms/test", owner, limit("smstest", 10, 15 * 60 * 1000), wrap(async (req, res) => {
   const to = sms.norm(req.body?.to); if (!to) return bad(res, "Enter a 10-digit cell number.");

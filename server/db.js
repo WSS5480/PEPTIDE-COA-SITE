@@ -169,6 +169,7 @@ alter table products add column if not exists low_alerted_at timestamptz;
 alter table users add column if not exists sms_on boolean not null default false;      -- texts: this team member gets alerts by text at their phone
 alter table customers add column if not exists sms_ok boolean not null default false;  -- the customer agreed to order texts
 alter table orders add column if not exists sms_ok boolean not null default false;     -- ticked "text me updates" at checkout
+create table if not exists push_subs (id serial primary key, user_id int not null references users(id) on delete cascade, endpoint text not null unique, sub jsonb not null, ua text not null default '', created_at timestamptz not null default now());
 create table if not exists sms_log (id serial primary key, at timestamptz not null default now(), to_num text not null default '', who text not null default '', kind text not null default '', body text not null default '', ok boolean not null default false, error text not null default '');
 alter table products add column if not exists image bytea;
 alter table products add column if not exists image_type text;
@@ -341,6 +342,11 @@ const DEFAULT_SETTINGS = {
   smsRepOn: true,         // the customer's sales rep: new, paid, shipped, delivered, cancelled (reps who turned texts on)
   smsCustomerOn: true,    // the customer, only when they ticked "text me" or their account says yes
   smsLowStock: true,      // low stock → the office numbers
+  // Phone notifications (web push, free): admins / managers / reps tap "Turn on" in My account on each phone or computer
+  pushOn: true,           // master switch
+  pushOrderOffice: true,  // admins and managers: new orders, card payments, PIN requests
+  pushLowStock: true,     // admins and managers: low stock
+  pushRepOn: true,        // sales reps: their customers' orders placed, paid, shipped, delivered, cancelled
   custIdleMin: 30,      // customers are signed out after this many minutes without using the store (0 = never)
   custCloseOut: true,   // …and when the browser / app is closed
   staffIdleMin: 720,    // admin and rep app: 12 hours idle

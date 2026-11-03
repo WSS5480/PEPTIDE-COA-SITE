@@ -327,6 +327,7 @@ async function account() {
     <div class="panel"><h2>Change password</h2>
       <div class="grid2"><div class="field"><label class="eyebrow" for="pc">Current password</label><input id="pc" type="password" autocomplete="current-password"></div><div class="field"><label class="eyebrow" for="pn">New password (10+ characters)</label><input id="pn" type="password" autocomplete="new-password"></div></div>
       <div><button class="btn solid rep" id="pSave">Change password</button></div></div>
+    <div class="panel" id="pushBox" data-nofold></div>
     <div class="panel"><h2>Text alerts</h2>
       <p class="muted" id="mySmsNote">Get a text when your customers' orders are placed, paid, shipped or delivered. (Case tracker texts are turned on in the tracker.) Standard message rates apply; reply STOP to any text to stop them.</p>
       <div class="grid2"><div class="field"><label class="eyebrow" for="mySmsPh">Cell number</label><input id="mySmsPh" type="tel" inputmode="tel" placeholder="956-555-1234"></div>
@@ -335,6 +336,7 @@ async function account() {
     <div class="panel"><h2>Rep app on your phone</h2><p class="muted">Install it for one-tap access.</p><div><button class="btn" type="button" data-install>Download rep app</button></div></div>
     <p class="muted" id="buildLine" style="text-align:center;font-size:.75rem"></p>`;
   fetch("/api/build").then((r) => r.json()).then((b) => { $("buildLine").textContent = `Rep app v${b.version} · updated ${when(b.updated)}`; }).catch(() => {});
+  if (window.PushUI) window.PushUI.mount($("pushBox"), { toast, btn: "btn solid rep", what: "your customers' orders (placed, paid, shipped, delivered)" });
   fetch("/api/admin/my-sms").then((r) => r.json()).then((j) => { $("mySmsPh").value = j.phone || ""; $("mySmsOn").checked = !!j.on; if (!j.ready) $("mySmsNote").insertAdjacentHTML("beforeend", " <strong>Texting isn't switched on for the company yet</strong>, so nothing is sent until it is."); }).catch(() => {});
   $("mySmsSave").onclick = async () => {
     const r = await fetch("/api/admin/my-sms", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone: $("mySmsPh").value, on: $("mySmsOn").checked }) });

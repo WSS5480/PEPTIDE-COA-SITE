@@ -2224,8 +2224,9 @@ async function settings(part = "site") {
       <p class="muted">One place for both apps' email. The <strong>Peptide store</strong> sends order emails with the account below; the <strong>Case tracker</strong> sends its facility / surgeon approval emails to the COO with the same account.</p>
       <h2 class="eyebrow" style="margin:.2rem 0 -.4rem">Peptide store</h2>${emailPanel}
       <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">Case tracker</h2><div id="trackerMail" class="panel"><h2>Approval emails</h2><p class="muted">Loading…</p></div>
+      <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">Peptide store phone notifications</h2><div id="pushPanel" class="panel"><h2>Phone notifications</h2><p class="muted">Loading…</p></div>
       <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">Peptide store texts</h2><div id="smsPanel" class="panel"><h2>Text messages (SMS)</h2><p class="muted">Loading…</p></div>`;
-    trackerMailPanel(); smsPanel(s);
+    trackerMailPanel(); smsPanel(s); pushPanel(s);
   } else
   pane().innerHTML = `<header><h1>Site settings</h1></header>
     <div class="panel"><h2>Store</h2>
@@ -2599,6 +2600,29 @@ async function staff() {
 }
 
 /* ---------- account ---------- */
+/* ---------- phone notifications (web push): free; each person turns them on per device under My account ---------- */
+async function pushPanel(s) {
+  const box = document.getElementById("pushPanel"); if (!box) return;
+  const d = await api("/push").catch(() => null); if (!d) { box.innerHTML = '<h2>Phone notifications</h2><p class="err">Couldn\'t load.</p>'; return; }
+  const ck = (k, label) => `<label class="chk"><input type="checkbox" id="s-${k}"${s[k] !== false ? " checked" : ""}> <span>${label}</span></label>`;
+  const on = d.people.filter((p) => p.devices);
+  box.innerHTML = `<h2>Phone notifications</h2>
+    <p class="muted">Free pop-up alerts on phones and computers, any carrier, no sign-up. Each person taps <strong>Turn on notifications</strong> under My account (reps: Account in the rep app) on every device they use. On iPhone they add the app to the home screen first.</p>
+    <div style="display:grid;gap:.1rem">
+      ${ck("pushOn", "<strong>Send phone notifications</strong> (master switch)")}
+      ${ck("pushOrderOffice", "Admins and managers: new orders, card payments and PIN requests")}
+      ${ck("pushLowStock", "Admins and managers: low stock (same level as the low-stock email)")}
+      ${ck("pushRepOn", "Sales reps: their customers' orders placed, paid, shipped, delivered, cancelled")}
+    </div>
+    <div class="row2"><button class="btn solid" type="button" id="pushSave">Save notification settings</button></div>
+    <h2 style="font-size:1.05rem;margin-top:.8rem">Turned on (${on.length} of ${d.people.length})</h2>
+    <div style="display:grid;gap:.3rem">${d.people.map((p) => `<div class="row2" style="justify-content:space-between;flex-wrap:wrap;gap:.2rem .6rem;border-bottom:1px solid var(--line);padding:.25rem 0"><span><strong>${esc(p.name)}</strong> <span class="muted">${esc(p.role === "staff" ? "manager" : p.role === "owner" ? "admin" : "rep")}</span></span><span class="muted">${p.devices ? `<span class="pill st-shipped">${p.devices} device${p.devices === 1 ? "" : "s"}</span>` : "not on yet"}</span></div>`).join("")}</div>`;
+  document.getElementById("pushSave").onclick = async () => {
+    const body = {}; ["pushOn", "pushOrderOffice", "pushLowStock", "pushRepOn"].forEach((k) => { body[k] = document.getElementById("s-" + k).checked; });
+    await api("/settings", { method: "PUT", body }); toast("Notification settings saved"); Object.assign(s, body);
+  };
+}
+
 /* ---------- text messages (SMS): one Twilio setup for the store and the case tracker ---------- */
 async function smsPanel(s) {
   const box = document.getElementById("smsPanel"); if (!box) return;
@@ -2654,6 +2678,7 @@ function account() {
       <div class="field"><label class="eyebrow" for="mySmsPh">Cell number</label><input id="mySmsPh" type="tel" inputmode="tel" placeholder="956-555-1234"></div>
       <label class="chk"><input type="checkbox" id="mySmsOn"> Text me alerts</label>
       <div><button class="btn solid" id="mySmsSave">Save text alerts</button></div></div>` : ""}`;
+  if (window.PushUI) { const pb = document.createElement("div"); pb.className = "panel"; pb.style.maxWidth = "28rem"; pb.setAttribute("data-nofold", ""); pane().appendChild(pb); window.PushUI.mount(pb, { toast, what: me.role === "rep" ? "your customers' orders (placed, paid, shipped, delivered)" : "new orders, card payments, PIN requests and low stock" }); }
   if (me.role === "rep") api("/my-sms").then((j) => { document.getElementById("mySmsPh").value = j.phone || ""; document.getElementById("mySmsOn").checked = !!j.on; if (!j.ready) document.getElementById("mySmsNote").insertAdjacentHTML("beforeend", " <strong>Texting isn't switched on for the company yet</strong>, so nothing is sent until it is."); }).catch(() => {});
   if (document.getElementById("mySmsSave")) document.getElementById("mySmsSave").onclick = async () => { const r = await api("/my-sms", { method: "POST", body: { phone: document.getElementById("mySmsPh").value, on: document.getElementById("mySmsOn").checked } }); toast(r.on ? "Text alerts on" : "Text alerts off"); };
   document.getElementById("pinSave").onclick = async () => { const r = await api("/my-pin", { method: "POST", body: { pin: document.getElementById("myPin").value } }); toast(r.pinSet ? "PIN saved" : "PIN removed"); document.getElementById("myPin").value = ""; };
