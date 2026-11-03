@@ -912,13 +912,14 @@ async function customers() {
     const a = c.address || {};
     const f = (id, label, val = "", type = "text") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}" value="${esc(val)}"></div>`;
     document.getElementById("cNew").innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Edit customer</h2><div class="grid2">${f("ec-n", "Name", c.name)}${f("ec-e", "Email (optional)", c.email || "", "email")}${f("ec-p", "Phone", c.phone, "tel")}</div>
+      <label class="chk"><input type="checkbox" id="ec-sms"${c.sms_ok ? " checked" : ""}> Customer agreed to get order updates by text at this number</label>
       <div class="grid2">${f("ec-1", "Street address", a.line1)}${f("ec-2", "Apt, suite", a.line2)}${f("ec-c", "City", a.city)}${f("ec-s", "State", a.state)}${f("ec-z", "ZIP", a.zip)}</div>
       <div class="row2"><button class="btn solid" type="button" id="ecSave">Save changes</button><button class="btn" type="button" id="ecCancel">Cancel</button></div></div>`;
     window.scrollTo(0, 0);
     document.getElementById("ecCancel").onclick = () => { document.getElementById("cNew").innerHTML = ""; paneDirty = false; };
     document.getElementById("ecSave").onclick = async () => {
       const g = (x) => document.getElementById(x).value;
-      await api("/customers/" + c.id, { method: "PATCH", body: { edit: true, name: g("ec-n"), email: g("ec-e"), phone: g("ec-p"), address: { line1: g("ec-1"), line2: g("ec-2"), city: g("ec-c"), state: g("ec-s"), zip: g("ec-z") } } });
+      await api("/customers/" + c.id, { method: "PATCH", body: { edit: true, name: g("ec-n"), email: g("ec-e"), phone: g("ec-p"), smsOk: document.getElementById("ec-sms").checked, address: { line1: g("ec-1"), line2: g("ec-2"), city: g("ec-c"), state: g("ec-s"), zip: g("ec-z") } } });
       toast("Customer updated"); paneDirty = false; document.getElementById("cNew").innerHTML = ""; load();
     };
   };
@@ -1068,7 +1069,7 @@ async function reps() {
         <td class="num">${r.customers}</td><td class="num">${money(r.month_cents)}</td><td class="num">${money(r.sales_cents)}</td><td class="num"><strong>${money(r.commission.earned)}</strong></td></tr>
         <tr class="cdet" data-rid="${r.id}"${open ? "" : " hidden"}><td colspan="5" style="background:var(--ground,#f6f7f9)">
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr));gap:.8rem 1.2rem;padding:.4rem .2rem;align-items:start">
-            ${det("Name", `<input data-k="name" value="${esc(r.name)}" style="width:100%">`)}${det("Email (login)", esc(r.email))}${det("Phone", `<input data-k="phone" value="${esc(r.phone || "")}" style="width:100%">`)}
+            ${det("Name", `<input data-k="name" value="${esc(r.name)}" style="width:100%">`)}${det("Email (login)", esc(r.email))}${det("Phone", `<input data-k="phone" value="${esc(r.phone || "")}" style="width:100%">`)}${det("Texts", `<label class="chk" style="margin:0"><input type="checkbox" data-k="smsOn"${r.sms_on ? " checked" : ""}> Text alerts to this cell</label>`)}
             ${det("Commission", planPick(r, PLAN_ON).replace("justify-content:flex-end", "justify-content:flex-start"))}${det("Orders", r.orders)}${det("Paid out", money(r.commission.paid))}
             ${det("Status", `<label class="chk"><input type="checkbox" data-k="active"${r.active ? " checked" : ""}> Active</label>`)}${det("New password", `<input data-k="password" type="password" placeholder="Leave blank" autocomplete="new-password" style="width:100%">`)}</div>
           <div class="row2" style="margin-top:.6rem"><button class="btn solid" data-save>Save</button><button class="btn" data-comm="${r.id}">Commissions</button><button class="btn" data-rcust="${r.id}">Customers</button></div></td></tr>`; }).join("")}</tbody></table>` : `<p class="muted">${list.length ? "No reps match." : "No sales reps yet."}</p>`;
@@ -1098,7 +1099,7 @@ async function reps() {
     const sm = e.target.closest("tr.csum"); if (sm && !e.target.closest("a, button, input, select")) { const id = +sm.dataset.rid, d = sm.nextElementSibling, open = d.hidden; d.hidden = !open; sm.setAttribute("aria-expanded", open); sm.querySelector(".caret").style.transform = open ? "rotate(90deg)" : ""; if (open) openSet.add(id); else openSet.delete(id); return; }
     if (!e.target.closest("[data-save]")) return;
     const tr = e.target.closest("tr.cdet[data-rid]"), body = {};
-    tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body.active = i.checked; else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
+    tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body[i.dataset.k === "smsOn" ? "smsOn" : "active"] = i.checked; else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
     await api("/reps/" + tr.dataset.rid, { method: "PATCH", body }); toast("Saved"); paneDirty = false; reps();
   };
 }
@@ -2222,8 +2223,9 @@ async function settings(part = "site") {
     pane().innerHTML = `<header><h1>Email &amp; approvals</h1></header>
       <p class="muted">One place for both apps' email. The <strong>Peptide store</strong> sends order emails with the account below; the <strong>Case tracker</strong> sends its facility / surgeon approval emails to the COO with the same account.</p>
       <h2 class="eyebrow" style="margin:.2rem 0 -.4rem">Peptide store</h2>${emailPanel}
-      <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">Case tracker</h2><div id="trackerMail" class="panel"><h2>Approval emails</h2><p class="muted">Loading…</p></div>`;
-    trackerMailPanel();
+      <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">Case tracker</h2><div id="trackerMail" class="panel"><h2>Approval emails</h2><p class="muted">Loading…</p></div>
+      <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">Both apps</h2><div id="smsPanel" class="panel"><h2>Text messages (SMS)</h2><p class="muted">Loading…</p></div>`;
+    trackerMailPanel(); smsPanel(s);
   } else
   pane().innerHTML = `<header><h1>Site settings</h1></header>
     <div class="panel"><h2>Store</h2>
@@ -2516,7 +2518,8 @@ async function staff() {
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,12.5rem),1fr));gap:.7rem 1rem;align-items:end">
         ${F("Name", `<input data-k="name" value="${esc(u.name)}">`)}
         ${F("Role", roleSel(u.role))}
-        ${F("Phone", `<input data-k="phone" value="${esc(u.phone || "")}">`)}
+        ${F("Cell phone", `<input data-k="phone" type="tel" value="${esc(u.phone || "")}">`)}
+        ${F("Texts", `<label class="chk"><input type="checkbox" data-k="smsOn"${u.sms_on ? " checked" : ""}> Text alerts to this cell</label>`)}
         ${F("Commission", planPick(u, PLAN_ON, u.role === "rep").replace("justify-content:flex-end", "justify-content:flex-start") + (u.role === "rep" ? "" : '<span class="muted" data-noplan>— (reps only)</span>'))}
         ${F("PIN", `<input data-k="pin" inputmode="numeric" placeholder="${u.pin_set ? "Set · type to change" : "4–10 digits"}" title="Name + PIN sign-in for both apps">`)}
         ${F("New password", `<input data-k="password" type="password" placeholder="Leave blank to keep" autocomplete="new-password">`)}
@@ -2583,7 +2586,7 @@ async function staff() {
     }
     if (!e.target.closest("[data-save]")) return;
     const tr = e.target.closest("[data-id]"), body = {};
-    tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body.active = i.checked; else if (i.dataset.k === "rate") { if (!i.disabled && i.value.trim() !== "") body.rate = i.value.trim(); } else if (i.dataset.k === "pin") { if (i.value.trim()) body.pin = i.value.trim(); } else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
+    tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body[i.dataset.k === "smsOn" ? "smsOn" : "active"] = i.checked; else if (i.dataset.k === "rate") { if (!i.disabled && i.value.trim() !== "") body.rate = i.value.trim(); } else if (i.dataset.k === "pin") { if (i.value.trim()) body.pin = i.value.trim(); } else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
     body.apps = { store: tr.querySelector('[data-app="store"]').checked, tracker: tr.querySelector('[data-app="tracker"]').checked };
     if (body.role && body.role !== tr.dataset.role && !confirm(`Change this login to ${ROLE[body.role]}? They'll be signed out.`)) return;
     await api("/users/" + tr.dataset.id, { method: "PATCH", body }); toast("Saved"); staff();
@@ -2596,6 +2599,47 @@ async function staff() {
 }
 
 /* ---------- account ---------- */
+/* ---------- text messages (SMS): one Twilio setup for the store and the case tracker ---------- */
+async function smsPanel(s) {
+  const box = document.getElementById("smsPanel"); if (!box) return;
+  const d = await api("/sms").catch(() => null); if (!d) { box.innerHTML = '<h2>Text messages (SMS)</h2><p class="err">Couldn\'t load the text settings.</p>'; return; }
+  const ck = (k, label, def = true) => `<label class="chk"><input type="checkbox" id="s-${k}"${(s[k] ?? def) !== false ? " checked" : ""}> <span>${label}</span></label>`;
+  const when = (t) => new Date(t).toLocaleString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const on = d.people.filter((p) => p.on);
+  box.innerHTML = `<h2>Text messages (SMS)</h2>
+    <p>${d.info.ready ? `<span class="pill st-shipped">Texting connected</span> Sending through ${esc(d.info.detail)}.` : `<span class="pill st-cancelled">Texting not connected</span> Add these on the host (Render → each service's Environment): ${d.info.missing.map((m) => `<span class="mono">${esc(m)}</span>`).join(", ")}. Until then nothing is texted.`}</p>
+    <div class="field"><label class="eyebrow" for="s-smsOffice">Office cell numbers</label><input id="s-smsOffice" value="${esc(d.office.join(", "))}" placeholder="956-555-1234, 956-555-9876"><span class="muted" style="font-size:.8rem">Get new orders, card payments, PIN requests and low stock. Separate several with commas.</span></div>
+    <div style="display:grid;gap:.1rem">
+      ${ck("smsOn", "<strong>Send texts</strong> (master switch for both apps)")}
+      ${ck("smsOrderOffice", "Office: new orders, card payments and PIN requests")}
+      ${ck("smsLowStock", "Office: low stock (same level as the low-stock email)")}
+      ${ck("smsRepOn", "Sales reps: their customers' orders placed, paid, shipped, delivered, cancelled")}
+      ${ck("smsCustomerOn", "Customers: order received, paid, shipped, delivered (only those who said yes at checkout or on their customer record)")}
+      ${ck("smsTracker", "Case tracker alerts: approvals, invoices, visits, WCUs (admins get admin alerts, reps get their own)")}
+      ${ck("smsDigest", "Case tracker Monday digest by text")}
+    </div>
+    <div class="row2" style="align-items:center"><button class="btn solid" type="button" id="smsSave">Save text settings</button></div>
+    <h2 style="font-size:1.05rem;margin-top:.8rem">Who gets team texts (${on.length})</h2>
+    <p class="muted">Each person turns texts on under My account (or you can under Team logins / Sales reps). They need a cell number.</p>
+    ${d.people.length ? `<div style="display:grid;gap:.3rem">${d.people.map((p) => `<div class="row2" style="justify-content:space-between;flex-wrap:wrap;gap:.2rem .6rem;border-bottom:1px solid var(--line);padding:.25rem 0"><span><strong>${esc(p.name)}</strong> <span class="muted">${esc(p.role === "staff" ? "manager" : p.role === "owner" ? "admin" : "rep")}</span></span><span class="muted">${p.phone ? esc(p.phone) + (p.valid ? "" : ' <span class="err" style="display:inline;padding:0 .3rem">not a cell number</span>') : "no number"} · ${p.on ? '<span class="pill st-shipped">texts on</span>' : "texts off"}</span></div>`).join("")}</div>` : ""}
+    <h2 style="font-size:1.05rem;margin-top:.8rem">Send a test text</h2>
+    <div class="row2" style="align-items:end;flex-wrap:wrap"><div class="field" style="margin:0;max-width:14rem"><label class="eyebrow" for="smsTestTo">Cell number</label><input id="smsTestTo" type="tel" placeholder="956-555-1234"></div><button class="btn" type="button" id="smsTest"${d.info.ready ? "" : " disabled"}>Send test</button></div>
+    <details style="margin-top:.8rem"${d.log.length ? "" : " hidden"}><summary><strong>Last ${d.log.length} texts</strong></summary><div style="display:grid;gap:.35rem;margin-top:.4rem">${d.log.map((l) => `<div style="border-bottom:1px solid var(--line);padding:.25rem 0;font-size:.85rem"><div class="row2" style="justify-content:space-between;flex-wrap:wrap;gap:.2rem .6rem"><span><strong>${esc(l.who || l.to_num)}</strong> <span class="muted">${esc(l.to_num)} · ${esc(l.kind)}</span></span><span class="muted">${when(l.at)} · ${l.ok ? "sent" : '<span class="err" style="display:inline;padding:0 .3rem">failed</span>'}</span></div><div class="muted" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(l.body)}${l.error ? " — " + esc(l.error) : ""}</div></div>`).join("")}</div></details>
+    <details class="muted" style="margin-top:.8rem"><summary>How to connect Twilio (one time)</summary><ol>
+      <li>Create an account at <a href="https://www.twilio.com/try-twilio" target="_blank" rel="noopener">twilio.com</a> and upgrade it (add a card) so it can text any number.</li>
+      <li>Buy a local number (Phone Numbers → Buy a number, about $1.15/month).</li>
+      <li>Register for US business texting: Messaging → Regulatory compliance → <strong>A2P 10DLC</strong>. Register your business (brand) and a campaign ("Account notifications"). One-time fees about $20; approval takes 1–3 weeks. Texts to US numbers are blocked until it's approved.</li>
+      <li>From the Twilio Console home copy the <strong>Account SID</strong> and <strong>Auth Token</strong>.</li>
+      <li>In Render, add to <strong>both</strong> the store and the case tracker services → Environment: <span class="mono">TWILIO_ACCOUNT_SID</span>, <span class="mono">TWILIO_AUTH_TOKEN</span>, <span class="mono">TWILIO_FROM</span> (the number, like +19565551234). Save; each restarts by itself.</li>
+      <li>Reload this page: it should say <em>Texting connected</em>. Send yourself a test.</li></ol></details>`;
+  document.getElementById("smsSave").onclick = async () => {
+    const body = { smsOffice: document.getElementById("s-smsOffice").value };
+    ["smsOn", "smsOrderOffice", "smsLowStock", "smsRepOn", "smsCustomerOn", "smsTracker", "smsDigest"].forEach((k) => { body[k] = document.getElementById("s-" + k).checked; });
+    await api("/settings", { method: "PUT", body }); toast("Text settings saved"); Object.assign(s, body); smsPanel(s);
+  };
+  document.getElementById("smsTest").onclick = async () => { const r = await api("/sms/test", { method: "POST", body: { to: document.getElementById("smsTestTo").value } }); toast("Test text sent to " + r.to); smsPanel(s); };
+}
+
 function account() {
   pane().innerHTML = `<header><h1>My account</h1></header>
     <div class="panel" style="max-width:28rem"><h2>Change password</h2>
@@ -2606,7 +2650,14 @@ function account() {
     <div class="panel" style="max-width:28rem"><h2>My PIN</h2>
       <p class="muted">Sign in faster with your name + PIN on this admin, the rep app and the case tracker. ${me.apps && me.apps.tracker ? "" : ""}</p>
       <div class="field"><label class="eyebrow" for="myPin">PIN (4–10 digits; blank to remove)</label><input id="myPin" inputmode="numeric" maxlength="10"></div>
-      <div><button class="btn solid" id="pinSave">Save PIN</button></div></div>`;
+      <div><button class="btn solid" id="pinSave">Save PIN</button></div></div>
+    <div class="panel" style="max-width:28rem"><h2>Text alerts</h2>
+      <p class="muted" id="mySmsNote">Get alerts by text: ${me.role === "rep" ? "your customers' orders (placed, paid, shipped, delivered), case tracker alerts and your Monday summary" : "case tracker alerts (approvals, invoices, visits) and the Monday team summary"}. Standard message rates apply; reply STOP to any text to stop them.</p>
+      <div class="field"><label class="eyebrow" for="mySmsPh">Cell number</label><input id="mySmsPh" type="tel" inputmode="tel" placeholder="956-555-1234"></div>
+      <label class="chk"><input type="checkbox" id="mySmsOn"> Text me alerts</label>
+      <div><button class="btn solid" id="mySmsSave">Save text alerts</button></div></div>`;
+  api("/my-sms").then((j) => { document.getElementById("mySmsPh").value = j.phone || ""; document.getElementById("mySmsOn").checked = !!j.on; if (!j.ready) document.getElementById("mySmsNote").insertAdjacentHTML("beforeend", " <strong>Texting isn't switched on for the company yet</strong>, so nothing is sent until it is."); }).catch(() => {});
+  document.getElementById("mySmsSave").onclick = async () => { const r = await api("/my-sms", { method: "POST", body: { phone: document.getElementById("mySmsPh").value, on: document.getElementById("mySmsOn").checked } }); toast(r.on ? "Text alerts on" : "Text alerts off"); };
   document.getElementById("pinSave").onclick = async () => { const r = await api("/my-pin", { method: "POST", body: { pin: document.getElementById("myPin").value } }); toast(r.pinSet ? "PIN saved" : "PIN removed"); document.getElementById("myPin").value = ""; };
   document.getElementById("pSave").onclick = async () => {
     await fetch("/api/admin/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ current: pc.value, next: pn.value }) })

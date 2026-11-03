@@ -249,9 +249,10 @@ async function submitOrder(e) {
   if (v("cEmail") ? !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v("cEmail")) : !ME) return err(v("cEmail") ? "That email doesn't look right." : "Enter your email.");
   if (!v("a1") || !v("aCity") || !v("aState") || !v("aZip")) return err("Enter your full address.");
   if (!$("cfAge").checked || !$("cfRes").checked) return err("Please confirm both statements to place the order.");
+  if (S.smsCustomer && $("cSms") && $("cSms").checked && v("cPhone").replace(/\D/g, "").length < 10) return err("Enter your cell number for order texts, or untick the text box.");
   const f = chosenFul();
   const body = {
-    name: v("cName"), email: v("cEmail"), phone: v("cPhone"),
+    name: v("cName"), email: v("cEmail"), phone: v("cPhone"), smsOk: !!(S.smsCustomer && $("cSms") && $("cSms").checked),
     address: { line1: v("a1"), line2: v("a2"), city: v("aCity"), state: v("aState"), zip: v("aZip"), country: "US" },
     fulfillment: f ? f.key : "ship", discountCode: CODE ? CODE.code : "", pay: S.cardPayments ? "card" : "request",
     note: v("cNote"), website: $("website").value, confirmAge: true, confirmResearch: true, items: cart
@@ -552,7 +553,7 @@ function drawHelix() {
 let first = true;
 async function load() {
   const res = await fetch("/api/store"); const j = await res.json();
-  S = j.settings; PRODUCTS = j.products; REPORTS = j.reports; FUL = j.fulfillment || []; DOCS = j.documents || [];
+  S = j.settings; if ($("cSmsRow")) $("cSmsRow").hidden = !S.smsCustomer; PRODUCTS = j.products; REPORTS = j.reports; FUL = j.fulfillment || []; DOCS = j.documents || [];
   banner(document.getElementById("announce"), S);
   PRICING = j.pricing || null; HIDDEN = !!j.pricesHidden; SIGN_TO_ORDER = !!j.signToOrder;
   if (first) {

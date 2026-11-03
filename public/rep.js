@@ -327,9 +327,19 @@ async function account() {
     <div class="panel"><h2>Change password</h2>
       <div class="grid2"><div class="field"><label class="eyebrow" for="pc">Current password</label><input id="pc" type="password" autocomplete="current-password"></div><div class="field"><label class="eyebrow" for="pn">New password (10+ characters)</label><input id="pn" type="password" autocomplete="new-password"></div></div>
       <div><button class="btn solid rep" id="pSave">Change password</button></div></div>
+    <div class="panel"><h2>Text alerts</h2>
+      <p class="muted" id="mySmsNote">Get a text when your customers' orders are placed, paid, shipped or delivered, plus case tracker alerts and your Monday summary. Standard message rates apply; reply STOP to any text to stop them.</p>
+      <div class="grid2"><div class="field"><label class="eyebrow" for="mySmsPh">Cell number</label><input id="mySmsPh" type="tel" inputmode="tel" placeholder="956-555-1234"></div>
+      <div class="field"><span class="eyebrow">&nbsp;</span><label class="chk"><input type="checkbox" id="mySmsOn"> Text me alerts</label></div></div>
+      <div><button class="btn solid rep" id="mySmsSave">Save text alerts</button></div></div>
     <div class="panel"><h2>Rep app on your phone</h2><p class="muted">Install it for one-tap access.</p><div><button class="btn" type="button" data-install>Download rep app</button></div></div>
     <p class="muted" id="buildLine" style="text-align:center;font-size:.75rem"></p>`;
   fetch("/api/build").then((r) => r.json()).then((b) => { $("buildLine").textContent = `Rep app v${b.version} · updated ${when(b.updated)}`; }).catch(() => {});
+  fetch("/api/admin/my-sms").then((r) => r.json()).then((j) => { $("mySmsPh").value = j.phone || ""; $("mySmsOn").checked = !!j.on; if (!j.ready) $("mySmsNote").insertAdjacentHTML("beforeend", " <strong>Texting isn't switched on for the company yet</strong>, so nothing is sent until it is."); }).catch(() => {});
+  $("mySmsSave").onclick = async () => {
+    const r = await fetch("/api/admin/my-sms", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone: $("mySmsPh").value, on: $("mySmsOn").checked }) });
+    const j = await r.json(); toast(r.ok ? (j.on ? "Text alerts on" : "Text alerts off") : j.error); if (r.ok) paneDirty = false;
+  };
   $("pSave").onclick = async () => {
     const r = await fetch("/api/admin/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ current: $("pc").value, next: $("pn").value }) });
     const j = await r.json(); toast(r.ok ? "Password changed" : j.error); if (r.ok) { $("pc").value = $("pn").value = ""; paneDirty = false; }

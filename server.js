@@ -5,6 +5,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const { q, pool, init, getSettings, DEFAULT_SETTINGS } = require("./server/db");
 const mail = require("./server/mail");
+const sms = require("./server/sms");
 
 /* ---------- Stripe: card payments, on once STRIPE_SECRET_KEY is set on the host ---------- */
 const STRIPE_KEY = String(process.env.STRIPE_SECRET_KEY || "").trim();
@@ -49,7 +50,7 @@ function publicSettings(s) {
   const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy",
     "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote", "pricesRequireLogin", "showSoldOut", "stockDisplay", "stockLowAt", "custIdleMin"];
   // card payments only work once the Stripe key is on the host, so the store is told the effective state
-  const out = { ...Object.fromEntries(keys.map((k) => [k, s[k]])), cardPayments: !!(s.cardPayments && stripe), bannerTone: s.bannerTone || "navy", bannerLink: s.bannerLink || "", bannerSpeed: Math.min(90, Math.max(6, Number(s.bannerSpeed) || 30)), bannerSticky: s.bannerSticky !== false };
+  const out = { ...Object.fromEntries(keys.map((k) => [k, s[k]])), cardPayments: !!(s.cardPayments && stripe), bannerTone: s.bannerTone || "navy", bannerLink: s.bannerLink || "", bannerSpeed: Math.min(90, Math.max(6, Number(s.bannerSpeed) || 30)), bannerSticky: s.bannerSticky !== false, smsCustomer: s.smsOn !== false && s.smsCustomerOn !== false && sms.ready() };
   // the promo banner stops on its own after its end date (Central time)
   if (s.bannerUntil && new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) > s.bannerUntil) out.announcementOn = false;
   return out;
@@ -195,15 +196,19 @@ async function moveStock(db, productId, change, info = {}) {
 }
 // as soon as a product drops below the alert level, every admin gets one email (another only after it has been restocked above the level)
 async function lowStockAlert(productId, stock, info) {
-  const s = await getSettings(); if (s.lowStockEmailOn === false) return;
+  const s = await getSettings(); if (s.lowStockEmailOn === false && !(s.smsLowStock !== false && officeNumbers(s).length)) return;
   const at = Number(s.lowStockAt); const level = isFinite(at) ? at : 5;
   if (stock >= level) { await q("update products set low_alerted_at = null where id = $1 and low_alerted_at is not null", [productId]); return; }
   const { rows: [p] } = await q("select id, name, strength, manufacturer, stock, reorder_point, low_alerted_at from products where id = $1 and active", [productId]);
   if (!p || p.low_alerted_at) return;
   const { rows: admins } = await q("select email, name from users where role = 'owner' and active and email is not null");
-  const to = admins.map((a) => a.email).filter(isEmail); if (!to.length) return;
+  const to = s.lowStockEmailOn === false ? [] : admins.map((a) => a.email).filter(isEmail);
+  const textIt = s.smsLowStock !== false && officeNumbers(s).length > 0;
+  if (!to.length && !textIt) return;
   await q("update products set low_alerted_at = now() where id = $1", [productId]);
   const label = `${p.name} ${p.strength}`.trim(), left = stock < 0 ? `${-stock} backordered` : `${stock} left`;
+  if (textIt) await textOffice(`${s.brand || "360 Medical Peptides"}: Low stock · ${label}${p.manufacturer ? ` (${p.manufacturer})` : ""} · ${left}.${BASE_URL ? `\n${BASE_URL}/admin#inventory` : ""}`, "low stock", s).catch(() => {});
+  if (!to.length) return;
   const { rows: others } = await q("select name, strength, stock from products where active and stock is not null and stock < $1 and id <> $2 order by stock, name", [level, productId]);
   const link = BASE_URL ? `${BASE_URL}/admin#inventory` : "";
   const subject = `Low stock: ${label} · ${left}`;
@@ -322,6 +327,7 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
   try {
     const r = await createOrder({ name, email, phone, address, items, fulfillment: b.fulfillment, payMethod: payCard ? "card" : "request", discountCode: b.discountCode, markup, guestUp: !signedIn && !house && s.guestPricesOn ? Math.max(0, Number(s.guestMarkup) || 0) : 0, note: b.note, customerId: cust ? cust.id : null, repId: cust ? cust.rep_id : null,
       placedBy: "Customer", event: `Order placed; customer confirmed research use and age${payCard ? "; paying by card" : ""}`, settings: s });
+    if (b.smsOk && sms.norm(phone)) await q("update orders set sms_ok = true where id = $1", [r.id]);
     if (payCard) {
       // the customer pays on Stripe's page; the order is marked paid when they come back (and by the webhook)
       const payUrl = await payLinkFor(r.id, originOf(req), "Customer");
@@ -565,6 +571,49 @@ const trackingUrl = (carrier, num) => { const n = encodeURIComponent(String(num 
 // kind: "new" (order request placed) · "paid" (card payment received) · "unpaid" (card order never finished)
 //       "updated" (the office changed the order; extra.changes lists what) · "shipped" (on its way / delivered) · "cancelled" (removed by the office)
 const etaText = (d) => { if (!d) return ""; const x = new Date(typeof d === "string" ? d.slice(0, 10) + "T12:00:00Z" : d); return isNaN(x) ? "" : x.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" }); };
+/* ---------- text messages (SMS) ---------- */
+// Every text goes through here: the master switch, the Twilio keys, a real number, and a log line in sms_log.
+async function textTo(num, body, kind, who, s) {
+  s = s || await getSettings();
+  if (s.smsOn === false || !sms.ready()) return { ok: false, skipped: true };
+  const to = sms.norm(num); if (!to) return { ok: false, skipped: true };
+  const r = await sms.send(to, body);
+  await q("insert into sms_log(to_num, who, kind, body, ok, error) values ($1,$2,$3,$4,$5,$6)", [to, str(who, 120), kind, String(body).slice(0, 640), !!r.ok, r.ok ? "" : String(r.error || "").slice(0, 300)]).catch(() => {});
+  if (!r.ok) console.error(`Text to ${to} failed: ${r.error}`);
+  return r;
+}
+const officeNumbers = (s) => [...new Set(String(s.smsOffice || "").split(/[,;\n]+/).map(sms.norm).filter(Boolean))];
+async function textOffice(body, kind, s) { s = s || await getSettings(); for (const n of officeNumbers(s)) await textTo(n, body, kind, "Office", s); }
+// team members (admins, managers, reps) who turned texts on and have a cell number
+async function textUsers(ids, body, kind, s) {
+  if (!ids.length) return 0; s = s || await getSettings(); let n = 0;
+  const { rows } = await q("select id, name, phone from users where id = any($1) and active and sms_on and phone <> ''", [ids]);
+  for (const u of rows) if ((await textTo(u.phone, body, kind, u.name, s)).ok) n++;
+  return n;
+}
+// an order's texts: the office, the customer's rep, and the customer (only if they said yes)
+async function textOrder(o, kind, extra, s) {
+  if (s.smsOn === false || !sms.ready()) return;
+  const $ = (c) => "$" + ((c || 0) / 100).toFixed(2), brand = s.brand || "360 Medical Peptides", delivered = kind === "shipped" && o.status === "delivered";
+  if (!extra.repOnly && s.smsOrderOffice !== false && ["new", "paid"].includes(kind))
+    await textOffice(`${brand}: ${kind === "paid" ? "PAID" : "New"} order ${o.number} · ${$(kind === "paid" ? (o.paid_cents ?? o.total_cents) : o.total_cents)} · ${o.name}${o.placed_by && o.placed_by !== "Customer" ? ` (by ${o.placed_by})` : ""}${BASE_URL ? `\n${BASE_URL}/admin#order-${o.id}` : ""}`, "order", s);
+  if (!extra.noRep && s.smsRepOn !== false && ["new", "paid", "shipped", "cancelled"].includes(kind)) {
+    const repId = o.rep_id || (o.customer_id ? (await q("select rep_id from customers where id = $1", [o.customer_id])).rows[0]?.rep_id : null);
+    const what = kind === "paid" ? "paid" : kind === "cancelled" ? "was cancelled" : kind === "shipped" ? (delivered ? "was delivered" : "shipped") : /^Rep/.test(o.placed_by || "") ? "is in" : "was placed";
+    if (repId) await textUsers([repId], `${brand}: ${o.name}'s order ${o.number} (${$(o.total_cents)}) ${what}.${BASE_URL ? `\n${BASE_URL}/rep#orders` : ""}`, "rep", s);
+  }
+  if (!extra.repOnly && s.smsCustomerOn !== false && o.phone && ["new", "paid", "shipped", "cancelled"].includes(kind)) {
+    const ok = o.sms_ok || (o.customer_id && (await q("select sms_ok from customers where id = $1", [o.customer_id])).rows[0]?.sms_ok);
+    if (ok) {
+      const track = o.tracking ? ` Tracking: ${`${o.carrier || ""} ${o.tracking}`.trim()}${trackingUrl(o.carrier, o.tracking) ? " " + trackingUrl(o.carrier, o.tracking) : ""}` : "";
+      const msg = kind === "paid" ? `payment of ${$(o.paid_cents ?? o.total_cents)} received for order ${o.number}. Thank you!`
+        : kind === "cancelled" ? `your order ${o.number} was cancelled. Questions? Reply to our email or call us.`
+        : kind === "shipped" ? (delivered ? `your order ${o.number} was delivered.` : `your order ${o.number} ${o.fulfillment === "delivery" ? "is on its way" : "has shipped"}.${track}`)
+        : `we received your order ${o.number} (${$(o.total_cents)}).`;
+      await textTo(o.phone, `${brand}: ${msg} Reply STOP to stop texts.`, "customer", o.name, s);
+    }
+  }
+}
 async function notifyOrder(orderId, kind, extra = {}) {
   const s = await getSettings();
   const { rows: [o] } = await q("select * from orders where id = $1", [orderId]);
@@ -693,6 +742,7 @@ Open the rep app: ${replink}` : "", "", `— ${s.brand}`].filter((x) => x !== ""
     if (!r.ok) console.error(`Customer email to ${o.email} failed: ${r.error}`);
     results.push(r);
   }
+  await textOrder(o, kind, extra, s).catch((e) => console.error("Order texts failed:", e.message));
   return results;
 }
 
@@ -754,6 +804,7 @@ app.post("/api/pin-request", jsonOnly, limit("pinreq", 5, 60 * 60 * 1000), wrap(
   if (email && !isEmail(email)) return bad(res, "That email doesn't look right.");
   const { rows: [r] } = await q("insert into pin_requests(name, company, email, phone, note) values ($1,$2,$3,$4,$5) returning id", [name, company, email, phone, note]);
   const s = await getSettings();
+  if (s.smsOrderOffice !== false) textOffice(`${s.brand || "360 Medical Peptides"}: PIN request · ${name}${company ? ` (${company})` : ""}${phone ? ` · ${phone}` : ""}${email ? ` · ${email}` : ""}${BASE_URL ? `\n${BASE_URL}/admin#customers` : ""}`, "pin request", s).catch(() => {});
   if (s.orderEmailOn && isEmail(s.orderEmail || "")) {
     const text = [`PIN request from ${name}${company ? ` (${company})` : ""}`, "", email ? `Email: ${email}` : "", phone ? `Phone: ${phone}` : "", note ? `\nMessage: ${note}` : "", BASE_URL ? `\nApprove it under Customers in admin: ${BASE_URL}/admin#customers` : ""].filter((x) => x !== "").join("\n");
     mail.send({ to: s.orderEmail, subject: `PIN request · ${name}${company ? " · " + company : ""}`, text, html: emailHtml(s, { eyebrow: "Store admin", kicker: "New PIN request", title: name, badge: { text: "Request", tone: "info" }, intro: `${name}${company ? ` from ${company}` : ""} asked for a PIN to sign in to the store.`, facts: [...(email ? [["Email", `<a href="mailto:${escHtml(email)}" style="color:${BLUE}">${escHtml(email)}</a>`]] : []), ...(phone ? [["Phone", escHtml(phone)]] : []), ...(company ? [["Company", escHtml(company)]] : [])], note: note ? { label: "Message", text: note } : null, button: BASE_URL ? { text: "Open Customers in admin", url: `${BASE_URL}/admin#customers` } : null, footer: `Sent by the ${escHtml(s.brand)} store.` }), replyTo: email || undefined }, s).then((x) => { if (!x.ok) console.error("PIN request email failed:", x.error); });
@@ -914,6 +965,18 @@ app.post("/api/admin/my-pin", wrap(auth), wrap(async (req, res) => {
   if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits.");
   await q("update users set pin_hash = $1, pin_version = pin_version + 1 where id = $2", [pin ? await bcrypt.hash(pin, 11) : null, req.user.id]);
   res.json({ ok: true, pinSet: !!pin });
+}));
+// My account → Text alerts: anyone signed in (admin, manager, rep) sets their own cell number and turns texts on or off
+app.get("/api/admin/my-sms", wrap(auth), wrap(async (req, res) => {
+  const { rows: [u] } = await q("select phone, sms_on from users where id = $1", [req.user.id]);
+  res.json({ phone: u?.phone || "", on: !!u?.sms_on, ready: sms.ready() });
+}));
+app.post("/api/admin/my-sms", wrap(auth), wrap(async (req, res) => {
+  const phone = str(req.body?.phone, 40), on = !!req.body?.on;
+  if (phone && !sms.norm(phone)) return bad(res, "Enter a 10-digit cell number, e.g. 956-555-1234.");
+  if (on && !phone) return bad(res, "Enter your cell number to turn texts on.");
+  await q("update users set phone = $1, sms_on = $2 where id = $3", [phone, on, req.user.id]);
+  pokeTracker(); res.json({ ok: true, on });
 }));
 app.post("/api/admin/logout", wrap(async (req, res) => {
   const token = parseCookies(req.headers.cookie).sid;
@@ -1531,7 +1594,7 @@ admin.post("/pin-requests/:id/dismiss", owner, wrap(async (req, res) => {
 /* ---------- admin: customers ---------- */
 admin.get("/customers", wrap(async (req, res) => {
   const term = str(req.query.q, 80).toLowerCase();
-  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.active, c.created_at, c.markup, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.rep_id, (select name from users where id = c.rep_id) rep_name,
+  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.sms_ok, c.active, c.created_at, c.markup, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.rep_id, (select name from users where id = c.rep_id) rep_name,
       count(o.id) filter (where o.status <> 'cancelled')::int orders, coalesce(sum(o.total_cents) filter (where o.status in ('paid','shipped','delivered')), 0)::int spent_cents,
       coalesce(sum(o.total_cents) filter (where o.status <> 'cancelled'), 0)::int total_cents, coalesce(sum(o.total_cents) filter (where o.status <> 'cancelled' and o.paid_at is null), 0)::int open_cents,
       max(o.created_at) filter (where o.status <> 'cancelled') last_order,
@@ -1598,6 +1661,7 @@ admin.patch("/customers/:id", (req, res, next) => (isRep(req) ? next() : owner(r
     if (email && !isEmail(email)) return bad(res, "That email doesn't look right. Leave it blank if they don't have one.");
     if (email) { const { rows: [dup] } = await q("select 1 from customers where lower(email) = $1 and id <> $2", [email, id]); if (dup) return bad(res, "Another customer already uses that email."); }
     await q("update customers set name = $1, email = $2, phone = $3, address = $4 where id = $5", [str(b.name, 120), email || null, str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), id]);
+    if (b.smsOk !== undefined) await q("update customers set sms_ok = $1 where id = $2", [!!b.smsOk && !!sms.norm(b.phone), id]);
     return res.json({ ok: true });
   }
   if (req.body?.repId !== undefined) {
@@ -1911,7 +1975,7 @@ admin.post("/reports/clear", owner, wrap(async (req, res) => {
 
 /* ---------- admin: sales reps ---------- */
 admin.get("/reps", wrap(async (req, res) => {
-  const { rows } = await q(`select u.id, u.name, u.email, u.phone, u.commission_rate, u.comm_tiered, u.active, u.created_at,
+  const { rows } = await q(`select u.id, u.name, u.email, u.phone, u.sms_on, u.commission_rate, u.comm_tiered, u.active, u.created_at,
       (select count(*)::int from customers c where c.rep_id = u.id) customers,
       (select count(*)::int from orders o where o.rep_id = u.id and o.status <> 'cancelled') orders,
       coalesce((select sum(o.subtotal_cents - o.discount_cents) from orders o where o.rep_id = u.id and o.status <> 'cancelled'), 0)::int sales_cents,
@@ -1939,6 +2003,7 @@ admin.patch("/reps/:id", owner, wrap(async (req, res) => {
   if (b.plan === "tiered" || b.plan === "flat") await q("update users set comm_tiered = $1 where id = $2", [b.plan === "tiered", id]);
   if (b.name !== undefined) await q("update users set name = $1 where id = $2", [str(b.name, 80), id]);
   if (b.phone !== undefined) await q("update users set phone = $1 where id = $2", [str(b.phone, 40), id]);
+  if (b.smsOn !== undefined) { if (b.smsOn && !sms.norm((await q("select phone from users where id = $1", [id])).rows[0]?.phone)) return bad(res, "Add a cell number first to turn texts on."); await q("update users set sms_on = $1 where id = $2", [!!b.smsOn, id]); pokeTracker(); }
   if (b.rate !== undefined) { const r = rateOf(b.rate); if (r === null) return bad(res, "Enter the commission as a percent."); await q("update users set commission_rate = $1 where id = $2", [r, id]); }
   if (b.active !== undefined) { await q("update users set active = $1 where id = $2", [!!b.active, id]); if (!b.active) await q("delete from sessions where user_id = $1", [id]); }
   if (b.password) {
@@ -2296,6 +2361,22 @@ admin.post("/mail/test", owner, wrap(async (req, res) => {
   if (!r.ok) return bad(res, r.error);
   res.json({ ok: true, to });
 }));
+// Texts: status, who gets them, the last 50 sent, and a test text
+admin.get("/sms", owner, wrap(async (req, res) => {
+  const s = await getSettings();
+  const { rows: log } = await q("select at, to_num, who, kind, body, ok, error from sms_log order by id desc limit 50");
+  const { rows: people } = await q("select name, role, phone, sms_on from users where active order by case role when 'owner' then 0 when 'staff' then 1 else 2 end, name");
+  res.json({ info: sms.info(), office: officeNumbers(s), people: people.map((u) => ({ name: u.name, role: u.role, phone: u.phone, on: !!u.sms_on, valid: !!sms.norm(u.phone) })), log });
+}));
+admin.post("/sms/test", owner, limit("smstest", 10, 15 * 60 * 1000), wrap(async (req, res) => {
+  const to = sms.norm(req.body?.to); if (!to) return bad(res, "Enter a 10-digit cell number.");
+  if (!sms.ready()) return bad(res, "Texting isn't set up yet: add the Twilio keys on the host first.");
+  const s = await getSettings();
+  const r = await sms.send(to, `${s.brand || "360 Medical Peptides"}: test text from the admin. Texts are working.`);
+  await q("insert into sms_log(to_num, who, kind, body, ok, error) values ($1,$2,'test',$3,$4,$5)", [to, req.user.name || req.user.email, "Test text", !!r.ok, r.ok ? "" : String(r.error || "")]).catch(() => {});
+  if (!r.ok) return bad(res, r.error);
+  res.json({ ok: true, to });
+}));
 admin.put("/settings", owner, wrap(async (req, res) => {
   const b = req.body || {};
   if (b.mailMode !== undefined) console.log(`Mail settings saved by ${req.user.email}: mode=${b.mailMode || "(none)"} host=${b.mailHost || ""} port=${b.mailPort || ""} login/mailbox=${b.mailUser || ""} from=${b.mailFrom || "(login)"} tenant=${b.graphTenant || ""} client=${b.graphClient || ""} password=${b.mailPass ? "typed" : "kept"} resendKey=${b.resendKey ? "typed" : "kept"} appSecret=${b.graphSecret ? "typed" : "kept"}`);
@@ -2307,6 +2388,7 @@ admin.put("/settings", owner, wrap(async (req, res) => {
     if (k === "cooEmail") { v = str(v, 160).toLowerCase(); if (v && !isEmail(v)) return bad(res, "The COO email address doesn't look right."); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; }
     if (k === "mailPass" || k === "resendKey" || k === "graphSecret") { v = String(v || ""); if (!v.trim()) continue; v = v.trim().slice(0, 300); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; } // blank = keep the saved one
     if (k === "mailMode") v = ["smtp", "resend", "graph"].includes(v) ? v : "";
+    if (k === "smsOffice") { const parts = String(v || "").split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean); const badNum = parts.find((x) => !sms.norm(x)); if (badNum) return bad(res, `"${badNum}" isn't a cell number. Use 10 digits, e.g. 956-555-1234.`); v = parts.map(sms.norm).join(", "); await q("insert into settings(key, value) values ($1,$2) on conflict (key) do update set value = excluded.value", [k, JSON.stringify(v)]); continue; }
     if (k === "custIdleMin" || k === "staffIdleMin") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 43200) return bad(res, k === "custIdleMin" ? "Customer sign-out: enter minutes (0 = as soon as they leave the store)." : "Idle sign-out: enter minutes (0 = never, up to 43200)."); }
     if (k === "custCloseOut" || k === "showSoldOut" || k === "lowStockEmailOn") v = !!v;
     if (k === "invoiceTermsDays") { v = Math.round(Number(v)); if (!isFinite(v) || v < 0 || v > 365) return bad(res, "Invoice terms: days from 0 to 365."); }
@@ -2357,7 +2439,7 @@ admin.put("/pin", owner, wrap(async (req, res) => {
 /* ---------- admin: users (owner only) ---------- */
 const ROLES = ["owner", "staff", "rep"]; // shown as Admin · Manager · Sales rep
 admin.get("/users", owner, wrap(async (req, res) => {
-  const { rows } = await q(`select u.id, u.email, u.name, u.role, u.phone, u.commission_rate, u.comm_tiered, u.active, u.created_at, u.apps, (u.pin_hash is not null) pin_set,
+  const { rows } = await q(`select u.id, u.email, u.name, u.role, u.phone, u.sms_on, u.commission_rate, u.comm_tiered, u.active, u.created_at, u.apps, (u.pin_hash is not null) pin_set,
       (select count(*)::int from customers c where c.rep_id = u.id) customers,
       exists(select 1 from sessions se where se.user_id = u.id and se.expires > now()) signed_in
     from users u order by case u.role when 'owner' then 0 when 'staff' then 1 else 2 end, u.active desc, u.name, u.email`);
@@ -2403,6 +2485,7 @@ admin.patch("/users/:id", owner, wrap(async (req, res) => {
   if (b.active !== undefined) { await q("update users set active = $1 where id = $2", [!!b.active, id]); if (!b.active) await q("delete from sessions where user_id = $1", [id]); }
   if (b.name !== undefined) await q("update users set name = $1 where id = $2", [str(b.name, 80), id]);
   if (b.phone !== undefined) await q("update users set phone = $1 where id = $2", [str(b.phone, 40), id]);
+  if (b.smsOn !== undefined) { if (b.smsOn && !sms.norm((await q("select phone from users where id = $1", [id])).rows[0]?.phone)) return bad(res, "Add a cell number first to turn texts on."); await q("update users set sms_on = $1 where id = $2", [!!b.smsOn, id]); }
   if (b.apps && typeof b.apps === "object") await q("update users set apps = $1 where id = $2", [JSON.stringify({ store: b.apps.store !== false, tracker: !!b.apps.tracker }), id]);
   if (b.pin !== undefined) { const pin = String(b.pin || "").replace(/\D/g, ""); if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits."); if (pin || b.pin === "") await q("update users set pin_hash = $1, pin_version = pin_version + 1 where id = $2", [pin ? await bcrypt.hash(pin, 11) : null, id]); }
   if (b.plan === "tiered" || b.plan === "flat") await q("update users set comm_tiered = $1 where id = $2", [b.plan === "tiered", id]);
@@ -2432,10 +2515,10 @@ function hubVerify(token) {
 }
 // calls from the tracker carry Authorization: Hub <signed {exp}>
 const hubAuth = (req, res, next) => { const t = /^Hub (.+)$/.exec(req.headers.authorization || ""); if (!HUB_SECRET || !t || !(hubVerify(t[1]) || {}).svc) return bad(res, "Hub signature missing or wrong", 401); next(); };
-const hubUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, phone: u.phone || "", commission_rate: u.commission_rate, active: u.active, apps: appsOf(u), pin_version: u.pin_version || 0 });
+const hubUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, phone: u.phone || "", sms_on: !!u.sms_on, commission_rate: u.commission_rate, active: u.active, apps: appsOf(u), pin_version: u.pin_version || 0 });
 // the people the tracker should know: everyone with the Case tracker box ticked
 app.get("/api/hub/people", hubAuth, wrap(async (req, res) => {
-  const { rows } = await q("select id, email, name, role, phone, commission_rate, active, apps, pin_version from users order by name");
+  const { rows } = await q("select id, email, name, role, phone, sms_on, commission_rate, active, apps, pin_version from users order by name");
   res.json({ people: rows.filter((u) => appsOf(u).tracker).map(hubUser), at: new Date().toISOString() });
 }));
 // a tracker rep signing in by name + PIN on the tracker's own page: checked against the hub PIN
@@ -2444,6 +2527,21 @@ app.post("/api/hub/check-pin", hubAuth, wrap(async (req, res) => {
   const pin = String(req.body?.pin || "").replace(/\D/g, "");
   const ok = !!(u && appsOf(u).tracker && pin.length >= 4 && (await bcrypt.compare(pin, u.pin_hash)));
   res.json({ ok, user: ok ? hubUser(u) : null });
+}));
+// the case tracker's alerts and Monday digest by text: it sends the words, this store sends the texts (one Twilio setup for both apps)
+// body: { kind: "alert" | "digest", messages: [{ to: "admins" | <user id>, text }] }
+app.post("/api/hub/sms", hubAuth, wrap(async (req, res) => {
+  const s = await getSettings(), kind = req.body?.kind === "digest" ? "digest" : "alert";
+  if (s.smsOn === false || !sms.ready() || (kind === "digest" ? s.smsDigest === false : s.smsTracker === false)) return res.json({ ok: true, sent: 0, off: true });
+  let sent = 0;
+  for (const m of (Array.isArray(req.body?.messages) ? req.body.messages : []).slice(0, 100)) {
+    const text = str(m && m.text, 600); if (!text) continue;
+    let ids;
+    if (m.to === "admins") ids = (await q("select id, role, apps from users where active and sms_on and role in ('owner','staff')")).rows.filter((u) => u.role === "owner" || appsOf(u).tracker).map((u) => u.id); // admins always; managers with the Case tracker ticked
+    else ids = [intOrNull(m.to)].filter(Boolean);
+    sent += await textUsers(ids, "360 Medical: " + text, kind === "digest" ? "tracker digest" : "tracker", s);
+  }
+  res.json({ ok: true, sent });
 }));
 // the tracker's email sign-in: the same email + password as the store admin (one login for both apps)
 app.post("/api/hub/check-pass", hubAuth, wrap(async (req, res) => {

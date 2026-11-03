@@ -166,6 +166,10 @@ alter table users add column if not exists comm_tiered boolean not null default 
 alter table orders add column if not exists comm_paid_cents int; -- the commission actually paid out on this order (locked at payout)
 alter table orders add column if not exists pay_ref text not null default '';
 alter table products add column if not exists low_alerted_at timestamptz;
+alter table users add column if not exists sms_on boolean not null default false;      -- texts: this team member gets alerts by text at their phone
+alter table customers add column if not exists sms_ok boolean not null default false;  -- the customer agreed to order texts
+alter table orders add column if not exists sms_ok boolean not null default false;     -- ticked "text me updates" at checkout
+create table if not exists sms_log (id serial primary key, at timestamptz not null default now(), to_num text not null default '', who text not null default '', kind text not null default '', body text not null default '', ok boolean not null default false, error text not null default '');
 alter table products add column if not exists image bytea;
 alter table products add column if not exists image_type text;
 alter table products add column if not exists logo bytea;
@@ -330,6 +334,15 @@ const DEFAULT_SETTINGS = {
   stockLowAt: 5,
   showSoldOut: false,   // the store never says "sold out" unless this is on; orders are taken and stock can go negative (backordered)
   lowStockEmailOn: true, lowStockAt: 5, // email the admins as soon as a product drops below this many
+  // Text messages (Twilio keys on the host). Each alert type can be turned off; nobody gets a text without a number and a yes.
+  smsOn: true,            // master switch
+  smsOffice: "",          // office cell numbers for new orders, PIN requests and low stock (comma separated)
+  smsOrderOffice: true,   // new orders, card payments and PIN requests → the office numbers
+  smsRepOn: true,         // the customer's sales rep: new, paid, shipped, delivered, cancelled (reps who turned texts on)
+  smsCustomerOn: true,    // the customer, only when they ticked "text me" or their account says yes
+  smsLowStock: true,      // low stock → the office numbers
+  smsTracker: true,       // case tracker alerts (approvals, invoices, visits, WCUs) → admins and reps who turned texts on
+  smsDigest: true,        // the Monday digest by text
   custIdleMin: 30,      // customers are signed out after this many minutes without using the store (0 = never)
   custCloseOut: true,   // …and when the browser / app is closed
   staffIdleMin: 720,    // admin and rep app: 12 hours idle
