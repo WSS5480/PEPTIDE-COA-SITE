@@ -15,7 +15,7 @@ const isPurity = (n) => /^purity$/i.test(String(n).trim());
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage off */ } } };
 const openD = (d) => { if (d.showModal) { if (!d.open) d.showModal(); } else d.setAttribute("open", ""); };
 const closeD = (d) => { if (d.close) d.close(); else d.removeAttribute("open"); };
-function toast(msg) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 1800); }
+function toast(msg, ms = 1800) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), ms); }
 
 let cat = "";
 let coaOnly = !!store.get("coaOnly");
@@ -52,6 +52,7 @@ let CODE = null; // discount code applied at checkout: { code, kind, value, labe
 let PRICING = null; // { markup } when the signed-in customer has their own pricing
 let HIDDEN = false; // (retired) prices hidden until sign-in
 let SIGN_TO_ORDER = false; // guests see prices but sign in with their PIN to order
+let PENDING = false; // drawing the last-seen catalog while the fresh one loads: prices and buttons stay hidden until it arrives
 let cart = store.get("cart") || [];   // [{id, qty}]
 const saveCart = () => { store.set("cart", cart); drawCartCount(); };
 
@@ -105,18 +106,21 @@ function drawChips() {
   document.querySelectorAll("[data-coaonly]").forEach((b) => { b.checked = coaOnly; });
 }
 // A product description: the first line(s) say what's in the vial; lines starting with "- " are the benefit bullets.
-const descHtml = (d) => {
+const descHtml = (d, p) => {
   const lines = String(d || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const isB = (l) => /^[-•*]\s*/.test(l);
-  const text = lines.filter((l) => !isB(l)), bullets = lines.filter(isB).map((l) => l.replace(/^[-•*]\s*/, ""));
+  // a first line that only repeats the name and size ("BPC-157 10 mg") is already the card's title and meta: not shown twice
+  const sameAsTitle = (l) => !!p && norm(l) === norm(`${p.name} ${p.strength}`);
+  const text = lines.filter((l) => !isB(l) && !sameAsTitle(l)), bullets = lines.filter(isB).map((l) => l.replace(/^[-•*]\s*/, ""));
   const keepMg = (l) => esc(l).replace(/(\d) (mg|mcg|iu)\b/gi, "$1\u00a0$2"); // "5 mg" never splits across lines
   return `${text.length ? `<p class="stockline pdesc">${text.map(keepMg).join("<br>")}</p>` : ""}${bullets.length ? `<ul class="benefits">${bullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}`;
 };
+let lastGrid = ""; // the cards as last drawn: a refresh that changes nothing leaves the grid alone (no blink)
 function drawProducts() {
   drawChips();
   const words = norm($("hq").value) ? $("hq").value.toLowerCase().split(/\s+/).map(norm).filter(Boolean) : [];
   const list = PRODUCTS.filter((p) => (!coaOnly || reportFor(p)) && (!cat || (p.category || "Research peptide") === cat) && words.every((w) => norm([p.name, p.strength, p.manufacturer, p.category, (reportFor(p) || {}).sample].join(" ")).includes(w)));
-  $("pgrid").innerHTML = list.length ? list.map((p) => {
+  const html = list.length ? list.map((p) => {
     const r = reportFor(p);
     const purity = r ? ((r.results || []).find(([n]) => isPurity(n)) || [])[1] : "";
     const sold = !!S.showSoldOut && p.stock !== null && p.stock <= 0; // "sold out" only when the office turns it on; otherwise it's a backorder
@@ -125,19 +129,21 @@ function drawProducts() {
     const buy = HIDDEN || SIGN_TO_ORDER ? `<button class="btn solid" type="button" data-signin>Sign in to order</button>`
       : p.price_cents === null ? (S.contact ? `<span class="stockline">Contact us: ${esc(S.contact)}</span>` : "")
       : sold ? "" : `<button class="btn solid" type="button" data-add="${p.id}">Add to cart${inCart(p.id) ? ` (${inCart(p.id)})` : ""}</button>`;
-    return `<article class="pcard">
+    return `<article class="pcard${PENDING ? " pend" : ""}">
       <div class="thumb${!p.has_image && (S.vial || {}).shape !== "vial" && (S.vial || {}).shape !== "tall" && (S.vial || {}).shape !== "round" ? " photo" : ""}">${productArt(p)}</div>
       <div class="pbody">
         <span class="pcat">${esc(p.category || "Research peptide")}${p.manufacturer ? ` · ${esc(p.manufacturer)}` : ""}</span>
         <h3 class="pname">${esc(p.name)}</h3>
         <span class="pmeta">${[p.strength, purity ? `${purity} purity` : ""].filter(Boolean).map(esc).join(" · ")}</span>
-        ${descHtml(p.description)}
+        ${descHtml(p.description, p)}
         <div class="pbuy">${price}${stock}
         <p class="research">For laboratory research use only.</p>
         <div class="pact">${buy}${r ? `<a class="btn" href="/lab-reports#${esc(rid(r))}" data-report="${r.id}" data-pid="${p.id}">Lab report</a>` : `<span class="stockline">No report yet</span>`}${docsFor(p).length ? `<button class="btn" type="button" data-docs="${p.id}">Documents (${docsFor(p).length})</button>` : ""}</div></div>
       </div>
     </article>`;
   }).join("") : `<div class="card empty"><p><strong>No product matches.</strong> ${coaOnly ? "You're showing only products with a lab report. Untick it to see everything." : "Try another name or size."}</p></div>`;
+  if (html === lastGrid) return;
+  lastGrid = html; $("pgrid").innerHTML = html;
 }
 
 /* ---------- cart ---------- */
@@ -425,8 +431,8 @@ function whoBar() {
 if (new URLSearchParams(location.search).get("signin") === "1") { history.replaceState(null, "", location.pathname); window.addEventListener("load", () => { setTimeout(() => { loadAccount().then(() => { if (!ME) { const b = document.getElementById("acctLabel"); const t = b && b.closest("button, a"); if (t) t.click(); } }); }, 400); }); }
 // "sign out as soon as they leave" (Site settings: 0 minutes): while the store is open and on screen it checks in every 30 s;
 // once it's closed or the phone switches away, the server signs the customer out within about a minute
-setInterval(() => { if ((ME) && Number(S.custIdleMin) === 0 && !document.hidden) loadAccount().then(() => { if (!ME && !HOUSE) load(); }); }, 30000);
-document.addEventListener("visibilitychange", () => { if (!document.hidden && (ME || HOUSE)) loadAccount().then(() => { if (!ME && !HOUSE) load(); }); });
+setInterval(() => { if ((ME) && Number(S.custIdleMin) === 0 && !document.hidden) loadAccount(true).then(() => { if (!ME && !HOUSE) load(); }); }, 30000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && (ME || HOUSE)) loadAccount(true).then(() => { if (!ME && !HOUSE) load(); }); });
 async function post(url, body, method = "POST") {
   const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "That didn't work."); return j;
@@ -565,8 +571,17 @@ function drawHelix() {
 
 /* ---------- start ---------- */
 let first = true;
+// The last catalog this browser saw: drawn the moment the page opens (no blank grid while the store answers), without
+// prices or buttons — those come with the fresh data a moment later, so nobody sees another person's pricing.
+function drawFromSnapshot() {
+  const snap = store.get("storeSnap");
+  if (!snap || !Array.isArray(snap.products) || !snap.settings || LAB) return;
+  try { S = snap.settings; PRODUCTS = snap.products; REPORTS = snap.reports || []; DOCS = snap.documents || []; PENDING = true; drawProducts(); } catch (e) { PENDING = false; }
+}
 async function load() {
   const res = await fetch("/api/store"); const j = await res.json();
+  PENDING = false;
+  if (Array.isArray(j.products)) store.set("storeSnap", { settings: j.settings, products: j.products, reports: j.reports, documents: j.documents });
   S = j.settings; if ($("cSmsRow")) $("cSmsRow").hidden = !S.smsCustomer; PRODUCTS = j.products; REPORTS = j.reports; FUL = j.fulfillment || []; DOCS = j.documents || [];
   banner(document.getElementById("announce"), S);
   PRICING = j.pricing || null; HIDDEN = !!j.pricesHidden; SIGN_TO_ORDER = !!j.signToOrder;
@@ -626,15 +641,18 @@ if (window.AppRefresh) window.AppRefresh.init({
 const NOW0 = () => Number(S.custIdleMin) === 0;
 const tabMark = (on) => { try { if (on) sessionStorage.setItem("cidTab", "1"); else sessionStorage.removeItem("cidTab"); } catch (e) { /* private mode */ } };
 const tabMarked = () => { try { return sessionStorage.getItem("cidTab") === "1"; } catch (e) { return true; } };
-async function leaveOut() { try { await post("/api/account/logout", {}); } catch (e) { /* already out */ } tabMark(false); await loadAccount(); await load(); }
+const awayMsg = () => "Signed out while you were away. Enter your PIN to sign back in." + (NOW0() ? " (This store signs customers out as soon as they leave.)" : "");
+async function leaveOut() { try { await post("/api/account/logout", {}); } catch (e) { /* already out */ } tabMark(false); await _la(); await load(); toast(awayMsg(), 6000); }
 let hiddenAt = 0;
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { hiddenAt = Date.now(); return; }
   if (ME && NOW0() && hiddenAt && Date.now() - hiddenAt > 15000) leaveOut();
 });
 const _la = loadAccount; let started = false;
-loadAccount = async function () { await _la(); if (started && ME) tabMark(true); if (!ME) tabMark(false); };
-Promise.all([load().catch(() => { $("pgrid").innerHTML = `<div class="card empty"><p><strong>The store couldn't load.</strong> Refresh the page to try again.</p></div>`; }), _la()]).then(async () => {
+// a customer the server has already signed out for being away is told so, instead of the store quietly going back to guest
+loadAccount = async function (idleCheck) { const was = ME; await _la(); if (started && ME) tabMark(true); if (!ME) tabMark(false); if (idleCheck && started && was && !ME) toast(awayMsg(), 6000); };
+drawFromSnapshot();
+Promise.all([load().catch(() => { if (!PRODUCTS.length) $("pgrid").innerHTML = `<div class="card empty"><p><strong>The store couldn't load.</strong> Refresh the page to try again.</p></div>`; }), _la()]).then(async () => {
   if (ME && NOW0() && !tabMarked()) await leaveOut(); else if (ME) tabMark(true);
   started = true;
 });
