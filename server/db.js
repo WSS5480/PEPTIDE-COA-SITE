@@ -334,6 +334,7 @@ const DEFAULT_SETTINGS = {
   stockDisplay: "none", // what shoppers see about stock: none · low ("Only 3 left") · words ("In stock" / "Low stock") · count ("12 in stock")
   stockLowAt: 5,
   showSoldOut: false,   // the store never says "sold out" unless this is on; orders are taken and stock can go negative (backordered)
+  showOutOfStock: false, // the store lists only products with stock on the shelf; tick to also list out-of-stock and not-yet-counted products
   lowStockEmailOn: true, lowStockAt: 5, // email the admins as soon as a product drops below this many
   // Text messages (Twilio keys on the host). Each alert type can be turned off; nobody gets a text without a number and a yes.
   smsOn: true,            // master switch

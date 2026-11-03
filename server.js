@@ -250,6 +250,8 @@ app.get("/api/store", wrap(async (req, res) => {
     customerFrom(req), houseFrom(req)
   ]);
   const { rows: documents } = await q("select d.id, d.product_id, d.title, d.kind, d.file_type, d.size from documents d join products p on p.id = d.product_id where d.public and p.active order by d.sort, d.created_at");
+  // the store lists what's on the shelf; out-of-stock and not-yet-counted products only when Site settings says so
+  const listed = s.showOutOfStock ? products : products.filter((p) => p.stock !== null && p.stock > 0);
   // a signed-in customer with their own markup sees their prices; our cost never leaves the server.
   // With "prices only after sign-in" on, guests get the catalog without prices.
   const markup = cust && cust.markup !== null ? Number(cust.markup) : null;
@@ -257,7 +259,7 @@ app.get("/api/store", wrap(async (req, res) => {
   // Everyone sees prices (the store's default prices, or their own once signed in). "Prices only after sign-in" now
   // only means guests sign in with their PIN before they can order.
   const hide = false, signToOrder = !!s.pricesRequireLogin && guest && !s.guestPricesOn;
-  const out = products.map(({ cost_cents, ...p }) => ({ ...p, stock: s.showSoldOut || (s.stockDisplay && s.stockDisplay !== "none") ? p.stock : null, price_cents: hide ? null : guestPrice(priceFor({ ...p, cost_cents }, markup), guestUp) })); // stock counts stay private unless sold-out messages are on
+  const out = listed.map(({ cost_cents, ...p }) => ({ ...p, stock: s.showSoldOut || (s.stockDisplay && s.stockDisplay !== "none") ? p.stock : null, price_cents: hide ? null : guestPrice(priceFor({ ...p, cost_cents }, markup), guestUp) })); // stock counts stay private unless sold-out messages are on
   res.set("Cache-Control", "no-store");
   res.json({ settings: publicSettings(s), products: out, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents, pricing: markup !== null ? { markup } : null, pricesHidden: hide, signToOrder, signedIn: !!cust || !!(house && !cust), house: !!(house && !cust) });
 }));

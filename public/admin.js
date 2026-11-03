@@ -2259,6 +2259,7 @@ async function settings(part = "site") {
   pane().innerHTML = `<header><h1>Site settings</h1></header>
     <div class="panel"><h2>Store</h2>
       <label class="chk"><input type="checkbox" id="s-storeOpen"${s.storeOpen ? " checked" : ""}${ro()}> Taking orders (untick to pause checkout)</label>
+      <label class="chk"><input type="checkbox" id="s-showOutOfStock"${s.showOutOfStock ? " checked" : ""}${ro()}> Show out-of-stock products on the store (unticked: only products with stock on the shelf are listed; products never counted stay off the store until they're on a count sheet or received)</label>
       <label class="chk"><input type="checkbox" id="s-showSoldOut"${s.showSoldOut ? " checked" : ""}${ro()}> Show "Sold out" and block orders when stock is 0</label>
       <div class="row2" style="flex-wrap:wrap;gap:.4rem .8rem;align-items:center;margin:.2rem 0 .4rem"><label class="eyebrow" for="s-stockDisplay" style="margin:0">What shoppers see about stock</label>
         <select id="s-stockDisplay"${ro()}>${[["none", "Nothing (default)"], ["low", "\"Only 3 left\" when low"], ["words", "\"In stock\" / \"Low stock\""], ["count", "The count (\"12 in stock\")"]].map(([k, l]) => `<option value="${k}"${(s.stockDisplay || "none") === k ? " selected" : ""}>${l}</option>`).join("")}</select>
@@ -2340,7 +2341,7 @@ async function settings(part = "site") {
     const v = (k) => document.getElementById("s-" + k) || { value: Array.isArray(s[k]) ? s[k].join("\n") : (s[k] ?? ""), checked: !!s[k] }; // email fields live on the Email & approvals page: keep what's saved
     const body = {};
     ["brand", "tagline", "contact", "distributorOf", "brandUrl", "paymentInstructions", "priceNote", "shippingLabel", "shippingNote", "fedexAccount", "deliveryLabel", "deliveryNote", "orderEmail", "cooEmail"].forEach((k) => { body[k] = v(k).value; });
-    ["storeOpen", "pricesRequireLogin", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn", "repEmailOn", "lowStockEmailOn", "showSoldOut", "guestPricesOn"].forEach((k) => { body[k] = v(k).checked; });
+    ["storeOpen", "pricesRequireLogin", "ageGate", "shippingOn", "deliveryOn", "cardPayments", "orderEmailOn", "customerEmailOn", "repEmailOn", "lowStockEmailOn", "showSoldOut", "showOutOfStock", "guestPricesOn"].forEach((k) => { body[k] = v(k).checked; });
     body.guestMarkup = v("guestMarkup").value; body.stockDisplay = v("stockDisplay").value; body.stockLowAt = v("stockLowAt").value;
     body.lowStockAt = v("lowStockAt").value;
     body.minAge = v("minAge").value; body.custIdleMin = v("custIdleMin").value; body.staffIdleMin = v("staffIdleMin").value; body.custCloseOut = v("custCloseOut").checked;
