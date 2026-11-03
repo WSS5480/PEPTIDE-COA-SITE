@@ -161,7 +161,8 @@ async function customers(editId) {
 /* ---------- new order ---------- */
 async function neworder() {
   const [{ customers: list }, { products, fulfillment: ful, cardPayments }] = await Promise.all([api("/customers"), api("/catalog")]);
-  const sellable0 = products.filter((p) => p.price_cents !== null && (p.stock === null || p.stock > 0));
+  const showOut0 = localStorage.getItem("orderShowOut") === "1";
+  const sellable0 = products.filter((p) => p.price_cents !== null && (showOut0 || p.stock === null || p.stock > 0));
   const label = (p) => `${p.name} ${p.strength}`.trim() + (p.manufacturer ? ` · ${p.manufacturer}` : "");
   pane().innerHTML = `<header><h1>New order</h1></header>
     ${!list.length ? `<div class="panel"><p>You need a customer first.</p><div><button class="btn solid rep" data-nav="customers">Add a customer</button></div></div>` : `
@@ -169,8 +170,8 @@ async function neworder() {
       <div class="field"><label class="eyebrow" for="oCust">Who is this order for?</label><select id="oCust"><option value="">Choose a customer…</option>${list.filter((c) => c.active).map((c) => `<option value="${c.id}"${pick === c.id ? " selected" : ""}>${esc(c.name)}${c.email ? " — " + esc(c.email) : c.phone ? " — " + esc(c.phone) : ""}</option>`).join("")}</select></div>
       <p class="muted" id="oAddr"></p></div>
     <div class="panel"><h2>2. Products</h2>
-      <div class="filters"><input id="oq" type="search" placeholder="Filter products"></div>
-      <div class="lines" id="oLines">${sellable0.map((p) => `<div class="line2" data-pid="${p.id}" data-txt="${esc(label(p).toLowerCase())}"><div class="nm">${esc(label(p))}<small>${money(p.price_cents)} each${p.stock !== null ? ` · ${p.stock} in stock` : ""}${p.max_per_order ? ` · max ${p.max_per_order}` : ""}</small></div>
+      <div class="filters" style="align-items:center;flex-wrap:wrap;gap:.5rem 1rem"><input id="oq" type="search" placeholder="Filter products" style="flex:1 1 12rem"><label class="chk" style="margin:0"><input type="checkbox" id="oOut"${showOut0 ? " checked" : ""}> Show out-of-stock products</label></div>
+      <div class="lines" id="oLines">${sellable0.map((p) => `<div class="line2" data-pid="${p.id}" data-txt="${esc(label(p).toLowerCase())}"><div class="nm">${esc(label(p))}<small>${money(p.price_cents)} each${p.stock !== null ? (p.stock > 0 ? ` · ${p.stock} in stock` : " · out of stock (backorder)") : ""}${p.max_per_order ? ` · max ${p.max_per_order}` : ""}</small></div>
         <input data-qty inputmode="numeric" placeholder="0" max="${p.max_per_order || 999}"><div class="amt" data-amt></div></div>`).join("")}</div>
       ${sellable0.length ? "" : '<p class="muted">No products have a price yet.</p>'}</div>
     <div class="panel"><h2>3. Ship or deliver, discount, notes</h2>
@@ -185,14 +186,15 @@ async function neworder() {
   let code = null; // applied discount code { code, kind, value, minSubtotalCents }
   const addr = () => { const c = list.find((x) => String(x.id) === $("oCust").value); const a = c && c.address || {}; $("oAddr").textContent = c ? (a.line1 ? `Ships or delivers to ${[a.line1, a.line2, a.city, a.state, a.zip].filter(Boolean).join(", ")}` : "This customer has no address yet. Add it under Customers first.") + (c.markup !== null && c.markup !== undefined ? ` · Pricing: cost +${Number(c.markup)}% (this customer's own prices)` : " · Store prices") : ""; };
   // prices change with the customer (some have their own markup): reload the product list for them
-  let sellable = products.filter((p) => p.price_cents !== null && (p.stock === null || p.stock > 0));
-  const lineHtml = (p) => `<div class="line2" data-pid="${p.id}" data-txt="${esc(label(p).toLowerCase())}"><div class="nm">${esc(label(p))}<small>${money(p.price_cents)} each${p.stock !== null ? ` · ${p.stock} in stock` : ""}${p.max_per_order ? ` · max ${p.max_per_order}` : ""}</small></div>
+  let priced = products; const showOut = () => !!($("oOut") && $("oOut").checked);
+  let sellable = priced.filter((p) => p.price_cents !== null && (showOut() || p.stock === null || p.stock > 0));
+  const lineHtml = (p) => `<div class="line2" data-pid="${p.id}" data-txt="${esc(label(p).toLowerCase())}"><div class="nm">${esc(label(p))}<small>${money(p.price_cents)} each${p.stock !== null ? (p.stock > 0 ? ` · ${p.stock} in stock` : " · out of stock (backorder)") : ""}${p.max_per_order ? ` · max ${p.max_per_order}` : ""}</small></div>
         <input data-qty inputmode="numeric" placeholder="0" max="${p.max_per_order || 999}"><div class="amt" data-amt></div></div>`;
   const reprice = async () => {
     const id = $("oCust").value; if (!id) return;
     const qtys = {}; document.querySelectorAll("#oLines [data-pid]").forEach((r) => { qtys[r.dataset.pid] = r.querySelector("[data-qty]").value; });
-    const { products: priced } = await api("/catalog?customerId=" + id);
-    sellable = priced.filter((p) => p.price_cents !== null && (p.stock === null || p.stock > 0));
+    ({ products: priced } = await api("/catalog?customerId=" + id));
+    sellable = priced.filter((p) => p.price_cents !== null && (showOut() || p.stock === null || p.stock > 0));
     $("oLines").innerHTML = sellable.map(lineHtml).join("");
     document.querySelectorAll("#oLines [data-pid]").forEach((r) => { if (qtys[r.dataset.pid]) r.querySelector("[data-qty]").value = qtys[r.dataset.pid]; });
     total();
@@ -221,6 +223,7 @@ async function neworder() {
   };
   addr(); if ($("oCust").value) reprice();
   $("oCust").onchange = () => { addr(); reprice(); };
+  $("oOut").onchange = () => { localStorage.setItem("orderShowOut", showOut() ? "1" : "0"); const qtys = {}; document.querySelectorAll("#oLines [data-pid]").forEach((r) => { qtys[r.dataset.pid] = r.querySelector("[data-qty]").value; }); sellable = priced.filter((p) => p.price_cents !== null && (showOut() || p.stock === null || p.stock > 0)); $("oLines").innerHTML = sellable.map(lineHtml).join(""); document.querySelectorAll("#oLines [data-pid]").forEach((r) => { if (qtys[r.dataset.pid]) r.querySelector("[data-qty]").value = qtys[r.dataset.pid]; }); total(); $("oq").oninput(); };
   $("oq").oninput = () => { const t = $("oq").value.toLowerCase(); document.querySelectorAll("#oLines [data-pid]").forEach((r) => { r.hidden = t && !r.dataset.txt.includes(t) && !r.querySelector("[data-qty]").value; }); };
   pane().oninput = (e) => { if (e.target.matches("[data-qty]")) total(); };
   pane().onchange = (e) => { if (e.target.matches("#oFul input")) total(); };

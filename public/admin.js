@@ -742,7 +742,7 @@ async function neworder() {
           <div class="field"><label class="eyebrow" for="noCust">Who is this order for?</label><select id="noCust"><option value="">Choose a customer…</option>${list.filter((c) => c.active).map((c) => `<option value="${c.id}"${pickCustomer === c.id ? " selected" : ""}>${esc(c.name)}${c.email ? " — " + esc(c.email) : c.phone ? " — " + esc(c.phone) : ""}</option>`).join("")}</select></div>
           <p class="muted" id="noInfo"></p></div>
         <div class="panel"><h2>2. Products</h2>
-          <div class="filters"><input id="noq" type="search" placeholder="Filter products" style="flex:1"></div>
+          <div class="filters" style="align-items:center;flex-wrap:wrap;gap:.5rem 1rem"><input id="noq" type="search" placeholder="Filter products" style="flex:1 1 12rem"><label class="chk" style="margin:0" title="Products counted at 0 are hidden here until you tick this; they can still be ordered as a backorder"><input type="checkbox" id="noOut"${localStorage.getItem("orderShowOut") === "1" ? " checked" : ""}> Show out-of-stock products</label></div>
           <div class="tblwrap" style="max-height:30rem"><table class="tbl compact" id="noT"><thead><tr><th>Product</th><th class="num">Each</th><th>Qty</th><th class="num">Line</th></tr></thead><tbody id="noLines"></tbody></table></div>
           <p class="muted" id="noNone" hidden>No products have a price yet.</p></div>
       </div>
@@ -761,12 +761,14 @@ async function neworder() {
     </div>`}`;
   if (!list.length) return;
   pickCustomer = null;
-  let sellable = [], code = null, ful = cat0.fulfillment;
+  let sellable = [], priced = [], code = null, ful = cat0.fulfillment;
+  const showOut = () => !!($("noOut") && $("noOut").checked);
+  const pickSellable = () => { sellable = priced.filter((p) => p.price_cents !== null && (showOut() || p.stock === null || p.stock > 0)); };
   const chosen = () => ful.find((f) => f.key === (document.querySelector("#noFul input:checked") || {}).value) || ful[0] || null;
   const shipCost = (f, sub) => (!f ? 0 : f.freeOverCents > 0 && sub >= f.freeOverCents ? 0 : f.cents);
   const qtys = () => { const m = {}; document.querySelectorAll("#noLines tr[data-pid]").forEach((r) => { m[r.dataset.pid] = parseInt(r.querySelector("[data-qty]").value) || 0; }); return m; };
   const drawLines = (keep = {}) => {
-    $("noLines").innerHTML = sellable.map((p) => `<tr data-pid="${p.id}" data-txt="${esc(label(p).toLowerCase())}"><td class="namecol"><strong>${esc(label(p))}</strong><span class="muted">${p.stock !== null ? `${p.stock} in stock` : ""}${p.max_per_order ? ` · max ${p.max_per_order}` : ""}</span></td><td class="num">${money(p.price_cents)}</td><td><input data-qty inputmode="numeric" placeholder="0" value="${keep[p.id] || ""}" style="width:4.5rem;min-width:0;text-align:center"></td><td class="num" data-amt></td></tr>`).join("");
+    $("noLines").innerHTML = sellable.map((p) => `<tr data-pid="${p.id}" data-txt="${esc(label(p).toLowerCase())}"><td class="namecol"><strong>${esc(label(p))}</strong><span class="muted">${p.stock !== null ? (p.stock > 0 ? `${p.stock} in stock` : `<span class="pill st-cancelled">out of stock · backorder</span>`) : ""}${p.max_per_order ? ` · max ${p.max_per_order}` : ""}</span></td><td class="num">${money(p.price_cents)}</td><td><input data-qty inputmode="numeric" placeholder="0" value="${keep[p.id] || ""}" style="width:4.5rem;min-width:0;text-align:center"></td><td class="num" data-amt></td></tr>`).join("");
     $("noNone").hidden = sellable.length > 0;
     total();
   };
@@ -783,7 +785,7 @@ async function neworder() {
     const id = $("noCust").value;
     const keep = qtys();
     const cat = await api("/catalog" + (id ? "?customerId=" + id : ""));
-    sellable = cat.products.filter((p) => p.price_cents !== null && (p.stock === null || p.stock > 0));
+    priced = cat.products; pickSellable();
     const c = cat.customer, a = (c && c.address) || {};
     $("noInfo").innerHTML = c ? `${a.line1 ? `Ships or delivers to ${esc([a.line1, a.line2, a.city, a.state, a.zip].filter(Boolean).join(", "))}` : '<span class="err" style="display:inline-block;padding:.2rem .5rem">No address yet — edit the customer first.</span>'} · ${cat.markup !== null ? `Pricing: cost +${esc(cat.markup)}% (this customer's own)` : "Store prices"}${c.rep_name ? ` · Sales rep: ${esc(c.rep_name)}` : ""}` : "";
     drawLines(keep);
@@ -799,6 +801,7 @@ async function neworder() {
     } catch (e) { code = null; $("noCodeMsg").textContent = e.message; }
     total();
   };
+  $("noOut").onchange = () => { localStorage.setItem("orderShowOut", showOut() ? "1" : "0"); const keep = qtys(); pickSellable(); drawLines(keep); $("noq").oninput(); };
   $("noq").oninput = () => { const t = $("noq").value.toLowerCase(); document.querySelectorAll("#noLines tr[data-pid]").forEach((r) => { r.hidden = t && !r.dataset.txt.includes(t) && !r.querySelector("[data-qty]").value; }); };
   pane().oninput = (e) => { if (e.target.matches("[data-qty]")) total(); };
   pane().onchange = (e) => { if (e.target.matches("#noFul input")) total(); if (e.target.id === "noCust") loadCustomer(); };
