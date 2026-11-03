@@ -1792,6 +1792,18 @@ admin.patch("/products/:id", owner, wrap(async (req, res) => {
 const COST_SHEET = "q4-2026-costs";
 const normName = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const normSize = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/mg$/, "");
+// A blend listed by its parts ("10 mg / 10 mg", "5 mg + 5 mg") is the same size as the total ("20 mg", "10 mg"): the parts add up.
+const sizeKeys = (v) => {
+  const s = String(v ?? "").toLowerCase().trim(), keys = new Set([normSize(s)]);
+  const parts = s.split(/\s*[\/+&]\s*/).filter(Boolean);
+  if (parts.length > 1) {
+    const nums = parts.map((x) => /^(\d+(?:\.\d+)?)\s*(mg|mcg|iu|ml|g|units?)?$/.exec(x.trim()));
+    const units = new Set(nums.map((m) => (m ? m[2] || "" : "?")));
+    if (nums.every(Boolean) && units.size === 1) keys.add(normSize(String(+nums.reduce((t, m) => t + parseFloat(m[1]), 0).toFixed(3)) + [...units][0]));
+  }
+  return keys;
+};
+const sameSize = (a, b) => { const ka = sizeKeys(a); for (const k of sizeKeys(b)) if (ka.has(k)) return true; return false; };
 async function costSheetMatches() {
   const file = path.join(__dirname, "seed", `catalog-${COST_SHEET}.json`);
   const list = JSON.parse(require("fs").readFileSync(file, "utf8"));
@@ -2291,13 +2303,15 @@ async function newProductPlan(rows) {
     if (!name) { row.why = "no product name"; out.push(row); continue; }
     const key = normName(name) + "|" + normSize(strength) + "|" + normName(manufacturer);
     if (seenKeys.has(key)) { row.why = "in the file twice"; out.push(row); continue; } seenKeys.add(key);
-    const same = existing.filter((p) => normName(p.name) === normName(name) && normSize(p.strength) === normSize(strength));
+    const same = existing.filter((p) => normName(p.name) === normName(name) && sameSize(p.strength, strength));
     const dup = manufacturer ? same.find((p) => normName(p.manufacturer) === normName(manufacturer)) : same[0];
     if (dup) { row.why = `already a product${dup.active ? "" : " (hidden under Products)"}: ${dup.name} ${dup.strength}`.trim(); out.push(row); continue; }
-    const inCat = cat.find((c) => normName(c.name) === normName(name) && normSize(c.strength) === normSize(strength)) || cat.find((c) => normName(c.name) === normName(name));
+    const inCat = cat.find((c) => normName(c.name) === normName(name) && sameSize(c.strength, strength)) || cat.find((c) => normName(c.name) === normName(name));
     const sibling = existing.find((p) => normName(p.name) === normName(name)); // same peptide, another size
     row.category = (inCat && inCat.category) || (sibling && sibling.category) || (/blend/i.test(name) ? "Blends" : "Research peptide");
-    if (inCat && normSize(inCat.strength) === normSize(strength) && typeof inCat.cost === "number") { row.costCents = Math.round(inCat.cost * 100); row.priceCents = row.costCents * 2; }
+    if (inCat && sameSize(inCat.strength, strength) && typeof inCat.cost === "number") { row.costCents = Math.round(inCat.cost * 100); row.priceCents = row.costCents * 2; }
+    const sheetCost = r && r.cost !== undefined && String(r.cost).trim() !== "" ? centsOrNull(String(r.cost).replace(/[$,\s]/g, "")) : null; // a Cost each column in the file wins over the catalog
+    if (sheetCost !== null) { row.costCents = sheetCost; row.priceCents = sheetCost * 2; row.costFrom = "file"; }
     row.description = descriptionFor(name, strength) || (sibling && sibling.description ? String(sibling.description).replace(new RegExp(String(sibling.strength || "").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), String(strength).trim()) : "");
     row.specs = !!row.description; row.from = inCat ? "catalog" : sibling ? "same peptide, other size" : "";
     row.ok = true; out.push(row);
@@ -2321,7 +2335,7 @@ admin.post("/inventory/new-products", owner, wrap(async (req, res) => {
 // post a count: each counted product is set to what was counted (on shelf = available + held in open orders); every difference is a logged stock move
 admin.post("/inventory/counts", wrap(async (req, res) => {
   const b = req.body || {};
-  const lines = (Array.isArray(b.lines) ? b.lines : []).map((l) => ({ id: intOrNull(l.productId), counted: intOrNull(l.counted) })).filter((l) => l.id && l.counted !== null);
+  const lines = (Array.isArray(b.lines) ? b.lines : []).map((l) => ({ id: intOrNull(l.productId), counted: intOrNull(l.counted), cost: req.user.role === "owner" && l.costEach !== undefined && String(l.costEach).trim() !== "" ? centsOrNull(String(l.costEach).replace(/[$,\s]/g, "")) : null })).filter((l) => l.id && l.counted !== null);
   if (!lines.length) return bad(res, "Enter a count for at least one product.");
   if (lines.some((l) => l.counted < 0)) return bad(res, "A count can't be negative.");
   if (new Set(lines.map((l) => l.id)).size !== lines.length) return bad(res, "A product is on the sheet twice.");
@@ -2331,11 +2345,14 @@ admin.post("/inventory/counts", wrap(async (req, res) => {
     await client.query("begin");
     const { rows: [c] } = await client.query("insert into stock_counts(who, note) values ($1,$2) returning id, at", [who, note]);
     const ref = `Count #${c.id}`;
-    let varied = 0, over = 0, short = 0, value = 0;
+    let varied = 0, over = 0, short = 0, value = 0, costed = 0;
     const items = [];
     for (const l of lines) {
-      const { rows: [p] } = await client.query("select id, name, strength, manufacturer, stock, cost_cents from products where id = $1 for update", [l.id]);
+      const { rows: [p] } = await client.query("select id, name, strength, manufacturer, stock, cost_cents, price_cents from products where id = $1 for update", [l.id]);
       if (!p) throw new Error("A product on the sheet no longer exists. Reload the sheet and try again.");
+      if (l.cost !== null && l.cost !== p.cost_cents) { // the sheet's Cost each column: the product's cost (and a price at the usual +100% when it has none)
+        await client.query("update products set cost_cents = $1, price_cents = coalesce(price_cents, $2) where id = $3", [l.cost, l.cost * 2, p.id]); p.cost_cents = l.cost; costed++;
+      }
       const { rows: [h] } = await client.query(`select coalesce(sum(i.qty), 0)::int n from order_items i join orders o on o.id = i.order_id where i.product_id = $1 and o.status in ${OPEN_ORDER}`, [p.id]);
       const committed = h.n;
       const expected = p.stock === null ? null : p.stock + committed;
@@ -2349,7 +2366,7 @@ admin.post("/inventory/counts", wrap(async (req, res) => {
     await client.query("update stock_counts set lines = $1, varied = $2, units_over = $3, units_short = $4, value_cents = $5 where id = $6", [lines.length, varied, over, short, value, c.id]);
     await client.query("commit");
     const showCost = req.user.role === "owner";
-    res.json({ ok: true, id: c.id, at: c.at, who, note, lines: lines.length, varied, units_over: over, units_short: short, value_cents: showCost ? value : null, items: items.map((i) => ({ ...i, cost_cents: showCost ? i.cost_cents : null })) });
+    res.json({ ok: true, id: c.id, at: c.at, who, note, lines: lines.length, varied, costed, units_over: over, units_short: short, value_cents: showCost ? value : null, items: items.map((i) => ({ ...i, cost_cents: showCost ? i.cost_cents : null })) });
   } catch (e) { await client.query("rollback").catch(() => {}); bad(res, e.message || "Couldn't post that count."); }
   finally { client.release(); }
 }));
