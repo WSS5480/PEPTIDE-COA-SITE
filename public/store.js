@@ -57,7 +57,7 @@ const saveCart = () => { store.set("cart", cart); drawCartCount(); };
 
 /* ---------- age gate ---------- */
 function gate() {
-  if (!S.ageGate || store.get("ageOk") === S.minAge) return;
+  if (!S.ageGate || store.get("ageOk") === S.minAge || STAFF) return; // staff looking at the store from the admin / tracker skip the gate
   const g = $("gate");
   $("gAgeText").textContent = `I am ${S.minAge} years of age or older.`;
   const sync = () => { $("gEnter").disabled = !($("gAge").checked && $("gRes").checked); };
@@ -393,11 +393,25 @@ async function lookup(e) {
 
 
 /* ---------- customer account ---------- */
-let ME = null, MY_ORDERS = [], HOUSE = false; // HOUSE: signed in with the store's own PIN (the office), no customer account
+let ME = null, MY_ORDERS = [], HOUSE = false, STAFF = null; // HOUSE: signed in with the store's own PIN (the office), no customer account; STAFF: an admin / rep looking at the store
+// came here from the admin or the case tracker (?from=admin|rep|tracker): remembered for this tab so the back bar knows where to go
+const FROM = (() => { try { const f = new URLSearchParams(location.search).get("from"); if (f) { sessionStorage.setItem("storeFrom", f); history.replaceState(null, "", location.pathname + location.hash); } return sessionStorage.getItem("storeFrom") || ""; } catch (e) { return ""; } })();
+const FRAMED = (() => { try { return window.top !== window; } catch (e) { return true; } })();
 async function loadAccount() {
-  try { const j = await (await fetch("/api/account", { credentials: "same-origin" })).json(); ME = j.customer; MY_ORDERS = j.orders || []; HOUSE = !ME && !!j.house; } catch (e) { ME = null; HOUSE = false; }
+  try { const j = await (await fetch("/api/account", { credentials: "same-origin" })).json(); ME = j.customer; MY_ORDERS = j.orders || []; HOUSE = !ME && !!j.house; STAFF = j.staff || null; } catch (e) { ME = null; HOUSE = false; STAFF = null; }
+  staffBar();
   $("acctLabel").textContent = ME ? (ME.name || "Account").split(" ")[0] : HOUSE ? "Office" : "Sign in";
   whoBar();
+}
+// an admin / manager / rep looking at the store: a way back to where they came from (their app, or the case tracker)
+function staffBar() {
+  let bar = document.getElementById("staffBar");
+  if (!STAFF || document.body.classList.contains("embed")) { if (bar) bar.remove(); return; }
+  if (!bar) { bar = document.createElement("div"); bar.id = "staffBar"; bar.className = "staffbar"; document.body.insertBefore(bar, document.body.firstChild); }
+  { const g = $("gate"); if (g && g.open) closeD(g); } // the age gate is for customers; the back button must be usable right away
+  const toTracker = FROM === "tracker" && STAFF.tracker;
+  const href = toTracker ? STAFF.tracker : STAFF.app, label = toTracker ? "Back to the case tracker" : STAFF.role === "rep" ? "Back to the rep app" : "Back to admin";
+  bar.innerHTML = `<a class="back" href="${esc(href)}"${toTracker && FRAMED ? ' target="_top"' : ""}><span aria-hidden="true">←</span> ${label}</a><span class="muted">Viewing the store as a customer sees it · ${esc(STAFF.name)}</span>`;
 }
 // a shared or borrowed phone: say plainly who this browser is signed in as, with a one-tap way out
 function whoBar() {

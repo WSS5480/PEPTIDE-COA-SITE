@@ -404,6 +404,10 @@ body.embed .pane { padding: 1rem !important; }
 body.embed .rnav { top: 0; }
 
 /* who's signed in (storefront) */
+.staffbar { background: var(--navy, #0f1b33); color: #fff; font-size: .85rem; padding: .45rem var(--gutter, 1rem); display: flex; gap: .4rem 1rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.staffbar .back { color: #fff; font-weight: 700; text-decoration: none; display: inline-flex; align-items: center; gap: .4rem; padding: .3rem .7rem; border: 1px solid rgba(255,255,255,.45); border-radius: 999px; }
+.staffbar .back:hover { background: rgba(255,255,255,.12); }
+.staffbar .muted { color: rgba(255,255,255,.75); }
 .whobar { background: #fff7e0; color: #5b4300; border-bottom: 1px solid #f1dc9a; font-size: .85rem; padding: .45rem 1rem; display: flex; gap: .75rem; align-items: center; justify-content: center; flex-wrap: wrap; }
 .whobar .linkbtn { color: #7a4b00; font-weight: 600; }
 

@@ -907,16 +907,24 @@ app.post("/api/account/logout", wrap(async (req, res) => {
   res.append("Set-Cookie", HOUSE_COOKIE("", 0));
   res.json({ ok: true });
 }));
+// a signed-in admin / manager / rep looking at the storefront: who, and where "back" goes (their app, or the case tracker they came from)
+async function staffFrom(req) {
+  const token = parseCookies(req.headers.cookie).sid; if (!token) return null;
+  const { rows: [u] } = await q("select u.id, u.name, u.role, u.apps from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]);
+  if (!u) return null;
+  return { name: u.name, role: u.role, app: u.role === "rep" ? "/rep" : "/admin", tracker: appsOf(u).tracker && HUB_SECRET && TRACKER_URL ? TRACKER_URL + (u.role === "rep" ? "/" : "/admin") : "" };
+}
 app.get("/api/account", wrap(async (req, res) => {
   const c = await customerFrom(req);
   res.set("Cache-Control", "no-store");
-  if (!c) return res.json({ customer: null, house: await houseFrom(req) });
+  const staff = await staffFrom(req);
+  if (!c) return res.json({ customer: null, house: await houseFrom(req), staff });
   const { rows: orders } = await q(`select o.id, o.number, o.status, o.total_cents, o.carrier, o.tracking, o.eta, o.created_at, o.paid_at, o.pay_method, o.fulfillment, o.shipping_method,
       (select json_agg(json_build_object('name', i.name, 'strength', i.strength, 'qty', i.qty) order by i.id) from order_items i where i.order_id = o.id) items
     from orders o where o.customer_id = $1 order by o.created_at desc limit 100`, [c.id]);
   const s = await getSettings();
   orders.forEach((o) => { o.canPay = canPayByCard(o, s); delete o.id; });
-  res.json({ customer: c, orders });
+  res.json({ customer: c, orders, staff });
 }));
 app.patch("/api/account", jsonOnly, wrap(async (req, res) => {
   const c = await customerFrom(req); if (!c) return bad(res, "Sign in first", 401);
