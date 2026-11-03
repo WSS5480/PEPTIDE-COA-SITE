@@ -2273,6 +2273,48 @@ admin.get("/inventory/count-sheet", wrap(async (req, res) => {
   const showCost = req.user.role === "owner";
   res.json({ items: rows.map((p) => ({ ...p, cost_cents: showCost ? p.cost_cents : null, on_shelf: p.stock === null ? null : p.stock + p.committed })), lastCount: await lastCount(), dueDays: COUNT_DUE_DAYS, showCost });
 }));
+// Rows in a quantity upload that match no product: what adding them would look like (preview), then add the approved ones.
+// Specs come the way the other products got theirs: the catalog's category and cost (price at the usual +100%), the description text on file
+// for that peptide (a new size of a known peptide gets the same text with its size filled in), else the same-name product's category.
+async function newProductPlan(rows) {
+  const file = path.join(__dirname, "seed", `catalog-${COST_SHEET}.json`);
+  let cat = []; try { cat = JSON.parse(require("fs").readFileSync(file, "utf8")); } catch (e) {}
+  const { rows: existing } = await q("select id, name, strength, manufacturer, category, description, active from products");
+  const out = [], seenKeys = new Set();
+  for (const [i, r] of rows.slice(0, 200).entries()) {
+    const tidySize = (v) => String(v || "").trim().replace(/^(\d+(?:\.\d+)?)\s*(mg|mcg|iu|ml|g|units?)$/i, (m, n, u) => n + " " + (u.toLowerCase() === "iu" ? "IU" : u.toLowerCase())); // "5mg" → "5 mg", like the other products
+    const name = str(r && r.name, 120), strength = tidySize(str(r && r.strength, 40)), manufacturer = str(r && r.manufacturer, 80);
+    const row = { i, name, strength, manufacturer, ok: false, why: "", category: "", specs: false, costCents: null, priceCents: null, from: "" };
+    if (!name) { row.why = "no product name"; out.push(row); continue; }
+    const key = normName(name) + "|" + normSize(strength) + "|" + normName(manufacturer);
+    if (seenKeys.has(key)) { row.why = "in the file twice"; out.push(row); continue; } seenKeys.add(key);
+    const same = existing.filter((p) => normName(p.name) === normName(name) && normSize(p.strength) === normSize(strength));
+    const dup = manufacturer ? same.find((p) => normName(p.manufacturer) === normName(manufacturer)) : same[0];
+    if (dup) { row.why = `already a product${dup.active ? "" : " (hidden under Products)"}: ${dup.name} ${dup.strength}`.trim(); out.push(row); continue; }
+    const inCat = cat.find((c) => normName(c.name) === normName(name) && normSize(c.strength) === normSize(strength)) || cat.find((c) => normName(c.name) === normName(name));
+    const sibling = existing.find((p) => normName(p.name) === normName(name)); // same peptide, another size
+    row.category = (inCat && inCat.category) || (sibling && sibling.category) || (/blend/i.test(name) ? "Blends" : "Research peptide");
+    if (inCat && normSize(inCat.strength) === normSize(strength) && typeof inCat.cost === "number") { row.costCents = Math.round(inCat.cost * 100); row.priceCents = row.costCents * 2; }
+    row.description = descriptionFor(name, strength) || (sibling && sibling.description ? String(sibling.description).replace(new RegExp(String(sibling.strength || "").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), String(strength).trim()) : "");
+    row.specs = !!row.description; row.from = inCat ? "catalog" : sibling ? "same peptide, other size" : "";
+    row.ok = true; out.push(row);
+  }
+  return out;
+}
+admin.post("/inventory/new-products/preview", owner, wrap(async (req, res) => { res.json({ rows: (await newProductPlan(Array.isArray(req.body?.rows) ? req.body.rows : [])).map(({ description, ...r }) => r) }); }));
+admin.post("/inventory/new-products", owner, wrap(async (req, res) => {
+  const plan = await newProductPlan(Array.isArray(req.body?.rows) ? req.body.rows : []);
+  const { rows: [{ m }] } = await q("select coalesce(max(sort),0)::int m from products");
+  let sort = m; const added = [], skipped = [];
+  for (const r of plan) {
+    if (!r.ok) { skipped.push({ i: r.i, name: r.name, strength: r.strength, why: r.why }); continue; }
+    const { rows: [p] } = await q("insert into products(name, strength, manufacturer, category, cost_cents, price_cents, sort, description) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id",
+      [r.name, r.strength, r.manufacturer, r.category, r.costCents, r.priceCents, ++sort, r.description || ""]);
+    added.push({ i: r.i, id: p.id, name: r.name, strength: r.strength, specs: r.specs, priced: r.priceCents !== null });
+  }
+  if (added.length) console.log(`Quantity upload by ${req.user.email} added ${added.length} new product${added.length === 1 ? "" : "s"}: ${added.map((a) => `${a.name} ${a.strength}${a.specs ? "" : " (no spec text on file)"}`.trim()).join("; ")}`);
+  res.json({ ok: true, added, skipped });
+}));
 // post a count: each counted product is set to what was counted (on shelf = available + held in open orders); every difference is a logged stock move
 admin.post("/inventory/counts", wrap(async (req, res) => {
   const b = req.body || {};

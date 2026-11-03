@@ -1906,11 +1906,11 @@ function qtyUploadBox(items) {
   if (box.innerHTML) { box.innerHTML = ""; return; }
   const label = (p) => `${p.name} ${p.strength}`.trim();
   box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Upload quantities</h2>
-    <p class="muted">A CSV or Excel file with a header row: <strong>Name</strong>, <strong>Size</strong>, <strong>Qty</strong> (optional: Lot, Expires, Cost each, Manufacturer). Names and sizes must match the products list — download the template to get them exactly right, type the quantities, and upload it back. "On the shelf" means every vial physically there, including ones already held by open orders.</p>
+    <p class="muted">A CSV or Excel file with a header row: <strong>Name</strong>, <strong>Size</strong>, <strong>Qty</strong> (optional: Lot, Expires, Cost each, Manufacturer). Names and sizes should match the products list — download the template to get them exactly right, type the quantities, and upload it back. A row that matches nothing is offered as a <strong>new product</strong> for you to approve. "On the shelf" means every vial physically there, including ones already held by open orders.</p>
     <div class="grid2"><div class="field"><label class="eyebrow" for="qtyMode">What the quantities mean</label><select id="qtyMode"><option value="count">Set what's on the shelf (posts a count sheet)</option><option value="receive">Add to stock (receive a shipment)</option></select></div>
       <div class="field"><label class="eyebrow" for="qtyNote">Note (optional)</label><input id="qtyNote" placeholder="e.g. Weekly count · Oct 29"></div></div>
     <div class="row2"><button class="btn" type="button" id="qtyTpl">Download template with current stock</button><label class="btn solid" style="display:inline-grid;place-items:center;cursor:pointer">Choose file<input type="file" id="qtyFile" accept=".xlsx,.xls,.csv,text/csv" hidden></label></div>
-    <div id="qtyPrev"></div></div>`;
+    <div id="qtyPrev" style="min-width:0"></div></div>`;
   document.getElementById("qtyTpl").onclick = () => {
     const cell = (v) => { const x = String(v ?? ""); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
     const lines = ["Name,Size,Manufacturer,Qty,Lot,Expires,Cost each"]; items.forEach((p) => lines.push([p.name, p.strength, p.manufacturer, p.stock === null ? "" : p.stock + (p.committed || 0), "", "", ""].map(cell).join(",")));
@@ -1932,30 +1932,54 @@ function qtyUploadBox(items) {
       const sk = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/mg$/, "");
       const rows = raw.map((r, i) => ({ row: i + 2, name: String(r[map.name] ?? "").trim(), strength: map.strength ? String(r[map.strength] ?? "").trim() : "", manufacturer: map.manufacturer ? String(r[map.manufacturer] ?? "").trim() : "", qty: String(r[map.qty] ?? "").trim(), lot: map.lot ? String(r[map.lot] ?? "").trim() : "", expires: map.expires ? String(r[map.expires] ?? "").trim() : "", cost: map.cost ? String(r[map.cost] ?? "").trim() : "" })).filter((r) => r.name);
       const match = (r) => { let c = items.filter((p) => p.name.toLowerCase() === r.name.toLowerCase()); if (r.strength) c = c.filter((p) => sk(p.strength) === sk(r.strength)); if (c.length > 1 && r.manufacturer) c = c.filter((p) => nrm(p.manufacturer) === nrm(r.manufacturer)); return c.length === 1 ? c[0] : c.length > 1 ? "many" : null; };
-      const seen = new Set(), lines = [], problems = [];
+      const seen = new Set(), lines = [], problems = [], fresh = []; // fresh: rows that match no product → offered as new products
       for (const r of rows) {
         const m = match(r); const q = r.qty === "" ? null : Number(String(r.qty).replace(/[^0-9.-]/g, ""));
-        if (!m) { problems.push(`Row ${r.row}: no product called "${r.name}${r.strength ? " " + r.strength : ""}"`); continue; }
+        if (!m) {
+          if (!r.name) { problems.push(`Row ${r.row}: no product name`); continue; }
+          if (q !== null && (!isFinite(q) || q < 0 || Math.round(q) !== q)) { problems.push(`Row ${r.row}: "${r.name} ${r.strength}" — Qty "${r.qty}" must be a whole number`); continue; }
+          fresh.push({ row: r.row, name: r.name, strength: r.strength, manufacturer: r.manufacturer, qty: q, lot: r.lot, expires: r.expires, cost: r.cost, add: true }); continue;
+        }
         if (m === "many") { problems.push(`Row ${r.row}: "${r.name} ${r.strength}" matches more than one product — add the Manufacturer column`); continue; }
         if (q === null || !isFinite(q)) { problems.push(`Row ${r.row}: ${label(m)} — Qty is blank, skipped`); continue; }
         if (q < 0 || Math.round(q) !== q) { problems.push(`Row ${r.row}: ${label(m)} — Qty "${r.qty}" must be a whole number`); continue; }
         if (seen.has(m.id)) { problems.push(`Row ${r.row}: ${label(m)} is in the file twice — second one ignored`); continue; }
         seen.add(m.id); lines.push({ p: m, qty: q, lot: r.lot, expires: r.expires, cost: r.cost });
       }
+      // what adding the unmatched rows would look like (category, cost and spec text the catalog has on file)
+      let plan = [];
+      if (fresh.length) { try { plan = (await api("/inventory/new-products/preview", { method: "POST", body: { rows: fresh.map((f) => ({ name: f.name, strength: f.strength, manufacturer: f.manufacturer })) } })).rows; } catch (e) {} }
+      fresh.forEach((f, i) => { f.plan = plan[i] || { ok: true, category: "", specs: false, priceCents: null, why: "" }; if (!f.plan.ok) f.add = false; });
       const draw = () => {
         const mode = document.getElementById("qtyMode").value;
-        prev.innerHTML = `<p><strong>${lines.length} product${lines.length === 1 ? "" : "s"} matched</strong>${problems.length ? `, ${problems.length} row${problems.length === 1 ? "" : "s"} skipped` : ""}.</p>
+        const adding = fresh.filter((f) => f.add && f.plan.ok);
+        const newBox = fresh.length ? `<div class="panel" style="border-color:var(--blue);margin-top:.6rem"><h2 style="font-size:1.05rem">${fresh.length} new product${fresh.length === 1 ? "" : "s"} in this file</h2>
+          <p class="muted">Not on the store yet. Tick the ones to add — they're created with the catalog's category, cost and spec text when the peptide is on file (a new size of a known peptide gets its text with the size filled in), then counted like the rest. Anything without a price shows "Ask for price" until you set one under Products &amp; prices.</p>
+          <div style="display:grid;gap:.4rem;max-height:22rem;overflow:auto">
+            ${fresh.map((f, i) => `<label style="display:flex;gap:.7rem;align-items:flex-start;padding:.55rem .7rem;border:1px solid var(--line);border-radius:10px;background:var(--card);cursor:${f.plan.ok ? "pointer" : "default"};${f.plan.ok ? "" : "opacity:.6"}"><input type="checkbox" data-newadd="${i}"${f.add ? " checked" : ""}${f.plan.ok ? "" : " disabled"} style="margin-top:.2rem">
+              <span style="min-width:0;flex:1"><strong>${esc(f.name)}</strong> ${esc(f.strength)}${f.manufacturer ? ` <span class="muted">· ${esc(f.manufacturer)}</span>` : ""}${f.plan.ok ? "" : ` <span class="err" style="display:inline-block;padding:.05rem .4rem;font-size:.75rem">${esc(f.plan.why)}</span>`}
+                <span class="muted" style="display:flex;flex-wrap:wrap;gap:.25rem .8rem;font-size:.8rem;margin-top:.2rem">${f.plan.category ? `<span>${esc(f.plan.category)}</span>` : ""}<span>Specs: ${f.plan.specs ? '<span class="pill st-shipped">on file</span>' : '<span class="pill st-new" title="No description text for this peptide yet">none yet</span>'}</span><span>Price: ${f.plan.priceCents !== null && f.plan.priceCents !== undefined ? money(f.plan.priceCents) : "ask"}</span><span>${mode === "count" ? "Counted" : "Receiving"}: <strong>${f.qty === null ? "blank" : f.qty}</strong></span></span></span></label>`).join("")}</div></div>` : "";
+        prev.innerHTML = `<p><strong>${lines.length} product${lines.length === 1 ? "" : "s"} matched</strong>${fresh.length ? `, <strong>${fresh.length} new</strong>` : ""}${problems.length ? `, ${problems.length} row${problems.length === 1 ? "" : "s"} skipped` : ""}.</p>${newBox}
           ${lines.length ? `<div class="tblwrap" style="max-height:24rem;overflow:auto"><table class="tbl"><tr><th>Product</th><th class="num">On shelf now</th><th class="num">${mode === "count" ? "Counted" : "Receiving"}</th><th class="num">${mode === "count" ? "Change" : "New on shelf"}</th>${mode === "receive" ? "<th>Lot</th><th>Expires</th><th class=\"num\">Cost each</th>" : ""}</tr>
             ${lines.map((l) => { const cur = l.p.stock === null ? null : l.p.stock + (l.p.committed || 0); const diff = mode === "count" ? (cur === null ? null : l.qty - cur) : null; return `<tr><td>${esc(label(l.p))}${l.p.manufacturer ? `<div class="muted" style="font-size:.72rem">${esc(l.p.manufacturer)}</div>` : ""}</td><td class="num">${cur === null ? '<span class="muted">not tracked</span>' : cur}</td><td class="num"><strong>${l.qty}</strong></td><td class="num">${mode === "count" ? (diff === null ? "opening count" : diff === 0 ? "—" : (diff > 0 ? "+" : "") + diff) : (cur === null ? l.qty : cur + l.qty)}</td>${mode === "receive" ? `<td>${esc(l.lot)}</td><td>${esc(l.expires)}</td><td class="num">${esc(l.cost)}</td>` : ""}</tr>`; }).join("")}</table></div>` : ""}
           ${problems.length ? `<details style="margin-top:.6rem"><summary class="muted" style="cursor:pointer">Skipped rows</summary><ul class="muted">${problems.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
-          ${lines.length ? `<div class="row2" style="margin-top:.6rem"><button class="btn solid" type="button" id="qtyGo">${mode === "count" ? "Post count sheet" : "Receive into stock"} (${lines.length})</button><button class="btn" type="button" id="qtyCancel">Cancel</button></div>` : ""}`;
+          ${lines.length || adding.length ? `<div class="row2" style="margin-top:.6rem"><button class="btn solid" type="button" id="qtyGo" style="white-space:normal;text-align:left">${adding.length ? `Add ${adding.length} product${adding.length === 1 ? "" : "s"} and ` : ""}${mode === "count" ? (adding.length ? "post count sheet" : "Post count sheet") : (adding.length ? "receive into stock" : "Receive into stock")} (${lines.length + adding.filter((f) => f.qty !== null).length})</button><button class="btn" type="button" id="qtyCancel">Cancel</button></div>` : ""}`;
+        prev.querySelectorAll("[data-newadd]").forEach((cb) => { cb.onchange = () => { fresh[+cb.dataset.newadd].add = cb.checked; draw(); }; });
         if (document.getElementById("qtyCancel")) document.getElementById("qtyCancel").onclick = () => { box.innerHTML = ""; };
         if (document.getElementById("qtyGo")) document.getElementById("qtyGo").onclick = async () => {
           const note = document.getElementById("qtyNote").value || `Uploaded from ${file.name}`;
           const b = document.getElementById("qtyGo"); b.disabled = true;
           try {
-            if (mode === "count") { const r = await api("/inventory/counts", { method: "POST", body: { note, lines: lines.map((l) => ({ productId: l.p.id, counted: l.qty })) } }); toast(`Count posted: ${r.varied ?? lines.length} changed`); invTab = "counts"; }
-            else { const r = await api("/inventory/receive", { method: "POST", body: { note, ref: file.name, lines: lines.map((l) => ({ productId: l.p.id, qty: l.qty, lot: l.lot, expires: l.expires, costEach: l.cost })) } }); toast(`Received ${r.lines} line${r.lines === 1 ? "" : "s"} into stock`); }
+            const all = lines.slice();
+            if (adding.length) { // approved new products first, then they're counted / received with the rest
+              const r = await api("/inventory/new-products", { method: "POST", body: { rows: adding.map((f) => ({ name: f.name, strength: f.strength, manufacturer: f.manufacturer })) } });
+              r.added.forEach((a) => { const f = adding[a.i]; if (f && f.qty !== null) all.push({ p: { id: a.id, name: f.name, strength: f.strength, stock: null }, qty: f.qty, lot: f.lot, expires: f.expires, cost: f.cost }); });
+              const noSpecs = r.added.filter((a) => !a.specs);
+              toast(`Added ${r.added.length} new product${r.added.length === 1 ? "" : "s"}${noSpecs.length ? ` · ${noSpecs.length} without spec text yet` : ""}`);
+            }
+            if (!all.length) { stats = null; await inventory(); return; }
+            if (mode === "count") { const r = await api("/inventory/counts", { method: "POST", body: { note, lines: all.map((l) => ({ productId: l.p.id, counted: l.qty })) } }); toast(`Count posted: ${r.varied ?? all.length} changed`); invTab = "counts"; }
+            else { const r = await api("/inventory/receive", { method: "POST", body: { note, ref: file.name, lines: all.map((l) => ({ productId: l.p.id, qty: l.qty, lot: l.lot, expires: l.expires, costEach: l.cost })) } }); toast(`Received ${r.lines} line${r.lines === 1 ? "" : "s"} into stock`); }
             stats = null; await inventory();
           } catch (x) { b.disabled = false; }
         };
