@@ -2365,7 +2365,7 @@ admin.post("/mail/test", owner, wrap(async (req, res) => {
 admin.get("/sms", owner, wrap(async (req, res) => {
   const s = await getSettings();
   const { rows: log } = await q("select at, to_num, who, kind, body, ok, error from sms_log order by id desc limit 50");
-  const { rows: people } = await q("select name, role, phone, sms_on from users where active order by case role when 'owner' then 0 when 'staff' then 1 else 2 end, name");
+  const { rows: people } = await q("select name, role, phone, sms_on from users where active and role = 'rep' order by name");
   res.json({ info: sms.info(), office: officeNumbers(s), people: people.map((u) => ({ name: u.name, role: u.role, phone: u.phone, on: !!u.sms_on, valid: !!sms.norm(u.phone) })), log });
 }));
 admin.post("/sms/test", owner, limit("smstest", 10, 15 * 60 * 1000), wrap(async (req, res) => {
@@ -2527,21 +2527,6 @@ app.post("/api/hub/check-pin", hubAuth, wrap(async (req, res) => {
   const pin = String(req.body?.pin || "").replace(/\D/g, "");
   const ok = !!(u && appsOf(u).tracker && pin.length >= 4 && (await bcrypt.compare(pin, u.pin_hash)));
   res.json({ ok, user: ok ? hubUser(u) : null });
-}));
-// the case tracker's alerts and Monday digest by text: it sends the words, this store sends the texts (one Twilio setup for both apps)
-// body: { kind: "alert" | "digest", messages: [{ to: "admins" | <user id>, text }] }
-app.post("/api/hub/sms", hubAuth, wrap(async (req, res) => {
-  const s = await getSettings(), kind = req.body?.kind === "digest" ? "digest" : "alert";
-  if (s.smsOn === false || !sms.ready() || (kind === "digest" ? s.smsDigest === false : s.smsTracker === false)) return res.json({ ok: true, sent: 0, off: true });
-  let sent = 0;
-  for (const m of (Array.isArray(req.body?.messages) ? req.body.messages : []).slice(0, 100)) {
-    const text = str(m && m.text, 600); if (!text) continue;
-    let ids;
-    if (m.to === "admins") ids = (await q("select id, role, apps from users where active and sms_on and role in ('owner','staff')")).rows.filter((u) => u.role === "owner" || appsOf(u).tracker).map((u) => u.id); // admins always; managers with the Case tracker ticked
-    else ids = [intOrNull(m.to)].filter(Boolean);
-    sent += await textUsers(ids, "360 Medical: " + text, kind === "digest" ? "tracker digest" : "tracker", s);
-  }
-  res.json({ ok: true, sent });
 }));
 // the tracker's email sign-in: the same email + password as the store admin (one login for both apps)
 app.post("/api/hub/check-pass", hubAuth, wrap(async (req, res) => {

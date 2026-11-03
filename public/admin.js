@@ -2224,7 +2224,7 @@ async function settings(part = "site") {
       <p class="muted">One place for both apps' email. The <strong>Peptide store</strong> sends order emails with the account below; the <strong>Case tracker</strong> sends its facility / surgeon approval emails to the COO with the same account.</p>
       <h2 class="eyebrow" style="margin:.2rem 0 -.4rem">Peptide store</h2>${emailPanel}
       <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">Case tracker</h2><div id="trackerMail" class="panel"><h2>Approval emails</h2><p class="muted">Loading…</p></div>
-      <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">Both apps</h2><div id="smsPanel" class="panel"><h2>Text messages (SMS)</h2><p class="muted">Loading…</p></div>`;
+      <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">Peptide store texts</h2><div id="smsPanel" class="panel"><h2>Text messages (SMS)</h2><p class="muted">Loading…</p></div>`;
     trackerMailPanel(); smsPanel(s);
   } else
   pane().innerHTML = `<header><h1>Site settings</h1></header>
@@ -2519,7 +2519,7 @@ async function staff() {
         ${F("Name", `<input data-k="name" value="${esc(u.name)}">`)}
         ${F("Role", roleSel(u.role))}
         ${F("Cell phone", `<input data-k="phone" type="tel" value="${esc(u.phone || "")}">`)}
-        ${F("Texts", `<label class="chk"><input type="checkbox" data-k="smsOn"${u.sms_on ? " checked" : ""}> Text alerts to this cell</label>`)}
+        ${u.role === "rep" ? F("Texts", `<label class="chk"><input type="checkbox" data-k="smsOn"${u.sms_on ? " checked" : ""}> Text their customers' orders to this cell</label>`) : ""}
         ${F("Commission", planPick(u, PLAN_ON, u.role === "rep").replace("justify-content:flex-end", "justify-content:flex-start") + (u.role === "rep" ? "" : '<span class="muted" data-noplan>— (reps only)</span>'))}
         ${F("PIN", `<input data-k="pin" inputmode="numeric" placeholder="${u.pin_set ? "Set · type to change" : "4–10 digits"}" title="Name + PIN sign-in for both apps">`)}
         ${F("New password", `<input data-k="password" type="password" placeholder="Leave blank to keep" autocomplete="new-password">`)}
@@ -2610,17 +2610,15 @@ async function smsPanel(s) {
     <p>${d.info.ready ? `<span class="pill st-shipped">Texting connected</span> Sending through ${esc(d.info.detail)}.` : `<span class="pill st-cancelled">Texting not connected</span> Add these on the host (Render → each service's Environment): ${d.info.missing.map((m) => `<span class="mono">${esc(m)}</span>`).join(", ")}. Until then nothing is texted.`}</p>
     <div class="field"><label class="eyebrow" for="s-smsOffice">Office cell numbers</label><input id="s-smsOffice" value="${esc(d.office.join(", "))}" placeholder="956-555-1234, 956-555-9876"><span class="muted" style="font-size:.8rem">Get new orders, card payments, PIN requests and low stock. Separate several with commas.</span></div>
     <div style="display:grid;gap:.1rem">
-      ${ck("smsOn", "<strong>Send texts</strong> (master switch for both apps)")}
+      ${ck("smsOn", "<strong>Send store texts</strong> (master switch)")}
       ${ck("smsOrderOffice", "Office: new orders, card payments and PIN requests")}
       ${ck("smsLowStock", "Office: low stock (same level as the low-stock email)")}
       ${ck("smsRepOn", "Sales reps: their customers' orders placed, paid, shipped, delivered, cancelled")}
       ${ck("smsCustomerOn", "Customers: order received, paid, shipped, delivered (only those who said yes at checkout or on their customer record)")}
-      ${ck("smsTracker", "Case tracker alerts: approvals, invoices, visits, WCUs (admins get admin alerts, reps get their own)")}
-      ${ck("smsDigest", "Case tracker Monday digest by text")}
     </div>
     <div class="row2" style="align-items:center"><button class="btn solid" type="button" id="smsSave">Save text settings</button></div>
-    <h2 style="font-size:1.05rem;margin-top:.8rem">Who gets team texts (${on.length})</h2>
-    <p class="muted">Each person turns texts on under My account (or you can under Team logins / Sales reps). They need a cell number.</p>
+    <h2 style="font-size:1.05rem;margin-top:.8rem">Sales reps getting texts (${on.length})</h2>
+    <p class="muted">Each rep turns texts on in the rep app under Account (or you can under Sales reps / Team logins). They need a cell number. Case tracker texts (approvals, invoices, visits, Monday digest) are set up separately in the tracker under Admin → Text alerts, using the same Twilio account.</p>
     ${d.people.length ? `<div style="display:grid;gap:.3rem">${d.people.map((p) => `<div class="row2" style="justify-content:space-between;flex-wrap:wrap;gap:.2rem .6rem;border-bottom:1px solid var(--line);padding:.25rem 0"><span><strong>${esc(p.name)}</strong> <span class="muted">${esc(p.role === "staff" ? "manager" : p.role === "owner" ? "admin" : "rep")}</span></span><span class="muted">${p.phone ? esc(p.phone) + (p.valid ? "" : ' <span class="err" style="display:inline;padding:0 .3rem">not a cell number</span>') : "no number"} · ${p.on ? '<span class="pill st-shipped">texts on</span>' : "texts off"}</span></div>`).join("")}</div>` : ""}
     <h2 style="font-size:1.05rem;margin-top:.8rem">Send a test text</h2>
     <div class="row2" style="align-items:end;flex-wrap:wrap"><div class="field" style="margin:0;max-width:14rem"><label class="eyebrow" for="smsTestTo">Cell number</label><input id="smsTestTo" type="tel" placeholder="956-555-1234"></div><button class="btn" type="button" id="smsTest"${d.info.ready ? "" : " disabled"}>Send test</button></div>
@@ -2630,11 +2628,11 @@ async function smsPanel(s) {
       <li>Buy a local number (Phone Numbers → Buy a number, about $1.15/month).</li>
       <li>Register for US business texting: Messaging → Regulatory compliance → <strong>A2P 10DLC</strong>. Register your business (brand) and a campaign ("Account notifications"). One-time fees about $20; approval takes 1–3 weeks. Texts to US numbers are blocked until it's approved.</li>
       <li>From the Twilio Console home copy the <strong>Account SID</strong> and <strong>Auth Token</strong>.</li>
-      <li>In Render, add to <strong>both</strong> the store and the case tracker services → Environment: <span class="mono">TWILIO_ACCOUNT_SID</span>, <span class="mono">TWILIO_AUTH_TOKEN</span>, <span class="mono">TWILIO_FROM</span> (the number, like +19565551234). Save; each restarts by itself.</li>
+      <li>In Render, add to the store service (and the case tracker, for its texts) → Environment: <span class="mono">TWILIO_ACCOUNT_SID</span>, <span class="mono">TWILIO_AUTH_TOKEN</span>, <span class="mono">TWILIO_FROM</span> (the number, like +19565551234). Save; each restarts by itself.</li>
       <li>Reload this page: it should say <em>Texting connected</em>. Send yourself a test.</li></ol></details>`;
   document.getElementById("smsSave").onclick = async () => {
     const body = { smsOffice: document.getElementById("s-smsOffice").value };
-    ["smsOn", "smsOrderOffice", "smsLowStock", "smsRepOn", "smsCustomerOn", "smsTracker", "smsDigest"].forEach((k) => { body[k] = document.getElementById("s-" + k).checked; });
+    ["smsOn", "smsOrderOffice", "smsLowStock", "smsRepOn", "smsCustomerOn"].forEach((k) => { body[k] = document.getElementById("s-" + k).checked; });
     await api("/settings", { method: "PUT", body }); toast("Text settings saved"); Object.assign(s, body); smsPanel(s);
   };
   document.getElementById("smsTest").onclick = async () => { const r = await api("/sms/test", { method: "POST", body: { to: document.getElementById("smsTestTo").value } }); toast("Test text sent to " + r.to); smsPanel(s); };
@@ -2651,13 +2649,13 @@ function account() {
       <p class="muted">Sign in faster with your name + PIN on this admin, the rep app and the case tracker. ${me.apps && me.apps.tracker ? "" : ""}</p>
       <div class="field"><label class="eyebrow" for="myPin">PIN (4–10 digits; blank to remove)</label><input id="myPin" inputmode="numeric" maxlength="10"></div>
       <div><button class="btn solid" id="pinSave">Save PIN</button></div></div>
-    <div class="panel" style="max-width:28rem"><h2>Text alerts</h2>
-      <p class="muted" id="mySmsNote">Get alerts by text: ${me.role === "rep" ? "your customers' orders (placed, paid, shipped, delivered), case tracker alerts and your Monday summary" : "case tracker alerts (approvals, invoices, visits) and the Monday team summary"}. Standard message rates apply; reply STOP to any text to stop them.</p>
+    ${me.role === "rep" ? `<div class="panel" style="max-width:28rem"><h2>Text alerts</h2>
+      <p class="muted" id="mySmsNote">Get alerts by text: your customers' store orders (placed, paid, shipped, delivered). (Case tracker texts are turned on in the tracker.). Standard message rates apply; reply STOP to any text to stop them.</p>
       <div class="field"><label class="eyebrow" for="mySmsPh">Cell number</label><input id="mySmsPh" type="tel" inputmode="tel" placeholder="956-555-1234"></div>
       <label class="chk"><input type="checkbox" id="mySmsOn"> Text me alerts</label>
-      <div><button class="btn solid" id="mySmsSave">Save text alerts</button></div></div>`;
-  api("/my-sms").then((j) => { document.getElementById("mySmsPh").value = j.phone || ""; document.getElementById("mySmsOn").checked = !!j.on; if (!j.ready) document.getElementById("mySmsNote").insertAdjacentHTML("beforeend", " <strong>Texting isn't switched on for the company yet</strong>, so nothing is sent until it is."); }).catch(() => {});
-  document.getElementById("mySmsSave").onclick = async () => { const r = await api("/my-sms", { method: "POST", body: { phone: document.getElementById("mySmsPh").value, on: document.getElementById("mySmsOn").checked } }); toast(r.on ? "Text alerts on" : "Text alerts off"); };
+      <div><button class="btn solid" id="mySmsSave">Save text alerts</button></div></div>` : ""}`;
+  if (me.role === "rep") api("/my-sms").then((j) => { document.getElementById("mySmsPh").value = j.phone || ""; document.getElementById("mySmsOn").checked = !!j.on; if (!j.ready) document.getElementById("mySmsNote").insertAdjacentHTML("beforeend", " <strong>Texting isn't switched on for the company yet</strong>, so nothing is sent until it is."); }).catch(() => {});
+  if (document.getElementById("mySmsSave")) document.getElementById("mySmsSave").onclick = async () => { const r = await api("/my-sms", { method: "POST", body: { phone: document.getElementById("mySmsPh").value, on: document.getElementById("mySmsOn").checked } }); toast(r.on ? "Text alerts on" : "Text alerts off"); };
   document.getElementById("pinSave").onclick = async () => { const r = await api("/my-pin", { method: "POST", body: { pin: document.getElementById("myPin").value } }); toast(r.pinSet ? "PIN saved" : "PIN removed"); document.getElementById("myPin").value = ""; };
   document.getElementById("pSave").onclick = async () => {
     await fetch("/api/admin/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ current: pc.value, next: pn.value }) })

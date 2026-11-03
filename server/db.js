@@ -341,8 +341,6 @@ const DEFAULT_SETTINGS = {
   smsRepOn: true,         // the customer's sales rep: new, paid, shipped, delivered, cancelled (reps who turned texts on)
   smsCustomerOn: true,    // the customer, only when they ticked "text me" or their account says yes
   smsLowStock: true,      // low stock → the office numbers
-  smsTracker: true,       // case tracker alerts (approvals, invoices, visits, WCUs) → admins and reps who turned texts on
-  smsDigest: true,        // the Monday digest by text
   custIdleMin: 30,      // customers are signed out after this many minutes without using the store (0 = never)
   custCloseOut: true,   // …and when the browser / app is closed
   staffIdleMin: 720,    // admin and rep app: 12 hours idle

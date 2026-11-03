@@ -328,7 +328,7 @@ async function account() {
       <div class="grid2"><div class="field"><label class="eyebrow" for="pc">Current password</label><input id="pc" type="password" autocomplete="current-password"></div><div class="field"><label class="eyebrow" for="pn">New password (10+ characters)</label><input id="pn" type="password" autocomplete="new-password"></div></div>
       <div><button class="btn solid rep" id="pSave">Change password</button></div></div>
     <div class="panel"><h2>Text alerts</h2>
-      <p class="muted" id="mySmsNote">Get a text when your customers' orders are placed, paid, shipped or delivered, plus case tracker alerts and your Monday summary. Standard message rates apply; reply STOP to any text to stop them.</p>
+      <p class="muted" id="mySmsNote">Get a text when your customers' orders are placed, paid, shipped or delivered. (Case tracker texts are turned on in the tracker.) Standard message rates apply; reply STOP to any text to stop them.</p>
       <div class="grid2"><div class="field"><label class="eyebrow" for="mySmsPh">Cell number</label><input id="mySmsPh" type="tel" inputmode="tel" placeholder="956-555-1234"></div>
       <div class="field"><span class="eyebrow">&nbsp;</span><label class="chk"><input type="checkbox" id="mySmsOn"> Text me alerts</label></div></div>
       <div><button class="btn solid rep" id="mySmsSave">Save text alerts</button></div></div>
