@@ -1,6 +1,6 @@
 // Service worker: makes the site installable. Always tries the network first so pages,
 // styles, prices and orders are never stale; the saved copy is only used when offline.
-const CACHE = "store-v12";
+const CACHE = "store-v13";
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener("fetch", (e) => {
