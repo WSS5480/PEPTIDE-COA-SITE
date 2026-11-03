@@ -40,7 +40,7 @@
     let i = at != null ? at : Math.max(0, c.read.length < c.lessons.length ? [...c.lessons.keys()].find((k) => !c.read.includes(k)) : 0);
     const draw = () => {
       const allRead = c.lessons.every((_, k) => c.read.includes(k));
-      PANE.innerHTML = `<header><h1>${esc(c.icon)} ${esc(c.title)}</h1><button class="btn" type="button" id="uBack">‹ All courses</button></header>
+      PANE.innerHTML = `<header><h1>${esc(c.icon)} ${esc(c.title)}</h1><div class="row2" style="gap:.4rem"><a class="btn" href="/api/rep/uni/${c.id}/pdf" download title="The whole course as a PDF to read or print">⬇ PDF</a><button class="btn" type="button" id="uBack">‹ All courses</button></div></header>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px">${pill(c.status)}<span class="muted" style="font-size:.85rem">Test: ${c.test_count} questions · ${c.pass_pct}% to pass · ${c.max_attempts} attempts${c.attempts ? ` · ${c.attempts} used, best ${c.best}%` : ""}</span></div>
         <div class="uni-chips">${c.lessons.map((l, k) => `<button type="button" data-l="${k}" class="${k === i ? "on" : ""} ${c.read.includes(k) ? "done" : ""}">${c.read.includes(k) ? "✓ " : ""}${k + 1}. ${esc(l.title)}</button>`).join("")}</div>
         <div class="panel" data-nofold><h2 style="margin-top:0">Lesson ${i + 1} of ${c.lessons.length}: ${esc(c.lessons[i].title)}</h2><div class="u-lesson">${window.UniRender.render(c.lessons[i].body)}</div>

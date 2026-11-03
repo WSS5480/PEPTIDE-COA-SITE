@@ -239,6 +239,31 @@ module.exports = function university({ app, admin, rep, q, wrap, bad, str, intOr
     if (c.builtin_key) await q(`insert into settings(key, value) values ('uniDeletedBuiltins', $1) on conflict (key) do update set value = (select to_jsonb(array(select distinct jsonb_array_elements_text(settings.value || $1))))`, [JSON.stringify([c.builtin_key])]);
     await q("delete from uni_courses where id = $1", [intOrNull(req.params.id)]); res.json({ ok: true });
   }));
+  // the course as a PDF: admins get the answer key at the back, reps the same book without it
+  const { coursePdf } = require("./university-pdf");
+  const pdfName = (t) => `360 University - ${String(t).replace(/[^\w .,&+()-]/g, "").trim() || "course"}.pdf`;
+  async function uniImage(id) { // a lesson's uploaded picture, as PNG/JPEG for the PDF
+    const { rows: [f] } = await q("select type, data from uni_files where id = $1", [String(id).slice(0, 40)]); if (!f || !f.data) return null;
+    if (/^image\/(png|jpeg)$/.test(f.type || "")) return f.data;
+    if (/^image\//.test(f.type || "")) { try { return await require("sharp")(f.data).png().toBuffer(); } catch (e) { return null; } }
+    return null;
+  }
+  async function sendPdf(res, course, answers) {
+    const s = await getSettings();
+    const cat = (course.lessons || []).some((l) => (l.body || "").includes("{{catalog}}")) ? await catalogText() : "";
+    const lessons = (course.lessons || []).map((l) => ({ title: l.title, body: (l.body || "").replace("{{catalog}}", cat) }));
+    const pdf = await coursePdf({ ...course, lessons }, { answers, brand: s.brand || "360 Peptides", audienceLabel: AUDIENCES[course.audience], images: uniImage });
+    res.set("Content-Type", "application/pdf"); res.set("Content-Disposition", `attachment; filename="${pdfName(course.title)}"`); res.set("Cache-Control", "no-store"); res.send(pdf);
+  }
+  admin.get("/uni/courses/:id/pdf", team, wrap(async (req, res) => {
+    const c = await fullCourse(intOrNull(req.params.id)); if (!c) return bad(res, "Course not found.", 404);
+    await sendPdf(res, c, true);
+  }));
+  rep.get("/uni/:id/pdf", wrap(async (req, res) => {
+    const a = await mine(req, intOrNull(req.params.id)); if (!a) return bad(res, "That course isn't assigned to you.", 404);
+    const c = await fullCourse(a.course_id); if (!c) return bad(res, "Course not found.", 404);
+    await sendPdf(res, c, false);
+  }));
   admin.get("/uni/courses/:id/export", team, wrap(async (req, res) => {
     const c = await fullCourse(intOrNull(req.params.id)); if (!c) return bad(res, "Course not found.", 404);
     const out = { format: "360-university-course", version: 1, title: c.title, blurb: c.blurb, icon: c.icon, audience: c.audience, minutes: c.minutes, pass_pct: c.pass_pct, test_count: c.test_count, max_attempts: c.max_attempts, lessons: c.lessons,

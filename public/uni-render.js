@@ -40,7 +40,7 @@
     </svg><figcaption class="u-cap">Tap an organ to see its name and where it sits. Dashed lines split the abdomen into the four quadrants.</figcaption><div class="u-pick" aria-live="polite"></div></figure>`;
   }
   function skin() {
-    return `<figure class="u-fig"><svg viewBox="0 0 380 210" role="img" aria-label="Layers of the skin">
+    return `<figure class="u-fig"><svg viewBox="0 0 400 210" role="img" aria-label="Layers of the skin">
       <rect x="20" y="20" width="240" height="24" fill="#f3d2b8"/><rect x="20" y="44" width="240" height="66" fill="#e8a99a"/><rect x="20" y="110" width="240" height="56" fill="#f6e6a6"/>
       <path d="M118 110 C120 86 122 62 126 20" stroke="#8a5a44" stroke-width="3" fill="none"/><ellipse cx="118" cy="104" rx="6" ry="8" fill="#8a5a44"/>
       <path d="M200 106 c-6 -10 6 -14 0 -24 c-6 -10 6 -14 0 -24" stroke="#c0392b" stroke-width="3" fill="none"/>
@@ -104,5 +104,5 @@
     .u-fig{margin:.8rem 0;padding:10px;border:1px solid var(--line,#e3e8ec);border-radius:14px;background:#fff;color:#123}.u-fig svg{width:100%;max-width:440px;display:block;margin:0 auto}.u-cap{font-size:.82rem;color:#5f6b76;text-align:center;margin-top:6px}
     .u-org{cursor:pointer;transition:opacity .15s}.u-org:hover,.u-org:focus,.u-org.on{opacity:1;filter:brightness(1.08) drop-shadow(0 0 3px rgba(0,0,0,.45));outline:none}.u-pick{text-align:center;min-height:1.4em;margin-top:4px}`;
   document.head.appendChild(css);
-  window.UniRender = { render, esc };
+  window.UniRender = { render, esc, diagrams: DIAGRAMS, organs: ORGANS }; // diagrams + organ list are also used by the server to print a course to PDF
 })();
