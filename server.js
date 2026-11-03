@@ -2581,10 +2581,10 @@ function hubVerify(token) {
 }
 // calls from the tracker carry Authorization: Hub <signed {exp}>
 const hubAuth = (req, res, next) => { const t = /^Hub (.+)$/.exec(req.headers.authorization || ""); if (!HUB_SECRET || !t || !(hubVerify(t[1]) || {}).svc) return bad(res, "Hub signature missing or wrong", 401); next(); };
-const hubUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, phone: u.phone || "", sms_on: !!u.sms_on, commission_rate: u.commission_rate, active: u.active, apps: appsOf(u), pin_version: u.pin_version || 0 });
+const hubUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, phone: u.phone || "", sms_on: !!u.sms_on, pin_set: u.pin_set !== undefined ? !!u.pin_set : u.pin_hash !== undefined ? !!u.pin_hash : undefined, commission_rate: u.commission_rate, active: u.active, apps: appsOf(u), pin_version: u.pin_version || 0 });
 // the people the tracker should know: everyone with the Case tracker box ticked
 app.get("/api/hub/people", hubAuth, wrap(async (req, res) => {
-  const { rows } = await q("select id, email, name, role, phone, sms_on, commission_rate, active, apps, pin_version from users order by name");
+  const { rows } = await q("select id, email, name, role, phone, sms_on, commission_rate, active, apps, pin_version, (pin_hash is not null) pin_set from users order by name");
   res.json({ people: rows.filter((u) => appsOf(u).tracker).map(hubUser), at: new Date().toISOString() });
 }));
 // a tracker rep signing in by name + PIN on the tracker's own page: checked against the hub PIN
