@@ -559,7 +559,7 @@ async function load() {
   if (first) {
     first = false;
     afterPayment();
-    const name = S.brand || "360 Medical Peptides";
+    const name = S.brand || "360 Peptides";
     document.title = LAB ? `Lab reports · ${name}` : name;
     if (LAB) $("hq").placeholder = "Search lab reports";
     $("brand").textContent = name; $("footBrand").textContent = name;

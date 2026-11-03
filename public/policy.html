@@ -22,7 +22,7 @@
 <body>
 <div class="announce" id="announce" hidden></div>
 <header class="top"><div class="wrap">
-  <a class="logo" href="/" style="text-decoration:none"><img class="brandimg" id="brandImg" alt="" hidden><span id="brand">360 Medical Peptides</span></a>
+  <a class="logo" href="/" style="text-decoration:none"><img class="brandimg" id="brandImg" alt="" hidden><span id="brand">360 Peptides</span></a>
   <a class="btn" href="/" style="display:inline-grid;place-items:center;text-decoration:none">← Back to store</a>
 </div></header>
 <main class="wrap pol">
@@ -41,7 +41,7 @@
   const { settings: S } = await (await fetch("/api/store")).json();
   if (S.announcementOn && S.announcement) { const el = document.getElementById("announce"); el.hidden = false; el.className = "announce tone-" + (S.bannerTone || "navy"); if (S.bannerSticky !== false) { document.body.classList.add("ann-sticky"); setTimeout(() => document.documentElement.style.setProperty("--annh", el.offsetHeight + "px"), 50); } if (S.bannerLink) { el.classList.add("linked"); el.onclick = () => { location.href = S.bannerLink; }; }
     if (S.bannerScroll) { const i = `<span>${esc(S.announcement)}</span>`.repeat(6); el.classList.add("scroll"); el.innerHTML = `<div class="mq">${i}</div><div class="mq" aria-hidden="true">${i}</div>`; el.querySelectorAll(".mq").forEach((m) => { m.style.animationDuration = (S.bannerSpeed || 30) + "s"; }); } else el.textContent = S.announcement; }
-  const name = S.brand || "360 Medical Peptides";
+  const name = S.brand || "360 Peptides";
   document.title = "Policies · " + name; $("brand").textContent = name;
   if (S.siteLogoV) { $("brandImg").src = "/site-logo?v=" + S.siteLogoV; $("brandImg").alt = name; $("brandImg").hidden = false; $("brand").classList.add("hp"); }
   const block = (id, title, items) => `<section id="${id}"><h2 class="title">${title}</h2>${(items || []).map((t) => `<p>${para(t)}</p>`).join("") || "<p>Coming soon.</p>"}</section>`;

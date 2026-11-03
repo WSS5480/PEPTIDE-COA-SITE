@@ -295,7 +295,7 @@ drop trigger if exists t_bump on pin_requests; create trigger t_bump after inser
 `;
 
 const DEFAULT_SETTINGS = {
-  brand: "360 Medical Peptides",
+  brand: "360 Peptides",
   tagline: "",
   distributorOf: "XINT",
   brandUrl: "https://xintpeptides.com/",
@@ -370,7 +370,7 @@ const DEFAULT_SETTINGS = {
   mailPort: 587,
   mailUser: "",            // login email
   mailPass: "",            // never sent to the browser
-  mailFrom: "",            // e.g. 360 Medical Peptides <noreply@360medical.net>; blank = the login address
+  mailFrom: "",            // e.g. 360 Peptides <noreply@360medical.net>; blank = the login address
   resendKey: "",           // never sent to the browser
   graphTenant: "",         // Microsoft 365 app (Graph): Directory (tenant) ID
   graphClient: "",         // Application (client) ID
@@ -496,10 +496,17 @@ async function init() {
     await q("update settings set value = '1' where key = 'vialLogoV' and value::text = '0' and not exists (select 1 from settings where key = 'vialLogo')");
     await q("insert into settings(key, value) values ('vialLogoSeeded', 'true') on conflict (key) do nothing");
   }
-  // one-time rename: a store still on the old default name becomes 360 Medical Peptides
+  // one-time (Nov 2026): the store is "360 Peptides", never "360 Medical" — rename it wherever a setting says 360 Medical Peptides
+  // (store name, email From name, disclaimers, policies, banner…). The 360medical.net email domain is left alone.
+  const { rows: [noMed] } = await q("select 1 from settings where key = 'brandNoMedical'");
+  if (!noMed) {
+    await q(`update settings set value = regexp_replace(value::text, '360 Medical Peptides', '360 Peptides', 'gi')::jsonb where value::text ~* '360 Medical Peptides'`);
+    await q("insert into settings(key, value) values ('brandNoMedical', 'true') on conflict (key) do nothing");
+  }
+  // one-time rename: a store still on the old default name becomes 360 Peptides
   const { rows: [renamed] } = await q("select 1 from settings where key = 'brandRenamed360'");
   if (!renamed) {
-    await q(`update settings set value = '"360 Medical Peptides"' where key = 'brand' and value::text in ('""', '"Research Peptides"')`);
+    await q(`update settings set value = '"360 Peptides"' where key = 'brand' and value::text in ('""', '"Research Peptides"')`);
     await q("insert into settings(key, value) values ('brandRenamed360', 'true') on conflict (key) do nothing");
   }
   if (firstRun) {

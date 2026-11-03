@@ -207,7 +207,7 @@ async function lowStockAlert(productId, stock, info) {
   if (!to.length && !textIt) return;
   await q("update products set low_alerted_at = now() where id = $1", [productId]);
   const label = `${p.name} ${p.strength}`.trim(), left = stock < 0 ? `${-stock} backordered` : `${stock} left`;
-  if (textIt) await textOffice(`${s.brand || "360 Medical Peptides"}: Low stock · ${label}${p.manufacturer ? ` (${p.manufacturer})` : ""} · ${left}.${BASE_URL ? `\n${BASE_URL}/admin#inventory` : ""}`, "low stock", s).catch(() => {});
+  if (textIt) await textOffice(`${s.brand || "360 Peptides"}: Low stock · ${label}${p.manufacturer ? ` (${p.manufacturer})` : ""} · ${left}.${BASE_URL ? `\n${BASE_URL}/admin#inventory` : ""}`, "low stock", s).catch(() => {});
   if (!to.length) return;
   const { rows: others } = await q("select name, strength, stock from products where active and stock is not null and stock < $1 and id <> $2 order by stock, name", [level, productId]);
   const link = BASE_URL ? `${BASE_URL}/admin#inventory` : "";
@@ -594,7 +594,7 @@ async function textUsers(ids, body, kind, s) {
 // an order's texts: the office, the customer's rep, and the customer (only if they said yes)
 async function textOrder(o, kind, extra, s) {
   if (s.smsOn === false || !sms.ready()) return;
-  const $ = (c) => "$" + ((c || 0) / 100).toFixed(2), brand = s.brand || "360 Medical Peptides", delivered = kind === "shipped" && o.status === "delivered";
+  const $ = (c) => "$" + ((c || 0) / 100).toFixed(2), brand = s.brand || "360 Peptides", delivered = kind === "shipped" && o.status === "delivered";
   if (!extra.repOnly && s.smsOrderOffice !== false && ["new", "paid"].includes(kind))
     await textOffice(`${brand}: ${kind === "paid" ? "PAID" : "New"} order ${o.number} · ${$(kind === "paid" ? (o.paid_cents ?? o.total_cents) : o.total_cents)} · ${o.name}${o.placed_by && o.placed_by !== "Customer" ? ` (by ${o.placed_by})` : ""}${BASE_URL ? `\n${BASE_URL}/admin#order-${o.id}` : ""}`, "order", s);
   if (!extra.noRep && s.smsRepOn !== false && ["new", "paid", "shipped", "cancelled"].includes(kind)) {
@@ -804,7 +804,7 @@ app.post("/api/pin-request", jsonOnly, limit("pinreq", 5, 60 * 60 * 1000), wrap(
   if (email && !isEmail(email)) return bad(res, "That email doesn't look right.");
   const { rows: [r] } = await q("insert into pin_requests(name, company, email, phone, note) values ($1,$2,$3,$4,$5) returning id", [name, company, email, phone, note]);
   const s = await getSettings();
-  if (s.smsOrderOffice !== false) textOffice(`${s.brand || "360 Medical Peptides"}: PIN request · ${name}${company ? ` (${company})` : ""}${phone ? ` · ${phone}` : ""}${email ? ` · ${email}` : ""}${BASE_URL ? `\n${BASE_URL}/admin#customers` : ""}`, "pin request", s).catch(() => {});
+  if (s.smsOrderOffice !== false) textOffice(`${s.brand || "360 Peptides"}: PIN request · ${name}${company ? ` (${company})` : ""}${phone ? ` · ${phone}` : ""}${email ? ` · ${email}` : ""}${BASE_URL ? `\n${BASE_URL}/admin#customers` : ""}`, "pin request", s).catch(() => {});
   if (s.orderEmailOn && isEmail(s.orderEmail || "")) {
     const text = [`PIN request from ${name}${company ? ` (${company})` : ""}`, "", email ? `Email: ${email}` : "", phone ? `Phone: ${phone}` : "", note ? `\nMessage: ${note}` : "", BASE_URL ? `\nApprove it under Customers in admin: ${BASE_URL}/admin#customers` : ""].filter((x) => x !== "").join("\n");
     mail.send({ to: s.orderEmail, subject: `PIN request · ${name}${company ? " · " + company : ""}`, text, html: emailHtml(s, { eyebrow: "Store admin", kicker: "New PIN request", title: name, badge: { text: "Request", tone: "info" }, intro: `${name}${company ? ` from ${company}` : ""} asked for a PIN to sign in to the store.`, facts: [...(email ? [["Email", `<a href="mailto:${escHtml(email)}" style="color:${BLUE}">${escHtml(email)}</a>`]] : []), ...(phone ? [["Phone", escHtml(phone)]] : []), ...(company ? [["Company", escHtml(company)]] : [])], note: note ? { label: "Message", text: note } : null, button: BASE_URL ? { text: "Open Customers in admin", url: `${BASE_URL}/admin#customers` } : null, footer: `Sent by the ${escHtml(s.brand)} store.` }), replyTo: email || undefined }, s).then((x) => { if (!x.ok) console.error("PIN request email failed:", x.error); });
@@ -2372,7 +2372,7 @@ admin.post("/sms/test", owner, limit("smstest", 10, 15 * 60 * 1000), wrap(async 
   const to = sms.norm(req.body?.to); if (!to) return bad(res, "Enter a 10-digit cell number.");
   if (!sms.ready()) return bad(res, "Texting isn't set up yet: add the Twilio keys on the host first.");
   const s = await getSettings();
-  const r = await sms.send(to, `${s.brand || "360 Medical Peptides"}: test text from the admin. Texts are working.`);
+  const r = await sms.send(to, `${s.brand || "360 Peptides"}: test text from the admin. Texts are working.`);
   await q("insert into sms_log(to_num, who, kind, body, ok, error) values ($1,$2,'test',$3,$4,$5)", [to, req.user.name || req.user.email, "Test text", !!r.ok, r.ok ? "" : String(r.error || "")]).catch(() => {});
   if (!r.ok) return bad(res, r.error);
   res.json({ ok: true, to });
