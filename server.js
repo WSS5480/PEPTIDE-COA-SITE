@@ -6,6 +6,7 @@ const bcrypt = require("bcryptjs");
 const { q, pool, init, getSettings, DEFAULT_SETTINGS } = require("./server/db");
 const mail = require("./server/mail");
 const sms = require("./server/sms");
+const usd = (c) => ((c || 0) < 0 ? "-$" : "$") + (Math.abs(c || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); // $1,234.56
 const webpush = require("web-push");
 
 /* ---------- Stripe: card payments, on once STRIPE_SECRET_KEY is set on the host ---------- */
@@ -359,7 +360,7 @@ async function createOrder({ name, email, phone, address, items, fulfillment, pa
       subtotal += p.price_cents * qty;
       lines.push({ p, qty });
     }
-    if (settings.minOrderCents && subtotal < settings.minOrderCents) throw new Error(`The minimum order is $${(settings.minOrderCents / 100).toFixed(2)}.`);
+    if (settings.minOrderCents && subtotal < settings.minOrderCents) throw new Error(`The minimum order is ${usd(settings.minOrderCents)}.`);
     // ship (charged, free over a threshold if one is set) or local delivery (free); with neither offered, shipping is settled later
     const opts = fulfillmentOptions(settings);
     let f = opts.find((o) => o.key === fulfillment) || null;
@@ -388,7 +389,7 @@ async function createOrder({ name, email, phone, address, items, fulfillment, pa
       await client.query("insert into order_items(order_id,product_id,name,strength,unit_cents,qty,cost_cents) values ($1,$2,$3,$4,$5,$6,$7)", [o.id, p.id, p.manufacturer ? `${p.name} (${p.manufacturer})` : p.name, p.strength, p.price_cents, qty, p.cost_cents ?? null]);
       if (p.stock !== null) await moveStock(client, p.id, -qty, { reason: "Order", ref: number, who: placedBy === "Customer" ? name : placedBy });
     }
-    await client.query("insert into order_events(order_id, who, text) values ($1, $2, $3)", [o.id, placedBy, event + (codeUsed ? `; discount code ${codeUsed} (−$${(discount / 100).toFixed(2)})` : "")]);
+    await client.query("insert into order_events(order_id, who, text) values ($1, $2, $3)", [o.id, placedBy, event + (codeUsed ? `; discount code ${codeUsed} (−${usd(discount)})` : "")]);
     await client.query("commit");
     return { id: o.id, number, subtotalCents: subtotal, discountCents: discount, discountCode: codeUsed, shippingCents: shipCents, totalCents: total, fulfillment: fulfil, shippingName: shipName };
   } catch (e) { await client.query("rollback").catch(() => {}); throw e; }
@@ -405,13 +406,13 @@ function discountValue(dc, subtotal, units = []) {
   if (!dc || !dc.active) throw new Error("That discount code isn't valid.");
   if (dc.expired) throw new Error("That discount code has expired.");
   if (dc.max_uses !== null && dc.used >= dc.max_uses) throw new Error("That discount code has already been used up.");
-  if (dc.min_subtotal_cents && subtotal < dc.min_subtotal_cents) throw new Error(`That code needs an order of at least $${(dc.min_subtotal_cents / 100).toFixed(2)}.`);
+  if (dc.min_subtotal_cents && subtotal < dc.min_subtotal_cents) throw new Error(`That code needs an order of at least ${usd(dc.min_subtotal_cents)}.`);
   const vials = units.reduce((t, u) => t + (u.qty | 0), 0);
   if (dc.min_vials && vials < dc.min_vials) throw new Error(`That code needs at least ${dc.min_vials} vials in the order (${vials} now).`);
   const cents = dc.kind === "percent" ? Math.round(subtotal * dc.value / 100) : dc.kind === "vials" ? cheapestVials(units, dc.value) : dc.value;
   return Math.max(0, Math.min(subtotal, cents));
 }
-const codeOut = (d) => ({ ...d, label: (d.kind === "percent" ? `${d.value}% off` : d.kind === "vials" ? `${d.value} free vial${d.value === 1 ? "" : "s"}` : `$${(d.value / 100).toFixed(2)} off`) + (d.min_vials ? ` with ${d.min_vials}+ vials` : "") });
+const codeOut = (d) => ({ ...d, label: (d.kind === "percent" ? `${d.value}% off` : d.kind === "vials" ? `${d.value} free vial${d.value === 1 ? "" : "s"}` : `${usd(d.value)} off`) + (d.min_vials ? ` with ${d.min_vials}+ vials` : "") });
 // The store checks a code before the order is placed, to show the discount in the totals.
 app.post("/api/discount", limit("discount", 30, 15 * 60 * 1000), wrap(async (req, res) => {
   const code = normCode(req.body?.code), subtotal = Math.max(0, intOrNull(req.body?.subtotalCents) || 0);
@@ -483,7 +484,7 @@ async function markPaid(o, session) {
     stripe_pi = $1, paid_cents = $2, updated_at = now() where id = $3 and paid_at is null`, [pi, amount, o.id]);
   if (!rowCount) return false;
   await q("insert into order_events(order_id, who, text) values ($1, 'Stripe', $2)",
-    [o.id, `Paid $${(amount / 100).toFixed(2)} by card${amount !== o.total_cents ? ` (order total was $${(o.total_cents / 100).toFixed(2)})` : ""}${pi ? ` · ${pi}` : ""}`]);
+    [o.id, `Paid ${usd(amount)} by card${amount !== o.total_cents ? ` (order total was ${usd(o.total_cents)})` : ""}${pi ? ` · ${pi}` : ""}`]);
   notifyOrder(o.id, "paid").catch((e) => console.error("Order email failed:", e.message));
   return true;
 }
@@ -536,7 +537,7 @@ const mailHtml = (text) => `<div style="font:15px/1.5 -apple-system,'Segoe UI',R
 const TEAL = "#0097b2", TEAL_DARK = "#00718a", TEAL_WASH = "#e3f5f8", NAVY = "#111111", BLUE = TEAL_DARK, INK = "#111111", INK2 = "#5f6b76", LINE = "#e3e8ec", GROUND = "#f4f6f8";
 const FONT = "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 function emailHtml(s, p) {
-  const $ = (c) => "$" + ((c || 0) / 100).toFixed(2);
+  const $ = usd;
   const tone = { ok: [TEAL, "#ffffff"], warn: ["#fff1cc", "#6b4b00"], bad: ["#fbe3e3", "#8a1c1c"], info: [TEAL_WASH, TEAL_DARK] }[p.badge && p.badge.tone] || [TEAL_WASH, TEAL_DARK];
   const logo = BASE_URL && s.siteLogoV ? `<img src="${escHtml(BASE_URL)}/site-logo?v=${encodeURIComponent(s.siteLogoV)}" alt="${escHtml(s.brand)}" height="40" style="display:block;height:40px;width:auto;max-width:240px;border:0">` : `<span style="font:800 22px/1 ${FONT};color:${INK};letter-spacing:.02em"><span style="color:${TEAL}">360</span>PEPTIDES</span>`;
   const row = (l, v) => `<tr><td style="padding:6px 16px 6px 0;font:600 12px/1.4 ${FONT};color:${INK2};text-transform:uppercase;letter-spacing:.08em;vertical-align:top;white-space:nowrap">${escHtml(l)}</td><td style="padding:6px 0;font:600 16px/1.4 ${FONT};color:${INK};vertical-align:top">${v}</td></tr>`;
@@ -597,7 +598,7 @@ async function textUsers(ids, body, kind, s) {
 // an order's texts: the office, the customer's rep, and the customer (only if they said yes)
 async function textOrder(o, kind, extra, s) {
   if (s.smsOn === false || !sms.ready()) return;
-  const $ = (c) => "$" + ((c || 0) / 100).toFixed(2), brand = s.brand || "360 Peptides", delivered = kind === "shipped" && o.status === "delivered";
+  const $ = usd, brand = s.brand || "360 Peptides", delivered = kind === "shipped" && o.status === "delivered";
   if (!extra.repOnly && s.smsOrderOffice !== false && ["new", "paid"].includes(kind))
     await textOffice(`${brand}: ${kind === "paid" ? "PAID" : "New"} order ${o.number} · ${$(kind === "paid" ? (o.paid_cents ?? o.total_cents) : o.total_cents)} · ${o.name}${o.placed_by && o.placed_by !== "Customer" ? ` (by ${o.placed_by})` : ""}${BASE_URL ? `\n${BASE_URL}/admin#order-${o.id}` : ""}`, "order", s);
   if (!extra.noRep && s.smsRepOn !== false && ["new", "paid", "shipped", "cancelled"].includes(kind)) {
@@ -646,7 +647,7 @@ async function pushOffice(msg, s) {
 }
 async function pushOrder(o, kind, extra, s) {
   if (s.pushOn === false) return;
-  const $ = (c) => "$" + ((c || 0) / 100).toFixed(2), delivered = kind === "shipped" && o.status === "delivered";
+  const $ = usd, delivered = kind === "shipped" && o.status === "delivered";
   if (!extra.repOnly && s.pushOrderOffice !== false && ["new", "paid"].includes(kind))
     await pushOffice({ title: `${kind === "paid" ? "PAID" : "New"} order ${o.number} · ${$(kind === "paid" ? (o.paid_cents ?? o.total_cents) : o.total_cents)}`, body: `${o.name}${o.placed_by && o.placed_by !== "Customer" ? ` · placed by ${o.placed_by}` : ""}`, url: `/admin#order-${o.id}`, tag: `order-${o.id}-${kind}` }, s);
   if (!extra.noRep && s.pushRepOn !== false && ["new", "paid", "shipped", "cancelled"].includes(kind)) {
@@ -661,7 +662,7 @@ async function notifyOrder(orderId, kind, extra = {}) {
   if (!o) return;
   const { rows: items } = await q("select name, strength, unit_cents, qty from order_items where order_id = $1 order by id", [orderId]);
   const rep = o.rep_id ? (await q("select name, email from users where id = $1 and active", [o.rep_id])).rows[0] : null;
-  const $ = (c) => "$" + ((c || 0) / 100).toFixed(2);
+  const $ = usd;
   const a = o.address || {};
   const addrLines = [o.name, a.line1, a.line2, `${a.city || ""}, ${a.state || ""} ${a.zip || ""}`].filter((x) => x && x.trim() !== ",");
   const delivery = o.fulfillment === "delivery";
@@ -1165,7 +1166,7 @@ const dueOf = (o, s) => new Date(new Date(o.created_at).getTime() + termsOf(o, s
 async function invoiceHtml(o, s) {
   const { rows: items } = await q("select name, strength, unit_cents, qty from order_items where order_id = $1 order by id", [o.id]);
   const rep = o.rep_id ? (await q("select name, email from users where id = $1", [o.rep_id])).rows[0] : null;
-  const $ = (c) => "$" + ((c || 0) / 100).toFixed(2), d = (x) => new Date(x).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+  const $ = usd, d = (x) => new Date(x).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
   const a = o.address || {}, paid = !!o.paid_at, terms = termsOf(o, s), due = dueOf(o, s), late = !paid && o.status !== "cancelled" && Date.now() > due.getTime();
   const logo = s.siteLogoV ? `<img src="/site-logo?v=${encodeURIComponent(s.siteLogoV)}" alt="" style="height:44px">` : `<strong style="font-size:22px">${escHtml(s.brand)}</strong>`;
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Invoice INV-${escHtml(o.number)} · ${escHtml(s.brand)}</title>
@@ -1213,7 +1214,7 @@ admin.post("/orders/:id/payment", wrap(async (req, res) => {
   const when = /^\d{4}-\d{2}-\d{2}$/.test(String(b.date || "")) ? new Date(b.date + "T12:00:00-06:00") : new Date();
   const amount = centsOrNull(String(b.amount ?? "").replace(/[$,\s]/g, "")) ?? o.total_cents;
   await q(`update orders set paid_at = $2, paid_cents = $3, pay_method = $4, pay_ref = $5, status = case when status in ('new','confirmed') then 'paid' else status end, updated_at = now() where id = $1`, [id, when, amount, method, str(b.ref, 80)]);
-  await q("insert into order_events(order_id, who, text) values ($1, $2, $3)", [id, who, `Payment recorded: $${(amount / 100).toFixed(2)} by ${method}${b.ref ? ` #${str(b.ref, 80)}` : ""}${amount !== o.total_cents ? ` (invoice total $${(o.total_cents / 100).toFixed(2)})` : ""}`]);
+  await q("insert into order_events(order_id, who, text) values ($1, $2, $3)", [id, who, `Payment recorded: ${usd(amount)} by ${method}${b.ref ? ` #${str(b.ref, 80)}` : ""}${amount !== o.total_cents ? ` (invoice total ${usd(o.total_cents)})` : ""}`]);
   notifyOrder(id, "paid", { repOnly: true, who }).catch(() => {}); // the rep hears the commission is earned
   res.json({ ok: true });
 }));
@@ -1387,7 +1388,7 @@ admin.patch("/orders/:id", wrap(async (req, res) => {
     log.push(`Changed to ${opt.label}`);
     if (!o.paid_at && b.shippingCents === undefined) {
       const sc = opt.freeOverCents > 0 && o.subtotal_cents >= opt.freeOverCents ? 0 : opt.cents;
-      if (sc !== o.shipping_cents) { set("shipping_cents", sc); set("total_cents", o.subtotal_cents - o.discount_cents + sc); log.push(`Shipping charge set to $${(sc / 100).toFixed(2)}`); }
+      if (sc !== o.shipping_cents) { set("shipping_cents", sc); set("total_cents", o.subtotal_cents - o.discount_cents + sc); log.push(`Shipping charge set to ${usd(sc)}`); }
     }
   }
   if (b.repId !== undefined && req.user.role === "owner" && (intOrNull(b.repId) || null) !== o.rep_id) {
@@ -1402,12 +1403,12 @@ admin.patch("/orders/:id", wrap(async (req, res) => {
   }
   if (b.shippingCents !== undefined && req.user.role === "owner") {
     const sc = Math.max(0, intOrNull(b.shippingCents) ?? o.shipping_cents);
-    if (sc !== o.shipping_cents) { set("shipping_cents", sc); set("total_cents", o.subtotal_cents - o.discount_cents + sc); log.push(`Shipping charge set to $${(sc / 100).toFixed(2)}`); }
+    if (sc !== o.shipping_cents) { set("shipping_cents", sc); set("total_cents", o.subtotal_cents - o.discount_cents + sc); log.push(`Shipping charge set to ${usd(sc)}`); }
   }
   if (b.discountCents !== undefined && req.user.role === "owner") {
     const dc = Math.max(0, Math.min(o.subtotal_cents, intOrNull(b.discountCents) ?? 0));
     const sc = b.shippingCents !== undefined ? Math.max(0, intOrNull(b.shippingCents) ?? o.shipping_cents) : o.shipping_cents;
-    if (dc !== o.discount_cents) { set("discount_cents", dc); set("total_cents", o.subtotal_cents - dc + sc); log.push(`Discount set to $${(dc / 100).toFixed(2)}`); }
+    if (dc !== o.discount_cents) { set("discount_cents", dc); set("total_cents", o.subtotal_cents - dc + sc); log.push(`Discount set to ${usd(dc)}`); }
   }
   if (sets.length) {
     sets.push("updated_at = now()"); args.push(id);
@@ -1442,7 +1443,7 @@ admin.post("/orders/:id/edit", wrap(async (req, res) => {
     if (o.status === "cancelled") throw new Error("This order is cancelled. Set its status back first if you want to change it.");
     const { rows: old } = await client.query("select * from order_items where order_id = $1 order by id", [id]);
     const changes = [];
-    const $ = (c) => "$" + ((c || 0) / 100).toFixed(2);
+    const $ = usd;
     // --- lines ---
     const sent = Array.isArray(b.items) ? b.items : null;
     let lines = old.map((i) => ({ item: i, product_id: i.product_id, name: i.name, strength: i.strength, unit_cents: i.unit_cents, qty: i.qty }));

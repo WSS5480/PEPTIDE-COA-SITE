@@ -6,7 +6,7 @@ document.body.classList.add(LAB ? "pg-lab" : "pg-home");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const norm = (s) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const sizeKey = (s) => norm(s).replace(/mg$/, "");
-const money = (c) => "$" + (c / 100).toFixed(2);
+const money = (c) => (c < 0 ? "-$" : "$") + (Math.abs(c) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const fmtDate = (iso) => { const [y, m, d] = String(iso || "").slice(0, 10).split("-").map(Number); return y && m && d ? `${MONTHS[m - 1]} ${d}, ${y}` : ""; };
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
