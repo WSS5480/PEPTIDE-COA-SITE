@@ -367,7 +367,7 @@ const DEFAULT_SETTINGS = {
   cardPayments: false,
   // Order emails
   orderEmail: "orders@360medical.net",
-  cooEmail: "", // the case tracker's approval emails go here (managed from this admin)
+  cooEmail: "", // the portal's approval emails go here (managed from this admin)
   orderEmailOn: true,
   customerEmailOn: true,
   repEmailOn: true, // the customer's sales rep gets every order and update too

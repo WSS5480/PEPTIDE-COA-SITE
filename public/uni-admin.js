@@ -73,7 +73,7 @@ function uniProgress(j) {
 function uniCourses(j) {
   const box = document.getElementById("uBody"), own = isOwner();
   box.innerHTML = `<div class="row2" style="margin:4px 0 10px">${own ? `<button class="btn solid" type="button" id="uNew">+ New course</button><button class="btn" type="button" id="uImp">⬆ Upload a course file (.json)</button>` : ""}<button class="btn" type="button" id="uTpl">⬇ Question template (.csv)</button></div>
-    <p class="muted">Who gets a course automatically: <strong>Surgical / Wound / Every tracker rep</strong> courses go to new reps with the case tracker; <strong>Peptide</strong> courses to new reps with the peptide store. You can always assign by hand on the Reps & progress tab.</p>
+    <p class="muted">Who gets a course automatically: <strong>Surgical / Wound / Every portal rep</strong> courses go to new reps with the portal; <strong>Peptide</strong> courses to new reps with the peptide store. You can always assign by hand on the Reps & progress tab.</p>
     <div class="ug">${j.courses.map((c, i) => `<div class="uc"><div class="urow"><strong style="font-size:1.02rem">${esc(c.icon)} ${esc(c.title)}</strong>${c.active ? "" : '<span class="uq mute">Hidden</span>'}</div>
       <div class="muted" style="font-size:.85rem">${esc(c.blurb)}</div>
       <div class="urow"><span class="uq info">${esc(j.audiences[c.audience] || c.audience)}</span><span class="muted" style="font-size:.8rem">${c.lessons} lessons · ${c.questions} questions · test ${c.test_count} · ${c.pass_pct}% · ${c.max_attempts} tries</span></div>

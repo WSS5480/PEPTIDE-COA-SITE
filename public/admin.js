@@ -38,7 +38,7 @@ const reportMatches = (p, r) => mfrOk(p, r) && nrm(p.name) === nrm(r.product) &&
 addEventListener("beforeunload", (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ""; } });
 let me = null, view = "dashboard", orderId = null, stats = null, BUILD = null, HUB = { linked: false, trackerUrl: "", apps: {} };
 const STANDALONE = !!(window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
-// the switch to the case tracker: when this admin is shown inside the tracker's window, switch the window itself; otherwise host the tracker
+// the switch to the portal: when this admin is shown inside the portal's window, switch the window itself; otherwise host the portal
 // inside this app's own address (/admin/tracker) so an installed app never leaves its site — except on iPhone/iPad, where a hosted sign-in can't keep cookies, so it navigates
 const FRAMED = (() => { try { return window.top !== window; } catch (e) { return true; } })();
 const HOSTABLE = !/iPhone|iPad|iPod/.test(navigator.userAgent) && /Chrome|Edg|Firefox/.test(navigator.userAgent);
@@ -53,7 +53,7 @@ function drawLogin(msg) {
   const pinMode = loginMode === "pin";
   app.innerHTML = `<div class="login"><form id="lf">
     <img src="/site-logo?v=2" alt="360 Peptides" style="height:3.2rem;width:auto;max-width:16rem;object-fit:contain;justify-self:start">
-    <h1>360 Medical · Admin</h1><p class="muted">One login for the peptide store and the surgical case tracker.</p>
+    <h1>360 Medical · Admin</h1><p class="muted">One login for the peptide store and the 360 Medical Portal.</p>
     <div class="seg" style="justify-self:start"><button type="button" data-lmode="email"${pinMode ? "" : ' class="on"'}>Email + password</button><button type="button" data-lmode="pin"${pinMode ? ' class="on"' : ""}>Name + PIN</button></div>
     ${pinMode ? `<div class="field"><label class="eyebrow" for="ln">Your name</label><select id="ln" required><option value="">Loading…</option></select></div>
     <div class="field"><label class="eyebrow" for="lpin">PIN</label><input id="lpin" inputmode="numeric" autocomplete="one-time-code" maxlength="10" required style="font:600 1.3rem/1 var(--mono);letter-spacing:.3em"></div>`
@@ -82,14 +82,14 @@ function drawLogin(msg) {
 // sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
 const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["ar", "Invoices & AR", "all"], ["analytics", "Analytics", "all"], ["salescost", "Sales & cost", "owner"], ["pnl", "Profit / loss", "owner"], ["line"],
   ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["promo", "Promo banner", "team"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["university", "🎓 360 University", "team"], ["line2"],
-  // below the second line: the things you reach from either app (the case tracker links here too)
+  // below the second line: the things you reach from either app (the portal links here too)
   ["staff", "Team logins", "owner"], ["setup", "Email & approvals", "owner"], ["geo", "Geofencing", "owner"], ["apps", "Apps & downloads", "all"], ["howto", "How to", "all"], ["account", "My account", "all"]];
 const canSee = (who) => who === "all" || (who === "owner" && isOwner()) || (who === "team" && !isRep()) || (who === "ownerrep" && (isOwner() || isRep()));
 function shell() {
   if (window.PushUI && !document.body.classList.contains("embed")) setTimeout(() => window.PushUI.nudge({ toast, what: me.role === "rep" ? "your customers' orders" : "new orders, card payments, PIN requests and low stock" }), 1500);
   app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><span><button type="button" data-refresh title="Refresh"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button> <button type="button" id="mm">Menu</button></span></div>
   <div class="adm" id="adm"><aside class="side">
-    <div class="logobox"><img src="/site-logo?v=2" alt="360 Peptides"></div><div class="logo"><small>Peptides admin</small><span class="ver" id="buildTop">v…</span>${HUB.linked && HUB.apps && HUB.apps.tracker ? `<div class="seg appswitch" style="display:flex;margin:.6rem 0 0"><button type="button" class="on" style="flex:1">Peptide store</button><a href="${switchHref(isRep() ? "/" : "/admin")}"${FRAMED ? ' target="_top"' : ""} style="flex:1;display:grid;place-items:center;text-decoration:none;color:inherit;font-weight:600;font-size:.86rem;background:var(--card)" title="Switch to the 360 Medical case tracker with this login">Case tracker ↗</a></div>` : ""}<div class="seg appswitch views" style="display:flex;margin:.35rem 0 0"><button type="button" class="on" style="flex:1" title="You are in the admin">Admin</button><a href="/?from=admin" style="flex:1;display:grid;place-items:center;text-decoration:none;color:inherit;font-weight:600;font-size:.86rem;background:var(--card)" title="The store as a customer sees it (with a way back here)">Store</a><a href="/rep" style="flex:1;display:grid;place-items:center;text-decoration:none;color:inherit;font-weight:600;font-size:.86rem;background:var(--card)" title="The rep app with this login">Rep</a>${HUB.linked && HUB.apps && HUB.apps.tracker ? `<a href="${switchHref("/")}"${FRAMED ? ' target="_top"' : ""} style="flex:1;display:grid;place-items:center;text-decoration:none;color:inherit;font-weight:600;font-size:.86rem;background:var(--card)" title="The case tracker with this login">Tracker</a>` : ""}</div></div>
+    <div class="logobox"><img src="/site-logo?v=2" alt="360 Peptides"></div><div class="logo"><small>Peptides admin</small><span class="ver" id="buildTop">v…</span>${HUB.linked && HUB.apps && HUB.apps.tracker ? `<div class="seg appswitch" style="display:flex;margin:.6rem 0 0"><button type="button" class="on" style="flex:1">Peptide store</button><a href="${switchHref(isRep() ? "/" : "/admin")}"${FRAMED ? ' target="_top"' : ""} style="flex:1;display:grid;place-items:center;text-decoration:none;color:inherit;font-weight:600;font-size:.86rem;background:var(--card)" title="Switch to the 360 Medical Portal with this login">Portal ↗</a></div>` : ""}<div class="seg appswitch views" style="display:flex;margin:.35rem 0 0"><button type="button" class="on" style="flex:1" title="You are in the admin">Admin</button><a href="/?from=admin" style="flex:1;display:grid;place-items:center;text-decoration:none;color:inherit;font-weight:600;font-size:.86rem;background:var(--card)" title="The store as a customer sees it (with a way back here)">Store</a><a href="/rep" style="flex:1;display:grid;place-items:center;text-decoration:none;color:inherit;font-weight:600;font-size:.86rem;background:var(--card)" title="The rep app with this login">Rep</a>${HUB.linked && HUB.apps && HUB.apps.tracker ? `<a href="${switchHref("/")}"${FRAMED ? ' target="_top"' : ""} style="flex:1;display:grid;place-items:center;text-decoration:none;color:inherit;font-weight:600;font-size:.86rem;background:var(--card)" title="The portal with this login">Portal</a>` : ""}</div></div>
     <div class="sref-row"><button type="button" class="sref" data-refresh title="Reload this screen"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="vertical-align:-2px"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg> Refresh</button></div>
     <nav id="nav"></nav>
     <div class="who"><span>${esc(me.name || me.email)} · ${esc(me.role)}</span><button type="button" data-install>Download admin app</button><button type="button" id="lo">Sign out</button></div>
@@ -99,10 +99,10 @@ function shell() {
   document.getElementById("mm").onclick = () => document.getElementById("adm").classList.toggle("menu");
   go(view, orderId);
 }
-/* the menu is grouped Rep / Manager / Admin (each folds; tapping its name opens it and closes the others), plus pills on top like the tracker */
+/* the menu is grouped Rep / Manager / Admin (each folds; tapping its name opens it and closes the others), plus pills on top like the portal */
 const NAV_GROUP = { orders: "Rep", neworder: "Rep", customers: "Rep", commissions: "Rep", ar: "Rep",
   fill: "Manager", products: "Manager", inventory: "Manager", reports: "Manager", discounts: "Manager", promo: "Manager", page: "Manager", settings: "Manager", analytics: "Manager", salescost: "Manager", pnl: "Manager", university: "Manager",
-  // Admin is the same list, in the same order, in the store and the case tracker
+  // Admin is the same list, in the same order, in the store and the portal
   reps: "Admin", staff: "Admin", setup: "Admin", geo: "Admin", apps: "Admin", howto: "Admin", account: "Admin" };
 let navOpen = null;
 async function drawNav() {
@@ -203,8 +203,8 @@ function fillHubKpi() {
   Promise.all([api("/hub/commissions?month=" + ym), isRep() ? Promise.resolve({ rows: [] }) : api("/commissions?" + new URLSearchParams({ from, to }).toString())]).then(([tr, st]) => {
     const dd = k.querySelector("dd"); if (!dd) return;
     const storeCents = (st.rows || []).filter((r) => r.comm_status !== "void").reduce((t, r) => t + r.commission_cents, 0);
-    dd.textContent = tr.ok ? (isRep() ? usd(tr.total || 0) : usd(storeCents / 100 + (tr.total || 0))) : "tracker offline";
-  }).catch(() => { const dd = k.querySelector("dd"); if (dd) dd.textContent = "tracker offline"; });
+    dd.textContent = tr.ok ? (isRep() ? usd(tr.total || 0) : usd(storeCents / 100 + (tr.total || 0))) : "portal offline";
+  }).catch(() => { const dd = k.querySelector("dd"); if (dd) dd.textContent = "portal offline"; });
 }
 /* ---------- orders ---------- */
 let oFilter = { status: "", q: "" };
@@ -1114,7 +1114,7 @@ const usd = (n) => "$" + (Number(n) || 0).toLocaleString("en-US", { minimumFract
 const monthLabel = (ym) => new Date(ym + "-15T12:00:00").toLocaleDateString("en-US", { month: "long", year: "numeric" });
 const commSwitch = () => HUB.linked ? `<div class="seg" style="display:inline-flex;margin:0 0 .8rem">${[["store", "Peptide store"], ["tracker", "Surgical cases"]].map(([k, l]) => `<button type="button" data-cv="${k}"${commView === k ? ' class="on"' : ""}>${l}</button>`).join("")}</div>` : "";
 const wireCommSwitch = () => { document.querySelectorAll("[data-cv]").forEach((b) => { b.onclick = () => { commView = b.dataset.cv; localStorage.setItem("commView", commView); commissions(); }; }); };
-// the month the store rows use when the view is Combined / Case tracker
+// the month the store rows use when the view is Combined / 360 Medical Portal
 const monthRange = (ym) => { const [y, m] = ym.split("-").map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate(); return { from: `${ym}-01`, to: `${ym}-${String(last).padStart(2, "0")}` }; };
 /* each rep's commission: the tiered plan (Commissions → Commission plan) or their own flat % */
 const planPick = (u, planOn, isRepRow = true) => { const tiered = u.comm_tiered !== false;
@@ -1217,7 +1217,7 @@ async function commissions() {
   if (isOwner() && document.getElementById("planBox")) commPlanPanel(document.getElementById("planBox"), load).catch(() => {});
 }
 
-/* Combined / Case tracker commissions: the tracker is asked for its month per rep (actual vs plan × rate), the store's rows for the
+/* Combined / 360 Medical Portal commissions: the portal is asked for its month per rep (actual vs plan × rate), the store's rows for the
    same month are summed per rep, and the two are shown side by side. Goals and targets stay separate — each app keeps its own plan. */
 async function commissionsHub() {
   const $ = (x) => document.getElementById(x);
@@ -1243,11 +1243,11 @@ async function commissionsHub() {
   const trackerBy = {}; for (const r of tr.reps || []) trackerBy[String(r.rep).trim()] = r;
   const names = [...new Set([...Object.keys(storeBy), ...Object.keys(trackerBy)])].sort((a, b) => a.localeCompare(b));
   const storeComm = (o) => (o ? o.earned + o.paid + o.pending : 0);
-  if (commView === "tracker") { // surgical cases: the case tracker's plan math per rep, plus the cases behind it
+  if (commView === "tracker") { // surgical cases: the portal's plan math per rep, plus the cases behind it
     const rows = (tr.reps || []).slice().sort((a, b) => b.commission - a.commission), sum = (k) => rows.reduce((t, r) => t + (r[k] || 0), 0);
     const amt = (r, v) => (v === null || v === undefined ? "—" : r.metric === "Cases" ? v + " cases" : usd(v));
     $("cmK").innerHTML = [["Surgical sales", usd(tr.sales)], ["Surgical commission", usd(tr.total)], ["At current pace", usd(sum("comm_proj"))], [(tr.quarter || "Quarter") + " to date", usd(sum("comm_qtd"))], ["Est. pay (draw/base + comm.)", usd(sum("est_pay"))]].map(([k, v]) => `<div class="kpi"><dt>${k}</dt><dd>${v}</dd></div>`).join("");
-    if (!tr.ok) { $("cmT").innerHTML = `<div class="err">Case tracker: ${esc(tr.error || "not reachable")}</div>`; $("cmNote").innerHTML = ""; return; }
+    if (!tr.ok) { $("cmT").innerHTML = `<div class="err">360 Medical Portal: ${esc(tr.error || "not reachable")}</div>`; $("cmNote").innerHTML = ""; return; }
     if (!rows.length) { $("cmT").innerHTML = `<p class="muted">No reps with a surgical plan for ${monthLabel(commMonth)}.</p>`; $("cmNote").innerHTML = ""; return; }
     if (!rows.some((r) => r.rep === surgPick)) surgPick = rows[0].rep;
     $("cmT").innerHTML = `<table class="tbl"><tr><th>Rep</th><th class="num">Sales</th><th class="num">Commission</th><th class="num">At pace</th><th class="num">${esc(tr.quarter || "QTD")} to date</th><th class="num">Est. pay</th></tr>
@@ -1265,7 +1265,7 @@ async function commissionsHub() {
     $("surgPick").onchange = (e) => { surgPick = e.target.value; one(); };
     $("cmT").onclick = (e) => { const t = e.target.closest("[data-surg]"); if (!t) return; surgPick = t.dataset.surg; $("surgPick").value = surgPick; one(); $("surgOne").scrollIntoView({ behavior: "smooth", block: "start" }); };
     one();
-    $("cmNote").innerHTML = `Surgical commission for ${esc(monthLabel(commMonth))} = rate × (sales − floor); the floor includes any carried shortfall. Estimates from cases logged in the case tracker — rates, floors, quotas and draws are set under Team logins → Case tracker plans.`;
+    $("cmNote").innerHTML = `Surgical commission for ${esc(monthLabel(commMonth))} = rate × (sales − floor); the floor includes any carried shortfall. Estimates from cases logged in the portal — rates, floors, quotas and draws are set under Team logins → 360 Medical Portal plans.`;
     return;
   }
   // combined
@@ -1273,7 +1273,7 @@ async function commissionsHub() {
   $("cmK").innerHTML = [["Peptide commission", money(totStore)], ["Surgical commission", usd(totTr)], ["Total commission", usd(totStore / 100 + totTr)], ["Peptide sales", money(names.reduce((t, n) => t + (storeBy[n] ? storeBy[n].sales : 0), 0))], ["Surgical sales", usd(tr.sales)]].map(([k, v]) => `<div class="kpi"><dt>${k}</dt><dd>${v}</dd></div>`).join("");
   $("cmT").innerHTML = names.length ? `<table class="tbl"><tr><th>Rep</th><th class="num">Peptide sales</th><th class="num">Peptide commission</th><th class="num">Surgical sales</th><th class="num">Surgical quota</th><th class="num">Surgical commission</th><th class="num">Total commission</th></tr>
     ${names.map((n) => { const s = storeBy[n], t = trackerBy[n]; const tot = storeComm(s) / 100 + (t ? t.commission : 0); return `<tr><td><strong>${esc(n)}</strong><div class="muted" style="font-size:.72rem">${[s ? "peptides" : "", t ? "surgical" : ""].filter(Boolean).join(" + ")}</div></td><td class="num">${s ? money(s.sales) : "—"}</td><td class="num">${s ? `${money(storeComm(s))}${s.pending ? `<div class="muted" style="font-size:.72rem">${money(s.pending)} pending</div>` : ""}` : "—"}</td><td class="num">${t ? (t.metric === "Cases" ? t.actual : usd(t.actual)) : "—"}</td><td class="num">${t && t.quota !== null && t.quota !== undefined ? (t.metric === "Cases" ? t.quota : usd(t.quota)) : "—"}</td><td class="num">${t ? usd(t.commission) : "—"}</td><td class="num"><strong>${usd(tot)}</strong></td></tr>`; }).join("")}</table>` : `<p class="muted">Nothing for ${monthLabel(commMonth)} in either app.</p>`;
-  $("cmNote").innerHTML = `${tr.ok ? "" : `<span class="err" style="display:inline-block;margin-bottom:.4rem">Case tracker: ${esc(tr.error || "not reachable")} — showing the store only.</span><br>`}Store commission = earned + paid (+ pending) on orders placed in ${esc(monthLabel(commMonth))}; surgical commission = the case tracker plan for the same month. Switch to <strong>Peptide store</strong> to pick commissions and pay them out, or <strong>Surgical cases</strong> for each rep's plan and cases.`;
+  $("cmNote").innerHTML = `${tr.ok ? "" : `<span class="err" style="display:inline-block;margin-bottom:.4rem">360 Medical Portal: ${esc(tr.error || "not reachable")} — showing the store only.</span><br>`}Store commission = earned + paid (+ pending) on orders placed in ${esc(monthLabel(commMonth))}; surgical commission = the portal plan for the same month. Switch to <strong>Peptide store</strong> to pick commissions and pay them out, or <strong>Surgical cases</strong> for each rep's plan and cases.`;
 }
 
 /* ---------- products ---------- */
@@ -2211,7 +2211,7 @@ async function settings(part = "site") {
   const prov0 = s.mailMode === "resend" ? "resend" : s.mailMode === "graph" ? "graph" : s.mailMode === "smtp" ? (/office365|outlook/i.test(s.mailHost || "") ? "microsoft" : /gmail|google/i.test(s.mailHost || "") ? "google" : "smtp") : (ml && ml.ready && ml.source === "host" ? "" : "graph");
   const emailPanel = `    <div class="panel"><h2>Order emails</h2>
       <p>${ml && ml.ready ? `<span class="pill st-shipped">Email connected</span> Sending through ${esc(ml.detail)} as ${esc(ml.from)}${ml.source === "host" ? " (from the settings on the host)" : ""}.` : `<span class="pill st-cancelled">Email not connected</span> Orders are saved here, but no emails go out until a sending account is saved below.`}</p>
-      <div class="grid2">${t("orderEmail", "Send every order to", "You get a message for each new order and each card payment")}${t("cooEmail", "COO approval emails (case tracker) to", "Where the case tracker sends its facility / surgeon approvals; it uses the sending account below")}</div>
+      <div class="grid2">${t("orderEmail", "Send every order to", "You get a message for each new order and each card payment")}${t("cooEmail", "COO approval emails (portal) to", "Where the portal sends its facility / surgeon approvals; it uses the sending account below")}</div>
       <label class="chk"><input type="checkbox" id="s-orderEmailOn"${s.orderEmailOn ? " checked" : ""}${ro()}> Email me every order</label>
       <label class="chk"><input type="checkbox" id="s-customerEmailOn"${s.customerEmailOn ? " checked" : ""}${ro()}> Email the customer a confirmation (and a receipt when they pay by card)</label>
       <label class="chk"><input type="checkbox" id="s-repEmailOn"${s.repEmailOn !== false ? " checked" : ""}${ro()}> Email the customer's sales rep every order and update (with their commission on it)</label>
@@ -2235,7 +2235,7 @@ async function settings(part = "site") {
         <div class="field mail-smtp mail-resend mail-graph"><label class="eyebrow" for="s-mailFrom">From (optional)</label><input id="s-mailFrom" value="${esc(s.mailFrom)}" placeholder="360 Peptides <noreply@360medical.net>"${ro()}><span class="muted">Blank = the login / mailbox address</span></div>
         <div class="field mail-smtp"><label class="eyebrow" for="s-mailHost">Mail server</label><input id="s-mailHost" value="${esc(s.mailHost)}"${ro()}></div>
         <div class="field mail-smtp"><label class="eyebrow" for="s-mailPort">Port</label><input id="s-mailPort" value="${esc(s.mailPort)}" inputmode="numeric"${ro()}></div></div>
-      ${isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" id="mailSave">Save sending account</button><button class="btn" id="mailTest">Send a test email</button>${s.mailPassSet || s.resendKeySet || s.graphSecretSet ? `<button class="btn" id="mailClear">Forget saved password / secret</button>` : ""}${s.graphSecretSet ? `<button class="btn" id="mailShow" title="For setting up the case tracker with the same Microsoft 365 app">Show app details</button>` : ""}<span class="muted" id="mailTestOut"></span></div><div id="mailShowOut"></div>` : ""}
+      ${isOwner() ? `<div class="row2" style="align-items:center"><button class="btn solid" id="mailSave">Save sending account</button><button class="btn" id="mailTest">Send a test email</button>${s.mailPassSet || s.resendKeySet || s.graphSecretSet ? `<button class="btn" id="mailClear">Forget saved password / secret</button>` : ""}${s.graphSecretSet ? `<button class="btn" id="mailShow" title="For setting up the portal with the same Microsoft 365 app">Show app details</button>` : ""}<span class="muted" id="mailTestOut"></span></div><div id="mailShowOut"></div>` : ""}
       <details><summary style="cursor:pointer;font-weight:600">Help: Microsoft 365 app, mailbox login, Google, Resend</summary>
         <p class="muted" style="margin-top:.6rem"><strong>Microsoft 365 app (recommended):</strong> one-time setup by a Microsoft 365 admin, about 10 minutes.</p><ol class="muted" style="margin:.3rem 0 0 1.2rem;display:grid;gap:.35rem">
         <li>Go to <a href="https://entra.microsoft.com" target="_blank" rel="noopener">entra.microsoft.com</a> → Identity → Applications → <strong>App registrations</strong> → <strong>New registration</strong>. Name: <em>Peptide store mail</em>. Leave "single tenant" selected → Register.</li>
@@ -2249,9 +2249,9 @@ async function settings(part = "site") {
         <p class="muted" style="margin-top:.6rem"><strong>Resend</strong> (no mailbox password needed): sign up at resend.com, add and verify the domain 360medical.net with the DNS records they show, create an API key and paste it here with a From address on that domain.</p></details></div>`;
   if (part === "email") {
     pane().innerHTML = `<header><h1>Email &amp; approvals</h1></header>
-      <p class="muted">One place for both apps' email. The <strong>Peptide store</strong> sends order emails with the account below; the <strong>Case tracker</strong> sends its facility / surgeon approval emails to the COO with the same account.</p>
+      <p class="muted">One place for both apps' email. The <strong>Peptide store</strong> sends order emails with the account below; the <strong>360 Medical Portal</strong> sends its facility / surgeon approval emails to the COO with the same account.</p>
       <h2 class="eyebrow" style="margin:.2rem 0 -.4rem">Peptide store</h2>${emailPanel}
-      <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">Case tracker</h2><div id="trackerMail" class="panel"><h2>Approval emails</h2><p class="muted">Loading…</p></div>
+      <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">360 Medical Portal</h2><div id="trackerMail" class="panel"><h2>Approval emails</h2><p class="muted">Loading…</p></div>
       <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">Peptide store phone notifications</h2><div id="pushPanel" class="panel"><h2>Phone notifications</h2><p class="muted">Loading…</p></div>
       <h2 class="eyebrow" style="margin:.6rem 0 -.4rem">Peptide store texts</h2><div id="smsPanel" class="panel"><h2>Text messages (SMS)</h2><p class="muted">Loading…</p></div>`;
     trackerMailPanel(); smsPanel(s); pushPanel(s);
@@ -2385,7 +2385,7 @@ async function settings(part = "site") {
   if (document.getElementById("mailShow")) document.getElementById("mailShow").onclick = async () => {
     const d = await api("/mail/secret");
     const row = (l, v) => `<tr><td class="eyebrow" style="padding:.3rem .6rem .3rem 0;white-space:nowrap">${l}</td><td class="mono" style="padding:.3rem 0;word-break:break-all">${esc(v || "—")}</td><td style="padding:.3rem 0 .3rem .6rem"><button class="btn" type="button" data-copy="${esc(v || "")}">Copy</button></td></tr>`;
-    document.getElementById("mailShowOut").innerHTML = `<div class="panel" style="border-color:var(--blue);margin-top:.6rem"><p class="muted">Paste these into the case tracker: Admin → Approval emails. Keep the secret private.</p><table>${row("Tenant ID", d.tenant)}${row("Client ID", d.client)}${row("Client secret", d.secret)}${row("Mailbox", d.mailbox)}${row("From", d.from)}</table><div><button class="btn" type="button" id="mailHide">Hide</button></div></div>`;
+    document.getElementById("mailShowOut").innerHTML = `<div class="panel" style="border-color:var(--blue);margin-top:.6rem"><p class="muted">Paste these into the portal: Admin → Approval emails. Keep the secret private.</p><table>${row("Tenant ID", d.tenant)}${row("Client ID", d.client)}${row("Client secret", d.secret)}${row("Mailbox", d.mailbox)}${row("From", d.from)}</table><div><button class="btn" type="button" id="mailHide">Hide</button></div></div>`;
     document.querySelectorAll("#mailShowOut [data-copy]").forEach((b) => (b.onclick = () => navigator.clipboard?.writeText(b.dataset.copy).then(() => toast("Copied"), () => toast("Copy failed"))));
     document.getElementById("mailHide").onclick = () => { document.getElementById("mailShowOut").innerHTML = ""; };
   };
@@ -2407,29 +2407,29 @@ async function settings(part = "site") {
 }
 
 const setup = () => settings("email");
-// the case tracker's approval emails, managed from here (on/off, test, previews); its sender and COO address are the store's
+// the portal's approval emails, managed from here (on/off, test, previews); its sender and COO address are the store's
 async function trackerMailPanel() {
   const box = document.getElementById("trackerMail"); if (!box) return;
-  if (!HUB.linked) { box.innerHTML = `<h2>Approval emails</h2><p class="muted">The case tracker isn't linked to this store yet (HUB_SECRET / TRACKER_URL on the host).</p>`; return; }
+  if (!HUB.linked) { box.innerHTML = `<h2>Approval emails</h2><p class="muted">The portal isn't linked to this store yet (HUB_SECRET / TRACKER_URL on the host).</p>`; return; }
   const r = await api("/hub/settings").catch((e) => ({ ok: false, error: e.message }));
-  if (!r.ok) { box.innerHTML = `<h2>Approval emails</h2><div class="err">Case tracker: ${esc(r.error || "not reachable")}</div>`; return; }
+  if (!r.ok) { box.innerHTML = `<h2>Approval emails</h2><div class="err">360 Medical Portal: ${esc(r.error || "not reachable")}</div>`; return; }
   box.innerHTML = `<h2>Approval emails</h2>
-    <p class="muted">When a rep adds a facility or a surgeon in the case tracker, the COO gets an email with a one-tap <strong>Approve</strong> button. It goes to the <strong>COO approval emails</strong> address above and sends with the store's sending account${r.viaHub ? "" : " once that's a Microsoft 365 app"}.</p>
+    <p class="muted">When a rep adds a facility or a surgeon in the portal, the COO gets an email with a one-tap <strong>Approve</strong> button. It goes to the <strong>COO approval emails</strong> address above and sends with the store's sending account${r.viaHub ? "" : " once that's a Microsoft 365 app"}.</p>
     <label class="chk"><input type="checkbox" id="tmOn"${r.mailOn ? " checked" : ""}> Send approval emails</label>
     <p class="muted" id="tmInfo">${esc(r.info || "")}</p>
-    <div class="row2" style="align-items:center"><button class="btn" id="tmTest" type="button">Send a test to the COO</button><a class="btn" id="tmPrevF" href="#" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">Preview facility email</a><a class="btn" id="tmPrevS" href="#" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">Preview surgeon email</a><a class="btn" href="/admin/go/tracker?next=/admin" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">Open the tracker admin ↗</a><span class="muted" id="tmOut"></span></div>`;
+    <div class="row2" style="align-items:center"><button class="btn" id="tmTest" type="button">Send a test to the COO</button><a class="btn" id="tmPrevF" href="#" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">Preview facility email</a><a class="btn" id="tmPrevS" href="#" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">Preview surgeon email</a><a class="btn" href="/admin/go/tracker?next=/admin" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">Open the portal admin ↗</a><span class="muted" id="tmOut"></span></div>`;
   document.getElementById("tmOn").onchange = async (e) => { try { await api("/hub/settings", { method: "PUT", body: { mailOn: e.target.checked } }); toast(e.target.checked ? "Approval emails on" : "Approval emails off"); } catch (x) { e.target.checked = !e.target.checked; } };
   document.getElementById("tmTest").onclick = async () => { const o = document.getElementById("tmOut"); o.textContent = "Sending…"; try { const t = await api("/hub/mail-test", { method: "POST" }); o.textContent = `Sent to ${t.to}. Check the inbox (and spam).`; } catch (x) { o.textContent = "Not sent: " + x.message; } };
   for (const [id, kind] of [["tmPrevF", "facility"], ["tmPrevS", "surgeon"]]) document.getElementById(id).onclick = async (e) => { e.preventDefault(); const { url } = await api("/hub/preview-url?kind=" + kind); window.open(url, "_blank", "noopener"); };
 }
-/* ---------- geofencing: the case tracker's own card, shown here ---------- */
+/* ---------- geofencing: the portal's own card, shown here ---------- */
 function geo() {
   pane().innerHTML = `<header><h1>Geofencing</h1></header>
-    ${HUB.linked ? `<p class="muted">Visit geofencing lives in the case tracker; this is its card. Changes save there.</p>${HOSTABLE ? `<iframe class="hubframe" title="Visit geofencing" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=geo-card")}" style="width:100%;height:calc(100vh - 9rem);min-height:32rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<a class="btn solid" href="${switchHref("/admin#hub-geo")}"${FRAMED ? ' target="_top"' : ""}>Open geofencing in the case tracker ↗</a><p class="muted" style="margin-top:.4rem">On iPhone and iPad it opens as its own page, already signed in.</p>`}` : `<p class="muted">The case tracker isn't linked to this store yet.</p>`}`;
+    ${HUB.linked ? `<p class="muted">Visit geofencing lives in the portal; this is its card. Changes save there.</p>${HOSTABLE ? `<iframe class="hubframe" title="Visit geofencing" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=geo-card")}" style="width:100%;height:calc(100vh - 9rem);min-height:32rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<a class="btn solid" href="${switchHref("/admin#hub-geo")}"${FRAMED ? ' target="_top"' : ""}>Open geofencing in the portal ↗</a><p class="muted" style="margin-top:.4rem">On iPhone and iPad it opens as its own page, already signed in.</p>`}` : `<p class="muted">The portal isn't linked to this store yet.</p>`}`;
 }
 /* ---------- how to: how the whole thing works, in plain words — written for the reader's own role ---------- */
 function howto() {
-  const TAG = { store: '<span class="pill st-confirmed" style="margin-left:.5rem;font-size:.66rem;vertical-align:middle">Peptide store</span>', tracker: '<span class="pill st-delivered" style="margin-left:.5rem;font-size:.66rem;vertical-align:middle">Case tracker</span>', both: '<span class="pill st-shipped" style="margin-left:.5rem;font-size:.66rem;vertical-align:middle">Both apps</span>' };
+  const TAG = { store: '<span class="pill st-confirmed" style="margin-left:.5rem;font-size:.66rem;vertical-align:middle">Peptide store</span>', tracker: '<span class="pill st-delivered" style="margin-left:.5rem;font-size:.66rem;vertical-align:middle">360 Medical Portal</span>', both: '<span class="pill st-shipped" style="margin-left:.5rem;font-size:.66rem;vertical-align:middle">Both apps</span>' };
   const who = isOwner() ? "owner" : isRep() ? "rep" : "staff";
   const b = (x) => `<strong>${x}</strong>`;
   const ul = (items) => `<ul class="muted" style="margin:.2rem 0 0 1.2rem;display:grid;gap:.35rem">${items.map((x) => `<li>${x}</li>`).join("")}</ul>`;
@@ -2437,14 +2437,14 @@ function howto() {
   const S = [];
   // ---- getting around (everyone, worded for the role)
   S.push(sec("Getting around", "both", [
-    `${b("Two rows of switches")} under the logo. Top row: which app you're in (Peptide store / Case tracker). Second row: which view (${who === "rep" ? "Store, Rep, Tracker — Admin is for admins" : "Admin, Store, Rep, Tracker"}). The one you're in is green. They all keep your login — no second sign-in.`,
+    `${b("Two rows of switches")} under the logo. Top row: which app you're in (Peptide store / 360 Medical Portal). Second row: which view (${who === "rep" ? "Store, Rep, Portal — Admin is for admins" : "Admin, Store, Rep, Portal"}). The one you're in is green. They all keep your login — no second sign-in.`,
     who === "rep" ? `${b("Below the line")} in the menu is the same on every page of both apps: Apps & downloads, How to, My account.` : `${b("Above the line")} in the menu is this app's own work. ${b("Below the line")} is the same on every page of both apps: ${who === "owner" ? "Team logins, Email & approvals, Geofencing, " : ""}Apps & downloads, How to, My account.`,
     `${b("Panels start collapsed.")} Click a heading to open it; it stays open on this device until you close it. Alt+Shift+C opens or folds everything on a page. The ${b("« »")} button at the top of the menu hides and shows the menu.`,
     `${b("Phones:")} each app installs from Apps & downloads (Add to Home Screen / Install). Everything works the same on a phone, with the menu behind the Menu button.`
   ]));
   S.push(sec("Signing in", "both", [
-    `${b("Email + password")} or ${b("Name + PIN")} (the toggle on the sign-in screen). Your PIN is under My account${who === "owner" ? " (or set by an admin under Team logins)" : ""}. The same login works on the store, the rep app and the case tracker — the PIN also opens the storefront as the office.`,
-    who === "rep" ? `On the case tracker's own sign-in page, pick your name and type the same PIN.` : `${b("Store PIN")} (Site settings → Site PIN) lets anyone in the office into the storefront; customers get their own PINs under Customers. The tracker's COO PIN is a back door for the tracker only.`
+    `${b("Email + password")} or ${b("Name + PIN")} (the toggle on the sign-in screen). Your PIN is under My account${who === "owner" ? " (or set by an admin under Team logins)" : ""}. The same login works on the store, the rep app and the portal — the PIN also opens the storefront as the office.`,
+    who === "rep" ? `On the portal's own sign-in page, pick your name and type the same PIN.` : `${b("Store PIN")} (Site settings → Site PIN) lets anyone in the office into the storefront; customers get their own PINs under Customers. The portal's COO PIN is a back door for the portal only.`
   ]));
   // ---- store side
   if (who === "rep") {
@@ -2482,38 +2482,38 @@ function howto() {
     if (who === "owner") S.push(sec("Sales reps & commissions", "store", [
       `Reps use the ${b("Rep app")}: their own customers, orders and commission. Every order from one of their customers earns their rate on the product total after discount, before shipping — whether they placed it or the customer did.`,
       `${b("Pending")} until the order is paid → ${b("Earned")} → ${b("Paid")} when you include it in a payout (Commissions → pick the earned lines → Pay out). Cancelled orders are void.`,
-      `${b("Peptide store / Surgical cases")} on the Commissions page: switch between each rep's store commission and their case-tracker commission for the month; goals and targets stay separate per app.`,
+      `${b("Peptide store / Surgical cases")} on the Commissions page: switch between each rep's store commission and their portal commission for the month; goals and targets stay separate per app.`,
       `${b("Admins in the rep app:")} a "Viewing as" picker shows the app exactly as that rep sees it.`
     ]));
   }
-  // ---- tracker side
-  if (who === "rep") S.push(sec("Case tracker (360 Medical)", "tracker", [
+  // ---- portal side
+  if (who === "rep") S.push(sec("360 Medical Portal", "tracker", [
     `${b("Log a case")}: surgeon, facility, product, amount, status. Completed / PO / invoiced / paid cases count toward your quota; scheduled ones show as booked ahead.`,
     `Your page shows ${b("pace to quota")}, the run-rate projection, the quarter, any carried shortfall and your ${b("commission plan")} (rate above a floor, draw or base salary) with this month's estimate.`,
     `${b("Target visits")}: open the app when you arrive — inside the check-in window your location is checked against the facility and the visit is verified. Keep the app open during the visit; leaving early is noticed.`,
     `Adding a ${b("facility or surgeon")} sends the COO an approval; until it's approved, visits there can't be verified.`,
     `${b("Calendar / Upcoming")}: your planned visits and cases; "Add to my phone calendar" subscribes your phone to them.`
   ]));
-  else S.push(sec("Case tracker (360 Medical)", "tracker", [
-    `Reps log ${b("cases")} (surgeon, facility, product, amount); completed / PO / invoiced / paid cases count toward quota. The tracker shows pace to quota, run-rate projection, the quarter, carried shortfalls and the commission plan (rate above a floor, draw or base salary).`,
+  else S.push(sec("360 Medical Portal", "tracker", [
+    `Reps log ${b("cases")} (surgeon, facility, product, amount); completed / PO / invoiced / paid cases count toward quota. The portal shows pace to quota, run-rate projection, the quarter, carried shortfalls and the commission plan (rate above a floor, draw or base salary).`,
     `${b("Target visits")} are verified by the phone's location inside the check-in window; leaving early is noticed.${who === "owner" ? ` Switches are under ${b("Geofencing")} below the line; each facility can have its own radius.` : ""}`,
     `When a rep adds a ${b("facility or surgeon")}, the COO gets an approval email with a one-tap Approve button${who === "owner" ? " (Email & approvals controls it)" : ""}.`,
-    `Tracker Admin: reps and plans, visits, surgeons, facilities, price book, alert settings, close a month, weekly digest, backup.`
+    `Portal Admin: reps and plans, visits, surgeons, facilities, price book, alert settings, close a month, weekly digest, backup.`
   ]));
   // ---- shared pages
   if (who === "owner") S.push(sec("Team logins (one list of people)", "both", [
-    `Add a person once: name, email, role (${b("Admin")} = everything; ${b("Manager")} = orders, customers, products, inventory, settings, no costs or logins; ${b("Sales rep")} = their own customers, orders, commission), optional PIN, and which apps they get: ${b("Peptide store")} and/or ${b("Case tracker")}.`,
-    `Tick Case tracker and they appear in the tracker automatically (reps get a plan row to fill in). Untick to switch them off there. Reps that exist only in the tracker show up here to import in one click.`,
+    `Add a person once: name, email, role (${b("Admin")} = everything; ${b("Manager")} = orders, customers, products, inventory, settings, no costs or logins; ${b("Sales rep")} = their own customers, orders, commission), optional PIN, and which apps they get: ${b("Peptide store")} and/or ${b("360 Medical Portal")}.`,
+    `Tick 360 Medical Portal and they appear in the portal automatically (reps get a plan row to fill in). Untick to switch them off there. Reps that exist only in the portal show up here to import in one click.`,
     `Changing someone's role or password signs them out everywhere. Turning a login off ends their access right away.`
   ]));
   S.push(sec(who === "owner" ? "Email & approvals, Apps, Geofencing, My account" : "Apps & My account", "both", [
-    ...(who === "owner" ? [`${b("Email & approvals")}: the store's order emails and sending account (Microsoft 365 app), the COO address, and the tracker's approval emails (on/off, test, previews) — one page for both apps.`, `${b("Geofencing")}: the tracker's visit-verification switches.`] : []),
+    ...(who === "owner" ? [`${b("Email & approvals")}: the store's order emails and sending account (Microsoft 365 app), the COO address, and the portal's approval emails (on/off, test, previews) — one page for both apps.`, `${b("Geofencing")}: the portal's visit-verification switches.`] : []),
     `${b("Apps & downloads")}: every app with open / install links.`,
     `${b("My account")}: your password and PIN.`
   ]));
   const roleName = who === "owner" ? "an admin" : who === "rep" ? "a sales rep" : "a manager";
   pane().innerHTML = `<header><h1>How to</h1></header>
-    <p class="muted">Two apps, one login: the ${b("Peptide store")} and the ${b("Case tracker")}. This guide is written for ${b(roleName)} — it only covers what you can do. Each section is tagged with the app it belongs to: ${TAG.store.replace("margin-left:.5rem;", "")} ${TAG.tracker.replace("margin-left:.5rem;", "")} ${TAG.both.replace("margin-left:.5rem;", "")}. Click a heading to open it.</p>
+    <p class="muted">Two apps, one login: the ${b("Peptide store")} and the ${b("360 Medical Portal")}. This guide is written for ${b(roleName)} — it only covers what you can do. Each section is tagged with the app it belongs to: ${TAG.store.replace("margin-left:.5rem;", "")} ${TAG.tracker.replace("margin-left:.5rem;", "")} ${TAG.both.replace("margin-left:.5rem;", "")}. Click a heading to open it.</p>
     ${S.join("")}`;
 }
 /* ---------- apps & downloads: every app in one place ---------- */
@@ -2522,12 +2522,12 @@ function apps() {
   const card = (title, what, who, open, install) => `<div class="panel"><h2>${title}</h2><p class="muted">${what}</p><p class="muted"><strong>Who:</strong> ${who}</p><div class="row2">${open}${install || ""}</div></div>`;
   const link = (href, label, ext) => `<a class="btn" href="${href}"${ext ? ' target="_blank" rel="noopener"' : ""} style="display:inline-grid;place-items:center;text-decoration:none">${label}</a>`;
   pane().innerHTML = `<header><h1>Apps &amp; downloads</h1></header>
-    <p class="muted">Each app installs from its own page on a phone or computer (Add to Home Screen / Install). One login works across all of them${tr ? "" : " once the case tracker is linked"}.</p>
+    <p class="muted">Each app installs from its own page on a phone or computer (Add to Home Screen / Install). One login works across all of them${tr ? "" : " once the portal is linked"}.</p>
     ${card("360 Peptides admin", "Orders, customers, products, inventory, commissions, team logins — this app.", "Admins and managers", link("/admin", "Open"), `<button class="btn solid" data-install type="button">Install on this device</button>`)}
     ${card("360 Peptides store", "The customer-facing store and lab reports.", "Customers (and the office, with the store PIN)", link("/", "Open the store", true) + link("/lab-reports", "Lab reports", true), `<span class="muted">Install from the store page's <strong>Download app</strong> button.</span>`)}
     ${card("Rep app", "Sales reps' customers, orders and commissions on a phone.", "Sales reps", link("/rep", "Open the rep app", true), `<span class="muted">Install from the rep app's <strong>Download app</strong> button.</span>`)}
-    ${card("360 Medical case tracker", "Surgical cases, quotas, pace and commission plans for the medical reps.", "Medical reps and the COO", tr ? link("/admin/go/tracker?next=/", "Open the tracker", true) + link("/admin/go/tracker?next=/download", "Download page", true) : `<span class="muted">Not linked yet.</span>`)}
-    ${card("360 Medical tracker admin", "Reps and plans, visits, surgeons, facilities, approvals.", "COO and managers", tr ? link("/admin/go/tracker?next=/admin", "Open the tracker admin", true) + link("/admin/go/tracker?next=/admin/download", "Download page", true) : `<span class="muted">Not linked yet.</span>`)}`;
+    ${card("360 Medical Portal", "Surgical cases, quotas, pace and commission plans for the medical reps.", "Medical reps and the COO", tr ? link("/admin/go/tracker?next=/", "Open the portal", true) + link("/admin/go/tracker?next=/download", "Download page", true) : `<span class="muted">Not linked yet.</span>`)}
+    ${card("360 Medical Portal admin", "Reps and plans, visits, surgeons, facilities, approvals.", "COO and managers", tr ? link("/admin/go/tracker?next=/admin", "Open the portal admin", true) + link("/admin/go/tracker?next=/admin/download", "Download page", true) : `<span class="muted">Not linked yet.</span>`)}`;
 }
 /* ---------- staff ---------- */
 let staffPick = null;
@@ -2553,13 +2553,13 @@ async function staff() {
         ${F("Commission", planPick(u, PLAN_ON, u.role === "rep").replace("justify-content:flex-end", "justify-content:flex-start") + (u.role === "rep" ? "" : '<span class="muted" data-noplan>— (reps only)</span>'))}
         ${F("PIN", `<input data-k="pin" inputmode="numeric" placeholder="${u.pin_set ? "Set · type to change" : "4–10 digits"}" title="Name + PIN sign-in for both apps">`)}
         ${F("New password", `<input data-k="password" type="password" placeholder="Leave blank to keep" autocomplete="new-password">`)}
-        ${F("Apps", `<div class="row2" style="gap:.2rem 1rem;flex-wrap:wrap"><label class="chk"><input type="checkbox" data-app="store"${ap.store ? " checked" : ""}> Peptide store</label><label class="chk"><input type="checkbox" data-app="tracker"${ap.tracker ? " checked" : ""}> Case tracker</label></div>`)}
+        ${F("Apps", `<div class="row2" style="gap:.2rem 1rem;flex-wrap:wrap"><label class="chk"><input type="checkbox" data-app="store"${ap.store ? " checked" : ""}> Peptide store</label><label class="chk"><input type="checkbox" data-app="tracker"${ap.tracker ? " checked" : ""}> 360 Medical Portal</label></div>`)}
         ${F("Status", `<label class="chk"><input type="checkbox" data-k="active"${u.active ? " checked" : ""}${u.id === me.id ? " disabled" : ""}> Active</label>`)}
       </div></div>`; })();
   const grp = (role, label) => { const l = users.filter((x) => x.role === role); return l.length ? `<optgroup label="${label} (${l.length})">${l.map((x) => `<option value="${x.id}"${String(x.id) === String(staffPick) ? " selected" : ""}>${esc(optLabel(x))}</option>`).join("")}</optgroup>` : ""; };
   pane().innerHTML = `<header><h1>Team logins</h1></header>
     <div id="trackerImport"></div>
-    <details class="muted" style="margin:.2rem 0 .6rem"><summary>How logins work</summary><p>One login for both apps: tick <strong>Peptide store</strong> and/or <strong>Case tracker</strong> per person. A <strong>PIN</strong> lets them sign in by name + PIN on either app (email + password always works too). <strong>Admin</strong> can do everything (prices, costs, settings, logins, deleting orders). <strong>Manager</strong> works orders, customers, products, inventory and settings but can't see costs, change prices or manage logins. <strong>Sales rep</strong> signs in to the admin or the <a href="/rep" target="_blank" rel="noopener">rep app</a> and sees only their own customers, orders and commission. Changing someone's role or password signs them out everywhere.</p></details>
+    <details class="muted" style="margin:.2rem 0 .6rem"><summary>How logins work</summary><p>One login for both apps: tick <strong>Peptide store</strong> and/or <strong>360 Medical Portal</strong> per person. A <strong>PIN</strong> lets them sign in by name + PIN on either app (email + password always works too). <strong>Admin</strong> can do everything (prices, costs, settings, logins, deleting orders). <strong>Manager</strong> works orders, customers, products, inventory and settings but can't see costs, change prices or manage logins. <strong>Sales rep</strong> signs in to the admin or the <a href="/rep" target="_blank" rel="noopener">rep app</a> and sees only their own customers, orders and commission. Changing someone's role or password signs them out everywhere.</p></details>
     <div class="row2" style="align-items:end;gap:.6rem;flex-wrap:wrap"><div class="field" style="margin:0;flex:1 1 18rem;max-width:28rem"><label class="eyebrow" for="staffPick">Person (${users.length})</label><select id="staffPick">${grp("rep", "Sales reps")}${grp("staff", "Managers")}${grp("owner", "Admins")}</select></div><button class="btn" type="button" onclick="const n=document.getElementById('nu-n'),c=n.closest('.folded');if(c){const h=c.querySelector('.fold-h,.fold-head');if(h)h.click();else c.classList.remove('folded')}n.scrollIntoView({behavior:'smooth',block:'center'});n.focus()">+ Add a login</button></div>
     <div id="ut">${card}</div>
     <div class="panel"><h2>Add a login</h2><div class="grid2">
@@ -2570,13 +2570,13 @@ async function staff() {
       <div class="field"><label class="eyebrow" for="nu-ph">Phone (optional)</label><input id="nu-ph"></div>
       <div class="field" id="nu-rateWrap" hidden><label class="eyebrow" for="nu-plan">Commission</label><div class="row2" style="flex-wrap:nowrap;align-items:center;gap:.3rem"><select id="nu-plan"><option value="tiered">Tiered plan${PLAN_ON ? "" : " (not on yet)"}</option><option value="flat">Flat %</option></select><span id="nu-flat" hidden style="white-space:nowrap"><input id="nu-rate" inputmode="decimal" placeholder="10" style="width:4.5rem">%</span></div></div>
       <div class="field"><label class="eyebrow" for="nu-pin">PIN (optional, 4–10 digits)</label><input id="nu-pin" inputmode="numeric" placeholder="Name + PIN sign-in"></div>
-      <div class="field"><span class="eyebrow">Apps</span><label class="chk"><input type="checkbox" id="nu-store" checked> Peptide store</label><label class="chk"><input type="checkbox" id="nu-tracker"> Case tracker</label></div>
+      <div class="field"><span class="eyebrow">Apps</span><label class="chk"><input type="checkbox" id="nu-store" checked> Peptide store</label><label class="chk"><input type="checkbox" id="nu-tracker"> 360 Medical Portal</label></div>
       <div class="field" id="nu-uniWrap" style="grid-column:1/-1" hidden><span class="eyebrow">🎓 360 University courses (reps)</span><div id="nu-uni" class="row2" style="flex-wrap:wrap;gap:.2rem 1rem"><span class="muted">Loading courses…</span></div><span class="muted" style="font-size:.78rem">Ticked by the apps above; change them as you like. Tests: 2 tries to pass, then the course locks and you're told.</span></div></div>
       <div class="row2"><button class="btn solid" id="nuAdd">Add login</button><span class="muted">Send them the email and temporary password; they can change it under My account.</span></div></div>
-    ${HUB.linked && HUB.apps && HUB.apps.tracker ? `<div class="panel" id="plansPanel"><h2>Case tracker plans</h2>
-      <p class="muted">Quota, commission plan, pay and territory for each rep with the Case tracker ticked above. Names, PINs and on/off come from the logins table; add or remove reps up there. Team quotas are set here.</p>
-      ${HOSTABLE ? `<iframe class="hubframe" title="Reps and plans" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=reps-card")}" style="width:100%;height:40rem;min-height:24rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<a class="btn solid" href="${switchHref("/admin")}"${FRAMED ? ' target="_top"' : ""}>Open reps and plans in the case tracker ↗</a><p class="muted" style="margin-top:.4rem">This browser doesn't show the tracker inside the page.</p>`}</div>` : ""}`;
-  // 360 University: the courses a new rep gets, ticked from the apps they're given (case tracker → surgical / wound / all; peptide store → peptide)
+    ${HUB.linked && HUB.apps && HUB.apps.tracker ? `<div class="panel" id="plansPanel"><h2>360 Medical Portal plans</h2>
+      <p class="muted">Quota, commission plan, pay and territory for each rep with the 360 Medical Portal ticked above. Names, PINs and on/off come from the logins table; add or remove reps up there. Team quotas are set here.</p>
+      ${HOSTABLE ? `<iframe class="hubframe" title="Reps and plans" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=reps-card")}" style="width:100%;height:40rem;min-height:24rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<a class="btn solid" href="${switchHref("/admin")}"${FRAMED ? ' target="_top"' : ""}>Open reps and plans in the portal ↗</a><p class="muted" style="margin-top:.4rem">This browser doesn't show the portal inside the page.</p>`}</div>` : ""}`;
+  // 360 University: the courses a new rep gets, ticked from the apps they're given (portal → surgical / wound / all; peptide store → peptide)
   const uniTick = () => { const box = document.getElementById("nu-uni"); if (!box) return; const isRep = document.getElementById("nu-r").value === "rep"; document.getElementById("nu-uniWrap").hidden = !isRep;
     const tr = document.getElementById("nu-tracker").checked, st = document.getElementById("nu-store").checked;
     box.querySelectorAll("input").forEach((i) => { const a = i.dataset.aud; i.checked = (tr && /^(surgical|wound|all)$/.test(a)) || (st && a === "peptide"); }); };
@@ -2586,14 +2586,14 @@ async function staff() {
   document.getElementById("nu-plan").onchange = (e) => { document.getElementById("nu-flat").hidden = e.target.value !== "flat"; };
   api("/hub/tracker-reps").then((r) => {
     const box = document.getElementById("trackerImport"); if (!box) return;
-    if (!r.ok) { box.innerHTML = `<p class="muted">Case tracker: ${esc(r.error)}</p>`; return; }
+    if (!r.ok) { box.innerHTML = `<p class="muted">360 Medical Portal: ${esc(r.error)}</p>`; return; }
     const missing = (r.reps || []).filter((t) => !users.some((u) => u.name.trim().toLowerCase() === String(t.rep).trim().toLowerCase()));
     if (!missing.length) return;
-    box.innerHTML = `<details class="panel" style="border-color:var(--blue)"><summary><strong>In the case tracker only (${missing.length})</strong> <span class="muted">· reps without a login yet</span></summary>
-      <p class="muted">These reps were set up in the tracker before Team logins existed. <strong>Add</strong> gives them one login for both apps (Case tracker ticked, same PIN they use today; the email is only for email + password sign-in — change it if they have a real one). <strong>Remove</strong> takes them out of the tracker's rep list; their logged cases stay.</p>
+    box.innerHTML = `<details class="panel" style="border-color:var(--blue)"><summary><strong>In the portal only (${missing.length})</strong> <span class="muted">· reps without a login yet</span></summary>
+      <p class="muted">These reps were set up in the portal before Team logins existed. <strong>Add</strong> gives them one login for both apps (360 Medical Portal ticked, same PIN they use today; the email is only for email + password sign-in — change it if they have a real one). <strong>Remove</strong> takes them out of the portal's rep list; their logged cases stay.</p>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr));gap:.6rem">
       ${missing.map((t, i) => `<div style="border:1px solid var(--line);border-radius:10px;padding:.6rem .7rem"><strong>${esc(t.rep)}</strong>${t.active === false ? ' <span class="muted">(off)</span>' : ""}<label class="eyebrow" style="display:block;margin-top:.3rem">Email for their login</label><input data-imp="${i}" type="email" style="width:100%" value="${esc(String(t.rep).toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, ""))}@360medical.net">
-        <div class="row2" style="gap:.4rem;margin-top:.4rem"><button class="btn solid" type="button" data-impadd="${i}">Add login</button><button class="btn danger" type="button" data-imprm="${i}" title="Remove from the tracker's rep list (their cases stay)">Remove</button></div></div>`).join("")}</div>
+        <div class="row2" style="gap:.4rem;margin-top:.4rem"><button class="btn solid" type="button" data-impadd="${i}">Add login</button><button class="btn danger" type="button" data-imprm="${i}" title="Remove from the portal's rep list (their cases stay)">Remove</button></div></div>`).join("")}</div>
       ${missing.length > 1 ? `<div style="margin-top:.5rem"><button class="btn" type="button" id="impReps">Add all ${missing.length}</button></div>` : ""}</details>`;
     const addOne = async (i) => {
       const email = (document.querySelector(`[data-imp="${i}"]`).value || "").trim(); if (!email) { toast("Enter an email for " + missing[i].rep); return false; }
@@ -2602,7 +2602,7 @@ async function staff() {
     box.onclick = async (e) => {
       const a = e.target.closest("[data-impadd]"), r = e.target.closest("[data-imprm]");
       if (a) { if (await addOne(+a.dataset.impadd)) { toast("Login added"); staff(); } return; }
-      if (r) { const t = missing[+r.dataset.imprm]; if (!confirm(`Remove ${t.rep} from the case tracker's rep list? Their logged cases stay.`)) return; try { await api("/hub/tracker-reps/" + encodeURIComponent(t.rep), { method: "DELETE" }); toast("Removed from the tracker"); staff(); } catch (e) {} return; }
+      if (r) { const t = missing[+r.dataset.imprm]; if (!confirm(`Remove ${t.rep} from the portal's rep list? Their logged cases stay.`)) return; try { await api("/hub/tracker-reps/" + encodeURIComponent(t.rep), { method: "DELETE" }); toast("Removed from the portal"); staff(); } catch (e) {} return; }
       if (e.target.id === "impReps") { let n = 0; for (let i = 0; i < missing.length; i++) if (await addOne(i)) n++; toast(`Added ${n} login${n === 1 ? "" : "s"}`); staff(); }
     };
   }).catch(() => {});
@@ -2652,7 +2652,7 @@ async function pushPanel(s) {
   };
 }
 
-/* ---------- text messages (SMS): one Twilio setup for the store and the case tracker ---------- */
+/* ---------- text messages (SMS): one Twilio setup for the store and the portal ---------- */
 async function smsPanel(s) {
   const box = document.getElementById("smsPanel"); if (!box) return;
   const d = await api("/sms").catch(() => null); if (!d) { box.innerHTML = '<h2>Text messages (SMS)</h2><p class="err">Couldn\'t load the text settings.</p>'; return; }
@@ -2671,7 +2671,7 @@ async function smsPanel(s) {
     </div>
     <div class="row2" style="align-items:center"><button class="btn solid" type="button" id="smsSave">Save text settings</button></div>
     <h2 style="font-size:1.05rem;margin-top:.8rem">Sales reps getting texts (${on.length})</h2>
-    <p class="muted">Each rep turns texts on in the rep app under Account (or you can under Sales reps / Team logins). They need a cell number. Case tracker texts (approvals, invoices, visits, Monday digest) are set up separately in the tracker under Admin → Text alerts, using the same Twilio account.</p>
+    <p class="muted">Each rep turns texts on in the rep app under Account (or you can under Sales reps / Team logins). They need a cell number. 360 Medical Portal texts (approvals, invoices, visits, Monday digest) are set up separately in the portal under Admin → Text alerts, using the same Twilio account.</p>
     ${d.people.length ? `<div style="display:grid;gap:.3rem">${d.people.map((p) => `<div class="row2" style="justify-content:space-between;flex-wrap:wrap;gap:.2rem .6rem;border-bottom:1px solid var(--line);padding:.25rem 0"><span><strong>${esc(p.name)}</strong> <span class="muted">${esc(p.role === "staff" ? "manager" : p.role === "owner" ? "admin" : "rep")}</span></span><span class="muted">${p.phone ? esc(p.phone) + (p.valid ? "" : ' <span class="err" style="display:inline;padding:0 .3rem">not a cell number</span>') : "no number"} · ${p.on ? '<span class="pill st-shipped">texts on</span>' : "texts off"}</span></div>`).join("")}</div>` : ""}
     <h2 style="font-size:1.05rem;margin-top:.8rem">Send a test text</h2>
     <div class="row2" style="align-items:end;flex-wrap:wrap"><div class="field" style="margin:0;max-width:14rem"><label class="eyebrow" for="smsTestTo">Cell number</label><input id="smsTestTo" type="tel" placeholder="956-555-1234"></div><button class="btn" type="button" id="smsTest"${d.info.ready ? "" : " disabled"}>Send test</button></div>
@@ -2681,7 +2681,7 @@ async function smsPanel(s) {
       <li>Buy a local number (Phone Numbers → Buy a number, about $1.15/month).</li>
       <li>Register for US business texting: Messaging → Regulatory compliance → <strong>A2P 10DLC</strong>. Register your business (brand) and a campaign ("Account notifications"). One-time fees about $20; approval takes 1–3 weeks. Texts to US numbers are blocked until it's approved.</li>
       <li>From the Twilio Console home copy the <strong>Account SID</strong> and <strong>Auth Token</strong>.</li>
-      <li>In Render, add to the store service (and the case tracker, for its texts) → Environment: <span class="mono">TWILIO_ACCOUNT_SID</span>, <span class="mono">TWILIO_AUTH_TOKEN</span>, <span class="mono">TWILIO_FROM</span> (the number, like +19565551234). Save; each restarts by itself.</li>
+      <li>In Render, add to the store service (and the portal, for its texts) → Environment: <span class="mono">TWILIO_ACCOUNT_SID</span>, <span class="mono">TWILIO_AUTH_TOKEN</span>, <span class="mono">TWILIO_FROM</span> (the number, like +19565551234). Save; each restarts by itself.</li>
       <li>Reload this page: it should say <em>Texting connected</em>. Send yourself a test.</li></ol></details>`;
   document.getElementById("smsSave").onclick = async () => {
     const body = { smsOffice: document.getElementById("s-smsOffice").value };
@@ -2699,11 +2699,11 @@ function account() {
       <div><button class="btn solid" id="pSave">Change password</button></div>
       <p class="muted">Changing it signs you out everywhere else.</p></div>
     <div class="panel" style="max-width:28rem"><h2>My PIN</h2>
-      <p class="muted">Sign in faster with your name + PIN on this admin, the rep app and the case tracker. ${me.apps && me.apps.tracker ? "" : ""}</p>
+      <p class="muted">Sign in faster with your name + PIN on this admin, the rep app and the portal. ${me.apps && me.apps.tracker ? "" : ""}</p>
       <div class="field"><label class="eyebrow" for="myPin">PIN (4–10 digits; blank to remove)</label><input id="myPin" inputmode="numeric" maxlength="10"></div>
       <div><button class="btn solid" id="pinSave">Save PIN</button></div></div>
     ${me.role === "rep" ? `<div class="panel" style="max-width:28rem"><h2>Text alerts</h2>
-      <p class="muted" id="mySmsNote">Get alerts by text: your customers' store orders (placed, paid, shipped, delivered). (Case tracker texts are turned on in the tracker.). Standard message rates apply; reply STOP to any text to stop them.</p>
+      <p class="muted" id="mySmsNote">Get alerts by text: your customers' store orders (placed, paid, shipped, delivered). (360 Medical Portal texts are turned on in the portal.). Standard message rates apply; reply STOP to any text to stop them.</p>
       <div class="field"><label class="eyebrow" for="mySmsPh">Cell number</label><input id="mySmsPh" type="tel" inputmode="tel" placeholder="956-555-1234"></div>
       <label class="chk"><input type="checkbox" id="mySmsOn"> Text me alerts</label>
       <div><button class="btn solid" id="mySmsSave">Save text alerts</button></div></div>` : ""}`;
@@ -2743,7 +2743,7 @@ if (window.AppRefresh) window.AppRefresh.init({
   if (new URLSearchParams(location.search).get("embed") === "1") document.body.classList.add("embed");
   if (/^#(staff|setup|apps|account|settings|commissions|reps|geo|howto|salescost|pnl|analytics|university)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
   const sso = new URLSearchParams(location.search).get("sso");
-  if (sso) { const name = new URLSearchParams(location.search).get("name"); history.replaceState(null, "", location.pathname); window.__ssoMsg = sso === "expired" ? "That link from the case tracker expired — go back and tap it again." : `There's no store login for ${name || "that tracker sign-in"} yet. Sign in here, or an admin can add one under Team logins (same email).`; }
+  if (sso) { const name = new URLSearchParams(location.search).get("name"); history.replaceState(null, "", location.pathname); window.__ssoMsg = sso === "expired" ? "That link from the portal expired — go back and tap it again." : `There's no store login for ${name || "that portal sign-in"} yet. Sign in here, or an admin can add one under Team logins (same email).`; }
   const res = await fetch("/api/admin/me");
   if (res.ok) { me = (await res.json()).user; HUB = await api("/hub").catch(() => HUB); shell(); } else drawLogin();
 })();

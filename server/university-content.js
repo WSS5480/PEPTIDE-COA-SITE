@@ -102,14 +102,14 @@ UltraMIST delivers non-contact, painless low-frequency ultrasound therapy for ch
 OR roles :: Surgeon, first assistant, scrub tech (handles sterile instruments), circulator (the non-sterile nurse who opens products and runs the room), anesthesia.
 
 ## Patient privacy (HIPAA)
-! Never write patient names, medical record numbers, dates of birth or other identifiers in the case tracker, texts or email. Log the surgeon, facility, procedure and product only.
+! Never write patient names, medical record numbers, dates of birth or other identifiers in the portal, texts or email. Log the surgeon, facility, procedure and product only.
 
 ## Ethics
 - Follow the AdvaMed Code of Ethics and the manufacturers' policies on meals and gifts.
 - Payments and meals given to physicians can be reportable under the Sunshine Act (Open Payments). When in doubt, ask before you spend.
 
 ## 360 Medical workflow
-- Log every case in the tracker: surgeon, facility, product, units, net sales, status.
+- Log every case in the portal: surgeon, facility, product, units, net sales, status.
 - Add the invoice (photo or PDF) when the case is billed; the COO approves it.
 - Keep surgeon preference cards current.
 - Submit your WCU every week by Thursday 5:00 PM.` },
@@ -132,7 +132,7 @@ OR roles :: Surgeon, first assistant, scrub tech (handles sterile instruments), 
     { q: "DFU stands for…", options: ["Deep fascia ulcer", "Diabetic foot ulcer", "Dermal flap unit", "Distal fracture union"], correct: 1, why: "DFU = diabetic foot ulcer.", lesson: 5 },
     { q: "Skin substitutes are usually billed with…", options: ["CPT surgery codes only", "HCPCS Q-codes", "ICD-10 diagnosis codes only", "NDC drug numbers"], correct: 1, why: "Skin substitutes use HCPCS Q-codes, such as Q4316 for AmchoPlast.", lesson: 5 },
     { q: "In the OR, a rep should…", options: ["Hand products directly to the surgeon over the sterile field", "Never touch the sterile field and stay out of the sterile path", "Help drape the patient", "Open sterile products on the back table"], correct: 1, why: "Reps stay outside the sterile field at all times.", lesson: 6 },
-    { q: "Which of these may you enter in the case tracker?", options: ["The patient's name", "The patient's date of birth", "The surgeon, facility, procedure and product", "The medical record number"], correct: 2, why: "Never record patient identifiers (HIPAA).", lesson: 6 },
+    { q: "Which of these may you enter in the portal?", options: ["The patient's name", "The patient's date of birth", "The surgeon, facility, procedure and product", "The medical record number"], correct: 2, why: "Never record patient identifiers (HIPAA).", lesson: 6 },
     { q: "Who is the circulator?", options: ["The surgeon's first assistant", "The non-sterile nurse who opens products and runs the room", "The anesthesiologist", "The hospital buyer"], correct: 1, why: "The circulator is the non-sterile nurse.", lesson: 6 },
     { q: "Your WCU is due…", options: ["Monday 9:00 AM", "Thursday 5:00 PM", "Friday at noon", "The last day of the month"], correct: 1, why: "WCUs are due every Thursday by 5:00 PM Central.", lesson: 6 },
   ],

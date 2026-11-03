@@ -30,7 +30,7 @@ create table if not exists uni_attempts (
 create table if not exists uni_files (id text primary key, name text, type text, data bytea, size int, at timestamptz not null default now());
 `;
 
-const AUDIENCES = { surgical: "Surgical reps (case tracker)", wound: "Wound care reps (case tracker)", all: "Every case-tracker rep", peptide: "Peptide store reps", none: "Assign by hand only" };
+const AUDIENCES = { surgical: "Surgical reps (portal)", wound: "Wound care reps (portal)", all: "Every portal rep", peptide: "Peptide store reps", none: "Assign by hand only" };
 const SAFE_TYPES = /^(image\/(png|jpeg|webp|gif)|application\/pdf|text\/plain)$/;
 
 module.exports = function university({ app, admin, rep, q, wrap, bad, str, intOrNull, mail, getSettings, emailHtml, escHtml, isEmail, BASE_URL, notifyTracker }) {
@@ -47,9 +47,28 @@ module.exports = function university({ app, admin, rep, q, wrap, bad, str, intOr
         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'360 University') returning id`, [c.key, c.title, c.blurb, c.icon, c.audience, c.minutes, c.pass_pct, c.test_count, c.max_attempts, JSON.stringify(c.lessons), i]);
       for (const [j, x] of c.questions.entries()) await q("insert into uni_questions(course_id, q, options, correct, why, lesson, sort) values ($1,$2,$3,$4,$5,$6,$7)", [n.id, x.q, JSON.stringify(x.options), x.correct, x.why || "", x.lesson || null, j]);
     }
+    // Nov 2026: the case tracker is now the 360 Medical Portal — rename it once inside every saved course and question (built-in and custom)
+    const { rows: [renamed] } = await q("select 1 from settings where key = 'uniPortalRename'");
+    if (!renamed) {
+      const { rows: cs } = await q("select id, title, blurb, lessons from uni_courses");
+      for (const c of cs) {
+        const lessons = (c.lessons || []).map((l) => ({ ...l, title: portalize(l.title), body: portalize(l.body) }));
+        await q("update uni_courses set title = $1, blurb = $2, lessons = $3 where id = $4", [portalize(c.title), portalize(c.blurb), JSON.stringify(lessons), c.id]);
+      }
+      const { rows: qs } = await q("select id, q, options, why from uni_questions");
+      for (const x of qs) await q("update uni_questions set q = $1, options = $2, why = $3 where id = $4", [portalize(x.q), JSON.stringify((x.options || []).map(portalize)), portalize(x.why), x.id]);
+      await q("insert into settings(key, value) values ('uniPortalRename', 'true') on conflict (key) do nothing");
+      console.log(`360 University: renamed the case tracker to the 360 Medical Portal in ${cs.length} courses and ${qs.length} questions`);
+    }
   }
 
   /* ---------- helpers ---------- */
+  // "case tracker" wording → "360 Medical Portal" / "portal" (the same rules the apps' own text was renamed with)
+  const PORTAL_RULES = [[/360 MEDICAL - SURGICAL CASE TRACKER/g, "360 MEDICAL PORTAL"], [/360 Medical (?:- )?Surgical Case Tracker/g, "360 Medical Portal"], [/360 Medical (?:surgical )?case tracker/gi, "360 Medical Portal"], [/360 Medical tracker/g, "360 Medical Portal"],
+    [/SURGICAL CASE TRACKER/g, "360 MEDICAL PORTAL"], [/Surgical Case Tracker/g, "360 Medical Portal"], [/surgical case tracker/g, "360 Medical Portal"], [/Case tracker admin/g, "Portal admin"], [/Case tracker \(360 Medical\)/g, "360 Medical Portal"],
+    [/CASE TRACKER/g, "360 MEDICAL PORTAL"], [/Case [Tt]racker/g, "360 Medical Portal"], [/case tracker/g, "portal"], [/(^|[\s(])case-tracker(?=[\s).,;:]|$)/g, "$1portal"], [/(^|[\s(])tracker-only/g, "$1portal-only"],
+    [/(^|[\s(>])TRACKER(?=[\s).,;:!?'"]|$)/g, "$1PORTAL"], [/(^|[\s(>])Tracker(?=[\s).,;:!?'"]|$)/g, "$1Portal"], [/(^|[\s(>])tracker(?=[\s).,;:!?'"]|$)/g, "$1portal"]];
+  const portalize = (t) => (t === null || t === undefined ? t : PORTAL_RULES.reduce((s, [re, to]) => s.replace(re, to), String(t)));
   const shuffle = (a) => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [b[i], b[j]] = [b[j], b[i]]; } return b; };
   const status = (a) => (a.passed_at ? "passed" : a.locked_at ? "locked" : a.attempts > 0 ? "retry" : (a.lessons_read || []).length ? "in_progress" : "not_started");
   const cleanLessons = (ls) => (Array.isArray(ls) ? ls : []).slice(0, 60).map((l) => ({ title: str(l && l.title, 160) || "Lesson", body: String((l && l.body) || "").slice(0, 60000) }));
@@ -81,7 +100,7 @@ module.exports = function university({ app, admin, rep, q, wrap, bad, str, intOr
     } catch (e) { console.error("University email failed:", e.message); }
   }
 
-  // default courses for a new rep: case-tracker reps get the surgical / wound / all courses, store reps the peptide course
+  // default courses for a new rep: portal reps get the surgical / wound / all courses, store reps the peptide course
   async function autoAssign(userId, apps, by) {
     const want = [];
     if (!apps || apps.tracker !== false) want.push("surgical", "wound", "all");

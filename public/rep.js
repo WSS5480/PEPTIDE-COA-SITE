@@ -37,7 +37,7 @@ function drawLogin(msg) {
   const pinMode = loginMode === "pin";
   app.innerHTML = `<div class="login"><form id="lf">
     <img src="/site-logo?v=2" alt="360 Peptides" style="height:3rem;width:auto;max-width:15rem;object-fit:contain;justify-self:start">
-    <h1>Sales rep sign in</h1><p class="muted">One login for the peptide store and the case tracker.</p>
+    <h1>Sales rep sign in</h1><p class="muted">One login for the peptide store and the portal.</p>
     <div class="seg" style="justify-self:start"><button type="button" data-lmode="email"${pinMode ? "" : ' class="on"'}>Email + password</button><button type="button" data-lmode="pin"${pinMode ? ' class="on"' : ""}>Name + PIN</button></div>
     ${pinMode ? `<div class="field"><label class="eyebrow" for="ln">Your name</label><select id="ln" required><option value="">Loading…</option></select></div>
     <div class="field"><label class="eyebrow" for="lpin">PIN</label><input id="lpin" inputmode="numeric" autocomplete="one-time-code" maxlength="10" required style="font:600 1.3rem/1 var(--mono);letter-spacing:.3em"></div>`
@@ -71,7 +71,7 @@ async function loadRepList() {
 function shell() {
   if (window.PushUI && !document.body.classList.contains("embed") && !uniOnly()) setTimeout(() => window.PushUI.nudge({ toast, btn: "btn solid rep", what: "your customers' orders (placed, paid, shipped, delivered)" }), 1500);
   app.innerHTML = `<div class="rtop"><div style="display:flex;align-items:center;gap:.6rem"><span class="logopill"><img src="/site-logo?v=2" alt="360 Peptides"></span><div class="logo"><span id="rbrand">Sales rep</span><small>${esc(me.name || me.email)} <span id="rver"></span></small></div></div>
-      <div class="tools"><span class="seg appswitch views"><a href="/admin" title="The admin with this login">Admin</a><a href="/?from=rep" title="The store as a customer sees it (with a way back here)">Store</a><span class="on" title="You are in the rep app">Rep</span>${HUB.linked && HUB.apps && HUB.apps.tracker ? `<a href="${FRAMED ? HUB.trackerUrl + "/" : (HOSTABLE ? "/rep/tracker?next=/" : "/rep/go/tracker?next=/")}"${FRAMED ? ' target="_top"' : ""} title="The case tracker with this login">Tracker</a>` : ""}</span>${me.role !== "rep" ? `<label class="asrep" title="You're an admin: the app shows what this rep sees">Viewing as <select id="repAs">${REP_LIST.map((r) => `<option value="${r.id}"${String(r.id) === String(REP_AS) ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select></label>` : ""}<button type="button" data-refresh title="Refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button><button type="button" id="lo">Sign out</button></div></div>
+      <div class="tools"><span class="seg appswitch views"><a href="/admin" title="The admin with this login">Admin</a><a href="/?from=rep" title="The store as a customer sees it (with a way back here)">Store</a><span class="on" title="You are in the rep app">Rep</span>${HUB.linked && HUB.apps && HUB.apps.tracker ? `<a href="${FRAMED ? HUB.trackerUrl + "/" : (HOSTABLE ? "/rep/tracker?next=/" : "/rep/go/tracker?next=/")}"${FRAMED ? ' target="_top"' : ""} title="The portal with this login">Portal</a>` : ""}</span>${me.role !== "rep" ? `<label class="asrep" title="You're an admin: the app shows what this rep sees">Viewing as <select id="repAs">${REP_LIST.map((r) => `<option value="${r.id}"${String(r.id) === String(REP_AS) ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select></label>` : ""}<button type="button" data-refresh title="Refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button><button type="button" id="lo">Sign out</button></div></div>
     <nav class="rnav" id="rnav"></nav><main class="rpane" id="pane"></main>`;
   $("lo").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };
   if ($("repAs")) $("repAs").onchange = () => { REP_AS = $("repAs").value; localStorage.setItem("repAs", REP_AS); go(view); };
@@ -266,14 +266,14 @@ async function orders() {
   draw(); $("oq2").oninput = draw; $("of2").onchange = draw;
 }
 
-/* ---------- surgical (case tracker) commissions ---------- */
+/* ---------- surgical (portal) commissions ---------- */
 const usd0 = (n) => (n === null || n === undefined ? "—" : "$" + Math.round(n).toLocaleString("en-US"));
 let cmTab = "store", surgMonth = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" }).slice(0, 7);
 const mLabel = (ym) => new Date(ym + "-15T12:00:00Z").toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 function surgicalHtml(j) {
-  if (!j.ok) return `<div class="panel"><p class="muted">${j.linked === false ? "Surgical commissions show here once the case tracker is linked." : "The case tracker isn't answering right now — try again in a minute."}</p></div>`;
+  if (!j.ok) return `<div class="panel"><p class="muted">${j.linked === false ? "Surgical commissions show here once the portal is linked." : "The portal isn't answering right now — try again in a minute."}</p></div>`;
   const r = (j.reps || [])[0];
-  if (!r) return `<div class="panel"><p class="muted">You don't have a surgical case plan in the case tracker. Ask the office if you should.</p></div>`;
+  if (!r) return `<div class="panel"><p class="muted">You don't have a surgical case plan in the portal. Ask the office if you should.</p></div>`;
   const cnt = r.metric === "Cases", amt = (v) => (cnt ? (v ?? "—") + " cases" : usd0(v));
   const how = !r.comm_rate ? "No surgical commission rate is set on your plan yet." : r.comm_floor ? `${r.comm_rate}% × (${amt(r.actual)} − ${amt(r.comm_floor)} floor${r.carried ? `, includes ${amt(r.carried)} carried shortfall` : ""}) = <strong>${usd0(r.commission)}</strong>.${r.actual < r.comm_floor ? ` You're ${amt(r.comm_floor - r.actual)} below the floor; every $1,000 above it earns ${usd0(r.comm_rate * 10)}.` : ` Every extra $1,000 earns ${usd0(r.comm_rate * 10)}.`}` : `${r.comm_rate}% × ${amt(r.actual)} = <strong>${usd0(r.commission)}</strong>, from the first dollar.`;
   const counted = r.counts !== "All" || r.product_filter ? ` Only ${[r.counts !== "All" ? r.counts.toLowerCase().replace(" only", "") + " surgeons" : "", r.product_filter ? r.product_filter : ""].filter(Boolean).join(" · ")} count toward it.` : "";
@@ -285,7 +285,7 @@ function surgicalHtml(j) {
       <div class="kpi"><dt>${esc(j.quarter || "Quarter")} to date</dt><dd>${usd0(r.comm_qtd)}</dd></div>
       <div class="kpi"><dt>Est. pay this month</dt><dd>${usd0(r.est_pay)}</dd></div>
     </dl>
-    <div class="panel" data-fold-open><h2>How it's figured</h2><p class="muted">${how}${counted} ${r.pay_amount ? `Est. pay = ${usd0(r.pay_amount)} ${r.pay_type ? r.pay_type.toLowerCase() : ""} + commission.` : ""} Quota ${r.quota ? amt(r.target || r.quota) : "not set"}. These are estimates from the cases you logged in the case tracker; the office pays from invoiced sales under your written plan.</p></div>
+    <div class="panel" data-fold-open><h2>How it's figured</h2><p class="muted">${how}${counted} ${r.pay_amount ? `Est. pay = ${usd0(r.pay_amount)} ${r.pay_type ? r.pay_type.toLowerCase() : ""} + commission.` : ""} Quota ${r.quota ? amt(r.target || r.quota) : "not set"}. These are estimates from the cases you logged in the portal; the office pays from invoiced sales under your written plan.</p></div>
     <div class="panel" data-fold-open><h2>Cases in ${esc(mLabel(j.month))} (${r.case_list.length})</h2>${r.case_list.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:.5rem">${r.case_list.map((c) => `<div style="border:1px solid var(--line);border-radius:10px;padding:.5rem .7rem${c.counts ? "" : ";opacity:.65"}"><div class="row2" style="justify-content:space-between;gap:.4rem"><strong>${esc(c.surgeon || "Surgeon TBD")}</strong><span>${cnt ? "" : usd0(c.net_sales)}</span></div><div class="muted" style="font-size:.8rem">${esc(when(c.date + "T12:00:00"))}${c.facility ? " · " + esc(c.facility) : ""}${c.product ? " · " + esc(c.product) + (c.units ? " ×" + c.units : "") : ""}</div><div style="font-size:.75rem;margin-top:.2rem">${c.counts ? '<span class="pill st-paid">Counts</span>' : `<span class="pill st-cancelled">${/scheduled/i.test(c.status) ? "Scheduled" : "Doesn't count"}</span>`} <span class="muted">${esc(c.status)}${c.surgeon_type ? " · " + esc(c.surgeon_type) : ""}</span></div></div>`).join("")}</div>` : '<p class="muted">No cases logged this month.</p>'}</div>`;
 }
 async function surgical() {
@@ -333,7 +333,7 @@ async function account() {
       <div><button class="btn solid rep" id="pSave">Change password</button></div></div>
     <div class="panel" id="pushBox" data-nofold></div>
     <div class="panel"><h2>Text alerts</h2>
-      <p class="muted" id="mySmsNote">Get a text when your customers' orders are placed, paid, shipped or delivered. (Case tracker texts are turned on in the tracker.) Standard message rates apply; reply STOP to any text to stop them.</p>
+      <p class="muted" id="mySmsNote">Get a text when your customers' orders are placed, paid, shipped or delivered. (360 Medical Portal texts are turned on in the portal.) Standard message rates apply; reply STOP to any text to stop them.</p>
       <div class="grid2"><div class="field"><label class="eyebrow" for="mySmsPh">Cell number</label><input id="mySmsPh" type="tel" inputmode="tel" placeholder="956-555-1234"></div>
       <div class="field"><span class="eyebrow">&nbsp;</span><label class="chk"><input type="checkbox" id="mySmsOn"> Text me alerts</label></div></div>
       <div><button class="btn solid rep" id="mySmsSave">Save text alerts</button></div></div>

@@ -45,7 +45,7 @@ function appsOf(u) { return Object.assign({ store: true, tracker: !!(u && u.role
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const parseCookies = (h) => Object.fromEntries(String(h || "").split(/;\s*/).filter(Boolean).map((p) => { const i = p.indexOf("="); return [p.slice(0, i), decodeURIComponent(p.slice(i + 1))]; }));
 const SECURE = process.env.NODE_ENV === "production" || !!process.env.RENDER;
-// when the case tracker is linked, the admin session cookie must travel inside the tracker's window (a different site): SameSite=None needs Secure
+// when the portal is linked, the admin session cookie must travel inside the portal's window (a different site): SameSite=None needs Secure
 const SID_ATTRS = () => (process.env.HUB_SECRET && process.env.TRACKER_URL) ? "SameSite=None; Secure" : `SameSite=Strict${SECURE ? "; Secure" : ""}`;
 
 function publicSettings(s) {
@@ -121,7 +121,7 @@ const owner = (req, res, next) => (req.user.role === "owner" ? next() : bad(res,
 /* ---------- site PIN ---------- */
 // When the owner turns the PIN on, nothing on the store (pages, products, lab reports, orders)
 // is served until the visitor enters it. The admin, its login and the files it needs stay open.
-const PIN_OPEN = [/^\/api\/hub\//, /^\/invoice\/[A-Za-z0-9-]+$/, /^\/sso$/, /^\/(admin|rep)\/(sso|tracker|go\/tracker)$/, /^\/go\/tracker$/, /^\/api\/rep-list$/, /^\/xlsx\.full\.min\.js$/, /^\/collapse\.js$/, /^\/uni-(render|admin|rep)\.js$/, /^\/push\.js$/, /^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/api\/stripe\//, /^\/pay\//,
+const PIN_OPEN = [/^\/api\/hub\//, /^\/invoice\/[A-Za-z0-9-]+$/, /^\/sso$/, /^\/(admin|rep)\/(sso|portal|go\/tracker)$/, /^\/go\/tracker$/, /^\/api\/rep-list$/, /^\/xlsx\.full\.min\.js$/, /^\/collapse\.js$/, /^\/uni-(render|admin|rep)\.js$/, /^\/push\.js$/, /^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/api\/stripe\//, /^\/pay\//,
   /^\/store\.css$/, /^\/install\.js$/, /^\/refresh\.js$/, /^\/sw\.js$/, /^\/manifest\.webmanifest$/, /^\/vial\.js$/, /^\/vial-logo$/, /^\/site-logo$/, /^\/vial-photo$/, /^\/vial-photo\.jpg$/, /^\/brand-(logo|mark|vial-logo)\.png$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
 let pinCache = { at: 0, on: false, hash: "", secret: "", customerPins: 0 };
 async function pinState() {
@@ -799,7 +799,7 @@ const HOUSE_COOKIE = (v, age) => `hpin=${v}; Path=/; HttpOnly; SameSite=Lax; Max
 async function houseFrom(req) {
   const ck = parseCookies(req.headers.cookie), t = ck.hpin;
   // only a sign-in made in the store itself counts (shared PIN or a team PIN typed there); being signed in to the admin / rep app
-  // or the tracker no longer signs the store in by itself, so "Sign out" in the store sticks
+  // or the portal no longer signs the store in by itself, so "Sign out" in the store sticks
   if (!t) return false;
   return sameStr(t, houseTok(await pinState()));
 }
@@ -910,7 +910,7 @@ app.post("/api/account/logout", wrap(async (req, res) => {
   res.append("Set-Cookie", HOUSE_COOKIE("", 0));
   res.json({ ok: true });
 }));
-// a signed-in admin / manager / rep looking at the storefront: who, and where "back" goes (their app, or the case tracker they came from)
+// a signed-in admin / manager / rep looking at the storefront: who, and where "back" goes (their app, or the portal they came from)
 async function staffFrom(req) {
   const token = parseCookies(req.headers.cookie).sid; if (!token) return null;
   const { rows: [u] } = await q("select u.id, u.name, u.role, u.apps from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]);
@@ -2450,7 +2450,7 @@ admin.get("/settings", wrap(async (req, res) => {
   res.json({ settings: out, stripe: stripeInfo(), mail: mail.info(st), baseUrl: BASE_URL });
 }));
 // forget the saved mail password / API key (then the host's settings, if any, are used again)
-// The owner can read back the saved Microsoft 365 app details to set up another app (the case tracker) with the same sender.
+// The owner can read back the saved Microsoft 365 app details to set up another app (the portal) with the same sender.
 admin.get("/mail/secret", owner, wrap(async (req, res) => {
   const s = await getSettings();
   console.log(`Mail secret shown to ${req.user.email}`);
@@ -2618,9 +2618,9 @@ admin.patch("/users/:id", owner, wrap(async (req, res) => {
 }));
 
 
-/* ---------- the hub: this admin is the one login and one place for the peptide store AND the 360 Medical case tracker ----------
+/* ---------- the hub: this admin is the one login and one place for the peptide store AND the 360 Medical Portal ----------
    Shared secret HUB_SECRET (same value on both Render services) signs every call between the two apps and the
-   single-sign-on hand-off. TRACKER_URL is the case tracker's address. */
+   single-sign-on hand-off. TRACKER_URL is the portal's address. */
 const HUB_SECRET = String(process.env.HUB_SECRET || "").trim();
 const TRACKER_URL = String(process.env.TRACKER_URL || "").replace(/\/$/, "");
 const b64u = (buf) => Buffer.from(buf).toString("base64url");
@@ -2632,58 +2632,58 @@ function hubVerify(token) {
   if (sig.length !== m[2].length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(m[2]))) return null;
   try { const o = JSON.parse(Buffer.from(m[1], "base64url").toString()); return o.exp && o.exp > Date.now() ? o : null; } catch (e) { return null; }
 }
-// calls from the tracker carry Authorization: Hub <signed {exp}>
+// calls from the portal carry Authorization: Hub <signed {exp}>
 const hubAuth = (req, res, next) => { const t = /^Hub (.+)$/.exec(req.headers.authorization || ""); if (!HUB_SECRET || !t || !(hubVerify(t[1]) || {}).svc) return bad(res, "Hub signature missing or wrong", 401); next(); };
 const hubUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, phone: u.phone || "", sms_on: !!u.sms_on, pin_set: u.pin_set !== undefined ? !!u.pin_set : u.pin_hash !== undefined ? !!u.pin_hash : undefined, commission_rate: u.commission_rate, active: u.active, apps: appsOf(u), pin_version: u.pin_version || 0 });
-// the people the tracker should know: everyone with the Case tracker box ticked
+// the people the portal should know: everyone with the 360 Medical Portal box ticked
 app.get("/api/hub/people", hubAuth, wrap(async (req, res) => {
   const { rows } = await q("select id, email, name, role, phone, sms_on, commission_rate, active, apps, pin_version, (pin_hash is not null) pin_set from users order by name");
   res.json({ people: rows.filter((u) => appsOf(u).tracker).map(hubUser), at: new Date().toISOString() });
 }));
-// a tracker rep signing in by name + PIN on the tracker's own page: checked against the hub PIN
+// a portal rep signing in by name + PIN on the portal's own page: checked against the hub PIN
 app.post("/api/hub/check-pin", hubAuth, wrap(async (req, res) => {
   const { rows: [u] } = await q("select * from users where id = $1 and active and pin_hash is not null", [intOrNull(req.body?.id)]);
   const pin = String(req.body?.pin || "").replace(/\D/g, "");
   const ok = !!(u && appsOf(u).tracker && pin.length >= 4 && (await bcrypt.compare(pin, u.pin_hash)));
   res.json({ ok, user: ok ? hubUser(u) : null });
 }));
-// the tracker's email sign-in: the same email + password as the store admin (one login for both apps)
+// the portal's email sign-in: the same email + password as the store admin (one login for both apps)
 app.post("/api/hub/check-pass", hubAuth, wrap(async (req, res) => {
   const email = str(req.body?.email, 160).toLowerCase();
   const { rows: [u] } = email ? await q("select * from users where lower(email) = $1 and active", [email]) : { rows: [] };
   const ok = !!(u && appsOf(u).tracker && (await bcrypt.compare(String(req.body?.password || ""), u.pass_hash)));
   res.json({ ok, noTracker: !!(u && !appsOf(u).tracker), user: ok ? hubUser(u) : null });
 }));
-// the one email setup: Microsoft 365 app + the COO address, so the tracker sends with it too
+// the one email setup: Microsoft 365 app + the COO address, so the portal sends with it too
 app.get("/api/hub/mail", hubAuth, wrap(async (req, res) => {
   const s = await getSettings();
   res.json({ tenant: s.graphTenant || "", client: s.graphClient || "", secret: s.graphSecret || "", mailbox: s.mailUser || "", from: s.mailFrom || "", to: s.cooEmail || s.orderEmail || "", mode: s.mailMode || "" });
 }));
 app.get("/api/hub/ping", hubAuth, (req, res) => res.json({ ok: true, hub: "peptide-store" }));
-// a signed call to the tracker
-// after a login changes here, the tracker is told to pull people again right away (otherwise it refreshes within a minute)
+// a signed call to the portal
+// after a login changes here, the portal is told to pull people again right away (otherwise it refreshes within a minute)
 function pokeTracker() { if (!HUB_SECRET || !TRACKER_URL) return; fetch(`${TRACKER_URL}/api/hub/sync`, { method: "POST", headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }) }, signal: AbortSignal.timeout(8000) }).catch(() => {}); }
 async function trackerGet(pathname, query = {}) {
-  if (!HUB_SECRET || !TRACKER_URL) throw new Error("The case tracker isn't linked: set HUB_SECRET and TRACKER_URL on the host.");
+  if (!HUB_SECRET || !TRACKER_URL) throw new Error("The portal isn't linked: set HUB_SECRET and TRACKER_URL on the host.");
   const qs = new URLSearchParams(query).toString();
   const r = await fetch(`${TRACKER_URL}${pathname}${qs ? "?" + qs : ""}`, { headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }) }, signal: AbortSignal.timeout(12000) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || `The case tracker answered ${r.status}`);
+  if (!r.ok) throw new Error(j.error || `The portal answered ${r.status}`);
   return j;
 }
-// single sign-on: a signed-in person is handed to the tracker with a 2-minute token; the tracker makes its own session from it
+// single sign-on: a signed-in person is handed to the portal with a 2-minute token; the portal makes its own session from it
 app.get(["/go/tracker", "/admin/go/tracker", "/rep/go/tracker"], wrap(async (req, res) => {
   const token = parseCookies(req.headers.cookie).sid;
   const { rows: [u] } = token ? await q("select id, email, name, role, commission_rate, apps from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]) : { rows: [] };
   if (!u) return res.redirect((req.path.startsWith("/rep") ? "/rep" : "/admin") + "?next=" + encodeURIComponent(req.originalUrl));
   req.user = u;
-  if (!HUB_SECRET || !TRACKER_URL) return res.status(500).send("The case tracker isn't linked yet (HUB_SECRET / TRACKER_URL).");
+  if (!HUB_SECRET || !TRACKER_URL) return res.status(500).send("The portal isn't linked yet (HUB_SECRET / TRACKER_URL).");
   const next = /^\/(?![\/\\])[A-Za-z0-9/_#?=&%.-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : "/";
-  if (!appsOf(u).tracker) return res.status(403).send("This login doesn't have the case tracker turned on. An admin can tick it under Team logins.");
+  if (!appsOf(u).tracker) return res.status(403).send("This login doesn't have the portal turned on. An admin can tick it under Team logins.");
   const t = hubSign({ exp: Date.now() + 120000, sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate });
   res.redirect(`${TRACKER_URL}${next.startsWith("/admin") ? "/admin/sso" : "/sso"}?t=${encodeURIComponent(t)}&next=${encodeURIComponent(next)}`);
 }));
-// the other direction: a tracker login lands here with a signed token and gets a store session (matched by email)
+// the other direction: a portal login lands here with a signed token and gets a store session (matched by email)
 app.get(["/sso", "/admin/sso", "/rep/sso"], wrap(async (req, res) => { // in-scope paths so an installed app window stays "inside" its app
   const t = hubVerify(String(req.query.t || ""));
   const next = /^\/(?![\/\\])[A-Za-z0-9/_#?=&%.-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : "/admin";
@@ -2692,10 +2692,10 @@ app.get(["/sso", "/admin/sso", "/rep/sso"], wrap(async (req, res) => { // in-sco
   if (!t || !t.sso) return miss("expired");
   const email = String(t.email || "").toLowerCase();
   let { rows: [u] } = email ? await q("select * from users where lower(email) = $1 and active", [email]) : { rows: [] };
-  // the tracker's own owner login (COO PIN) has no store email: it is the same office, so it comes in as the store's admin account
+  // the portal's own owner login (COO PIN) has no store email: it is the same office, so it comes in as the store's admin account
   if (!u && !email && t.coo === true) ({ rows: [u] } = await q("select * from users where role = 'owner' and active order by id limit 1")); // only the bare COO-PIN session, never a token that carried an email
   if (!u) return miss("nouser", t.name);
-  // a rep with only the case tracker may still come into the rep app for 360 University (and nothing else there)
+  // a rep with only the portal may still come into the rep app for 360 University (and nothing else there)
   if (!appsOf(u).store && !(u.role === "rep" && next.startsWith("/rep"))) return miss("noapp", u.name);
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '1 day')", [token, u.id]); // hop-in sessions are short; the switch mints a fresh one each time
@@ -2703,27 +2703,27 @@ app.get(["/sso", "/admin/sso", "/rep/sso"], wrap(async (req, res) => { // in-sco
   res.append("Set-Cookie", CLEAR_CID()); // the office is not a customer
   land(u.role === "rep" && /^\/admin(\?[^#]*)?#account$/.test(next) ? next.replace("/admin", "/rep") : next); // reps: My account lives in the rep app; the shared admin pages (Apps, How to) are theirs too
 }));
-// the switch, kept inside this app's own address: a full-window frame of the tracker (signed in through the frame)
+// the switch, kept inside this app's own address: a full-window frame of the portal (signed in through the frame)
 app.get(["/admin/tracker", "/rep/tracker"], wrap(async (req, res) => {
   const token = parseCookies(req.headers.cookie).sid;
   const { rows: [u] } = token ? await q("select id, email, name, role, commission_rate, apps from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]) : { rows: [] };
   const isRep = req.path.startsWith("/rep");
   if (!u) return res.redirect(isRep ? "/rep" : "/admin");
   if (!HUB_SECRET || !TRACKER_URL) return res.redirect(isRep ? "/rep" : "/admin");
-  if (!appsOf(u).tracker) return res.status(403).type("text").send("This login doesn't have the Case tracker turned on. An admin can tick it under Team logins.");
+  if (!appsOf(u).tracker) return res.status(403).type("text").send("This login doesn't have the 360 Medical Portal turned on. An admin can tick it under Team logins.");
   const next = /^\/(?![\/\\])[A-Za-z0-9/_#-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : (u.role === "rep" ? "/" : "/admin");
   const t = hubSign({ sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate, exp: Date.now() + 120000 });
   const src = `${TRACKER_URL}${next.startsWith("/admin") ? "/admin/sso" : "/sso"}?t=${encodeURIComponent(t)}&next=${encodeURIComponent(next)}&framed=1`;
-  res.type("html").send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>360 Medical · Case tracker</title>
+  res.type("html").send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>360 Medical · 360 Medical Portal</title>
 <link rel="manifest" href="${isRep ? "/rep.webmanifest" : "/admin.webmanifest"}"><meta name="theme-color" content="#0f1b33">
 <style>html,body{margin:0;height:100%;background:#0f1b33}iframe{position:fixed;inset:0;width:100%;height:100%;border:0}</style></head>
-<body><iframe src="${escHtml(src)}" title="Case tracker" allow="geolocation; camera"></iframe></body></html>`);
+<body><iframe src="${escHtml(src)}" title="360 Medical Portal" allow="geolocation; camera"></iframe></body></html>`);
 }));
 // admins / managers opening the rep app: the reps they can view it as
 app.get("/api/rep-list", wrap(auth), wrap(async (req, res) => { if (req.user.role === "rep") return res.json({ reps: [] }); const { rows } = await q("select id, name from users where role = 'rep' and active order by name"); res.json({ reps: rows }); }));
 app.get("/api/admin/hub", wrap(auth), (req, res) => res.json({ linked: !!(HUB_SECRET && TRACKER_URL), trackerUrl: TRACKER_URL, apps: appsOf(req.user) }));
-// combined commissions: the store's rows plus the tracker's month estimates
-// surgical (case tracker) commission for the month; a rep only gets their own row
+// combined commissions: the store's rows plus the portal's month estimates
+// surgical (portal) commission for the month; a rep only gets their own row
 async function surgicalComm(month, who) {
   const j = await trackerGet("/api/hub/commissions", { month });
   if (who) { const mine = String(who.name).trim().toLowerCase(); j.reps = (j.reps || []).filter((r) => String(r.rep).trim().toLowerCase() === mine || r.hub === who.id); j.total = j.reps.reduce((t, r) => t + r.commission, 0); j.sales = j.reps.reduce((t, r) => t + (r.metric === "Cases" ? 0 : r.actual), 0); }
@@ -2735,22 +2735,22 @@ admin.get("/hub/commissions", wrap(async (req, res) => {
   try { res.json({ ok: true, month, ...(await surgicalComm(month, req.user.role === "rep" ? req.user : null)) }); }
   catch (e) { res.json({ ok: false, month, error: e.message, reps: [] }); }
 }));
-// Setup page: the tracker's approval-email switch, a test send, and signed preview links
+// Setup page: the portal's approval-email switch, a test send, and signed preview links
 admin.get("/hub/settings", owner, wrap(async (req, res) => { try { res.json({ ok: true, ...(await trackerGet("/api/hub/settings")) }); } catch (e) { res.json({ ok: false, error: e.message }); } }));
 admin.put("/hub/settings", owner, wrap(async (req, res) => {
   try {
     const r = await fetch(`${TRACKER_URL}/api/hub/settings`, { method: "PUT", headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify({ mailOn: !!req.body?.mailOn }), signal: AbortSignal.timeout(12000) });
-    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `The case tracker answered ${r.status}`); res.json({ ok: true, ...j });
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `The portal answered ${r.status}`); res.json({ ok: true, ...j });
   } catch (e) { bad(res, e.message); }
 }));
 admin.post("/hub/mail-test", owner, wrap(async (req, res) => {
   try {
     const r = await fetch(`${TRACKER_URL}/api/hub/mail-test`, { method: "POST", headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify({ by: req.user.name }), signal: AbortSignal.timeout(20000) });
-    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `The case tracker answered ${r.status}`); res.json({ ok: true, ...j });
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `The portal answered ${r.status}`); res.json({ ok: true, ...j });
   } catch (e) { bad(res, e.message); }
 }));
 admin.get("/hub/preview-url", owner, (req, res) => {
-  if (!HUB_SECRET || !TRACKER_URL) return bad(res, "The case tracker isn't linked.");
+  if (!HUB_SECRET || !TRACKER_URL) return bad(res, "The portal isn't linked.");
   const kind = req.query.kind === "surgeon" ? "surgeon" : "facility";
   res.json({ url: `${TRACKER_URL}/hub/mail-preview?kind=${kind}&t=${encodeURIComponent(hubSign({ preview: true, exp: Date.now() + 10 * 60000 }))}` });
 });
@@ -2760,7 +2760,7 @@ admin.get("/hub/tracker-reps", owner, wrap(async (req, res) => {
 admin.delete("/hub/tracker-reps/:rep", owner, wrap(async (req, res) => {
   try {
     const r = await fetch(`${TRACKER_URL}/api/hub/rep-remove`, { method: "POST", headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify({ rep: String(req.params.rep || "") }), signal: AbortSignal.timeout(12000) });
-    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `The case tracker answered ${r.status}`); res.json({ ok: true });
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `The portal answered ${r.status}`); res.json({ ok: true });
   } catch (e) { bad(res, e.message); }
 }));
 // Need-to-order list as a file
@@ -2789,7 +2789,7 @@ rep.use(wrap(async (req, res, next) => {
   if (!r) return bad(res, "Pick which rep to view as.", 403, { pick: true });
   req.repId = r.id; req.asRep = r; next();
 }));
-rep.get("/surgical", wrap(async (req, res) => { // this rep's surgical-case commission from the case tracker
+rep.get("/surgical", wrap(async (req, res) => { // this rep's surgical-case commission from the portal
   const month = monthQ(req);
   if (!(HUB_SECRET && TRACKER_URL)) return res.json({ ok: false, linked: false, month, reps: [] });
   const { rows: [u] } = await q("select id, name from users where id = $1", [req.repId]);
@@ -2874,7 +2874,7 @@ rep.get("/commissions", wrap(async (req, res) => {
 // 360 University: courses, tests and assignments (server/university.js)
 const UNI = require("./server/university")({ app, admin, rep, q, wrap, bad, str, intOrNull, mail, getSettings, emailHtml, escHtml, isEmail, BASE_URL,
   notifyTracker: (title, body) => { if (!HUB_SECRET || !TRACKER_URL) return; fetch(`${TRACKER_URL}/api/hub/notify`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }) }, body: JSON.stringify({ title, body }), signal: AbortSignal.timeout(8000) }).catch(() => {}); } });
-// the tracker asks how a rep is doing in 360 University (shown on their tracker dashboard)
+// the portal asks how a rep is doing in 360 University (shown on their portal dashboard)
 app.get("/api/hub/uni", hubAuth, wrap(async (req, res) => {
   const email = str(req.query.email, 160).toLowerCase(); const { rows: [u] } = email ? await q("select id from users where lower(email) = $1 and active", [email]) : { rows: [] };
   if (!u) return res.json({ ok: true, n: 0 });
