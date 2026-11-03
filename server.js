@@ -2884,14 +2884,23 @@ app.use("/api/rep", rep);
 
 
 /* ---------- pages ---------- */
+// Every page's scripts and styles are stamped with this build (…?v=2.69.0-abc123), so after a deploy the browser never runs a
+// cached old file next to new pages — the old "?v=" numbers in the HTML had to be bumped by hand and were often missed.
+const STAMP = `${BUILD.version}-${Math.round(Date.parse(BUILD.updated) / 1000).toString(36)}${BUILD.commit ? "-" + BUILD.commit : ""}`;
+const pageCache = new Map();
+function stampedPage(file) {
+  if (!pageCache.has(file)) pageCache.set(file, require("fs").readFileSync(path.join(__dirname, "public", file), "utf8").replace(/((?:src|href)=")(\/[\w./-]+\.(?:js|css))(?:\?v=[^"]*)?"/g, (m, a, f) => `${a}${f}?v=${STAMP}"`));
+  return pageCache.get(file);
+}
+const PAGES = { "/": "index.html", "/index.html": "index.html", "/lab-reports": "index.html", "/admin": "admin.html", "/admin.html": "admin.html", "/rep": "rep.html", "/rep.html": "rep.html", "/policy": "policy.html", "/policy.html": "policy.html" };
+app.get(Object.keys(PAGES), (req, res) => res.set("Cache-Control", "no-cache").type("html").send(stampedPage(PAGES[req.path])));
+// the service worker's cache is named after the build too, so an old shell is dropped the moment a new version is live
+app.get("/sw.js", (req, res) => res.set("Cache-Control", "no-cache").type("application/javascript").send(require("fs").readFileSync(path.join(__dirname, "public", "sw.js"), "utf8").replace(/const CACHE = "[^"]*";/, `const CACHE = "store-${STAMP}";`)));
 app.use(express.static(path.join(__dirname, "public"), {
   extensions: ["html"], maxAge: "5m",
   // pages and the service worker must never be cached, or visitors keep seeing an old version
   setHeaders: (res, file) => { if (/\.(html|webmanifest)$|[\\/]sw\.js$/.test(file)) res.set("Cache-Control", "no-cache"); }
 }));
-app.get("/lab-reports", (req, res) => res.set("Cache-Control", "no-cache").sendFile(path.join(__dirname, "public", "index.html")));
-app.get("/admin", (req, res) => res.set("Cache-Control", "no-cache").sendFile(path.join(__dirname, "public", "admin.html")));
-app.get("/rep", (req, res) => res.set("Cache-Control", "no-cache").sendFile(path.join(__dirname, "public", "rep.html")));
 app.use("/api", (req, res) => bad(res, "Not found", 404));
 app.use((err, req, res, next) => { console.error(err); bad(res, "Something went wrong on our end.", 500); });
 
