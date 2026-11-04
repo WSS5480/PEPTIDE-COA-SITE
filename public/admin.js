@@ -1327,14 +1327,14 @@ async function products() {
   const inp = (k, v, ph = "", extra = "") => `<input data-k="${k}" value="${esc(v)}" placeholder="${ph}"${extra}${ro()}>`;
   // one product per row: the summary line (name, cost, price, stock) stays visible; tap it for every other field. All inputs live in the
   // same <tr>, so sorting, the markup tool, the dirty count and Save all changes work as before.
-  const repPills = (p) => (repFor(p).length ? repFor(p).map((r) => `<span class="pill st-shipped" title="Task ${esc(r.task)}">${esc(r.sample || r.product + " " + r.strength)}</span>`).join(" ") : '<span class="pill st-cancelled">No report</span>');
+  const repPills = (p) => (repFor(p).length ? repFor(p).map((r) => `<span class="pill st-shipped" title="Task ${esc(r.task)}">${esc(r.sample || r.product + " " + r.strength)}</span>`).join(" ") : '<span class="muted">none attached</span>');
   const fl = (lab, html, wide) => `<label style="display:flex;flex-direction:column;gap:.2rem;min-width:0${wide ? ";grid-column:1/-1" : ""}"><span class="eyebrow">${lab}</span>${html}</label>`;
   const sm = (lab, html) => `<label style="display:flex;flex-direction:column;gap:.1rem;font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:700">${lab}${html}</label>`;
   const row = (p) => { const open = !p || openP.has(p.id); return `<tr data-id="${p ? p.id : ""}" class="prow${p ? "" : " dirty"}"><td style="padding:.55rem .8rem">
     <div class="psum" style="display:flex;flex-wrap:wrap;align-items:center;gap:.4rem 1rem;cursor:pointer">
       <span style="flex:1 1 14rem;min-width:0"><span class="caret" style="display:inline-block;width:1rem;transition:transform .15s;${open ? "transform:rotate(90deg)" : ""}">▸</span><strong data-pname>${esc(p ? `${p.name} ${p.strength}`.trim() : "New product")}</strong>
         <span class="muted" style="font-size:.8rem" data-pmeta>${esc(p ? [p.manufacturer, p.category].filter(Boolean).join(" · ") : "")}</span>
-        ${p && !p.active ? ' <span class="pill st-cancelled" data-poff>hidden</span>' : ""}${p && !repFor(p).length && p.active ? ' <span class="pill st-cancelled" title="No lab report attached">no report</span>' : ""}</span>
+        ${p && !p.active ? ' <span class="pill st-cancelled" data-poff>hidden</span>' : ""}</span>
       <span style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:flex-end">
         ${sm("Cost $", inp("cost", dollars(p?.cost_cents), "—", ' inputmode="decimal" style="width:5.5rem" title="Our cost per vial (staff never see it on the store)"'))}
         ${sm("Price $", inp("price", dollars(p?.price_cents), "Ask", ' inputmode="decimal" style="width:5.5rem"'))}
