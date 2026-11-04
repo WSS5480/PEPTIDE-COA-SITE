@@ -1696,10 +1696,17 @@ admin.post("/customers", (req, res, next) => (isRep(req) ? next() : owner(req, r
 async function assignCustomerPin(id, wanted) {
   const st = await pinState();
   let pin = String(wanted || "").replace(/\D/g, "");
-  const taken = async (p) => (await q("select 1 from customers where access_pin_key = $1 and id <> $2", [customerPinKey(st, p), id])).rows.length > 0 || (st.hash && (await bcrypt.compare(p, st.hash))) || !!(await teamByPin(p));
+  // who already has this PIN (the owner sees which customer, so a duplicate is easy to sort out)
+  const taken = async (p) => {
+    const { rows: [other] } = await q("select name, email from customers where access_pin_key = $1 and id <> $2", [customerPinKey(st, p), id]);
+    if (other) return `That PIN already belongs to another customer (${other.name || other.email}). Pick another.`;
+    if (st.hash && (await bcrypt.compare(p, st.hash))) return "That's the store's shared PIN. Pick another.";
+    const u = await teamByPin(p); if (u) return `That's a team login's PIN (${u.name || u.email}). Pick another.`;
+    return "";
+  };
   if (pin) {
     if (!/^\d{4,8}$/.test(pin)) throw new Error("Customer PINs are 4 to 8 digits.");
-    if (await taken(pin)) throw new Error("That PIN is already in use (another customer, the store PIN or a team login). Pick another.");
+    const why = await taken(pin); if (why) throw new Error(why);
   } else {
     do { pin = String(crypto.randomInt(100000, 1000000)); } while (await taken(pin));
   }

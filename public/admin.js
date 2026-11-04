@@ -947,7 +947,8 @@ async function customers() {
   const givePin = async (id, name, err) => {
     const typed = await askPin(name, err); if (typed === null) return;
     if (typed && !/^\d{4,8}$/.test(typed)) { return givePin(id, name, "A customer PIN is 4 to 8 digits — " + typed.length + " typed. Try again."); }
-    try { const r = await api(`/customers/${id}/pin`, { method: "POST", body: { pin: typed } }); showPin(name, r.pin); load(); } catch (e) { /* toast shown */ }
+    try { const r = await api(`/customers/${id}/pin`, { method: "POST", body: { pin: typed } }); showPin(name, r.pin); load(); }
+    catch (e) { if (e.message !== "signed out") return givePin(id, name, e.message === "error" ? "That didn't work. Try again." : e.message); } // the reason stays on screen (a toast is easy to miss)
   };
   let t; document.getElementById("cq").oninput = (e) => { clearTimeout(t); t = setTimeout(() => { term = e.target.value; load(); }, 250); };
   // PIN requests from the store's sign-in box
