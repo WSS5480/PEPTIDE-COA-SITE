@@ -78,7 +78,10 @@
     init(options) {
       cfg = options;
       document.addEventListener("click", (e) => { const b = e.target.closest("[data-refresh]"); if (b) { e.preventDefault(); doRefresh("button"); } });
-      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { check(); start(); } else stop(); });
+      // back from the background (or the installed app reopened): a newer version loads right away, not at the next 60 s check
+      const back = () => newBuild().then((n) => { if (!n) return; if (cfg.canAuto()) location.reload(); else nudge("A new version is ready · tap to update"); });
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { back(); check(); start(); } else stop(); });
+      window.addEventListener("pageshow", (e) => { if (e.persisted) back(); });
       if (coarse) pullToRefresh();
       buildStamp().then((b) => { build0 = b; });
       check(); start();
