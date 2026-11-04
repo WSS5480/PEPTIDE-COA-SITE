@@ -877,7 +877,13 @@ async function customers() {
       document.getElementById("pinShow").innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Invite sent to ${esc(name)}</h2><p>Emailed to <strong>${esc(r.to)}</strong> — ${inviteSays(r.says)}. Press Send invite again any time to resend it.</p><div class="row2"><button class="btn" type="button" id="pinHide">Done</button></div></div>`;
       document.getElementById("pinHide").onclick = () => { document.getElementById("pinShow").innerHTML = ""; };
       window.scrollTo(0, 0); load();
-    } catch (e) { if (e.message !== "signed out" && e.message === "error") toast("The invite didn't go out. Try again."); } // api() already toasts the server's reason
+    } catch (e) {
+      if (e.message === "signed out") return;
+      // the reason stays on screen (a toast is easy to miss)
+      document.getElementById("pinShow").innerHTML = `<div class="panel" style="border-color:#b91c1c"><h2>Invite not sent</h2><p class="err" style="color:#b91c1c;font-weight:600">${esc(e.message === "error" ? "That didn't work. Try again." : e.message)}</p><p class="muted">Nothing was emailed to ${esc(email || "the customer")}. Fix the reason above, then press Send invite again.</p><div class="row2"><button class="btn" type="button" id="pinHide">Close</button></div></div>`;
+      document.getElementById("pinHide").onclick = () => { document.getElementById("pinShow").innerHTML = ""; };
+      window.scrollTo(0, 0);
+    }
   };
   const previewInvite = (id) => window.open(`/api/admin/customers/${id}/invite-preview?pin=${encodeURIComponent(knownPins[id] || "")}`, "_blank");
   const F = (() => { try { return JSON.parse(localStorage.getItem("custView") || "{}"); } catch (e) { return {}; } })();

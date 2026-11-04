@@ -1840,6 +1840,7 @@ admin.post("/customers/:id/invite", owner, wrap(async (req, res) => {
   const s = await getSettings();
   if (!mail.info(s).ready) return bad(res, "Email isn't set up yet (Site settings → Email), so the invite can't be sent.");
   const r = await sendPinEmail(c, "invite", s, { pin: c.pin });
+  console.log(`Invite email to ${c.email} (customer ${c.id}) by ${req.user.name || req.user.email}: ${r.ok ? "sent" : "FAILED — " + r.error}`);
   if (!r.ok) return bad(res, `The email didn't go out: ${r.error}`);
   res.json({ ok: true, to: c.email, says: c.pin ? "pin" : c.has_pin ? "newpin" : "create" });
 }));
