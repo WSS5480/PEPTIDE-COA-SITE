@@ -236,6 +236,7 @@ alter table orders add column if not exists discount_code text not null default 
 alter table customers alter column email drop not null;
 -- customer pricing: a markup % over our cost that replaces the store price for that customer (null = store prices)
 alter table customers add column if not exists markup numeric(6,2);
+alter table customers add column if not exists company text not null default '';  -- business / clinic name
 alter table customer_sessions add column if not exists seen timestamptz not null default now();
 alter table sessions add column if not exists seen timestamptz not null default now();
 alter table orders add column if not exists price_markup numeric(6,2);

@@ -888,7 +888,7 @@ async function customers() {
     const acts = isOwner() ? `<button class="btn" data-corder>New order</button><button class="btn" data-cedit>Edit</button><button class="btn danger" data-cdel>Delete</button>` : isRep() ? `<button class="btn" data-corder>New order</button><button class="btn" data-cedit>Edit</button>` : `<button class="btn" data-corder>New order</button>`;
     const det = (lab, html) => `<div><div class="eyebrow" style="margin-bottom:.2rem">${lab}</div>${html}</div>`;
     document.getElementById("ct").innerHTML = list.length ? `<table class="tbl ctbl"><tr>${th("name", "Customer")}${isRep() ? "" : "<th>Sales rep</th>"}${th("orders", "Orders", " num")}${th("vials", "Vials", " num")}${th("spend", "Sales", " num")}${th("paid", "Paid", " num")}${th("open", "Open", " num")}${th("last", "Last order")}</tr>
-      ${list.map((c) => { const open = openSet.has(c.id); return `<tr class="csum click" data-cid="${c.id}" data-cname="${esc(c.name || c.email)}" data-ctoggle aria-expanded="${open}"><td><span class="caret" style="display:inline-block;width:1rem;transition:transform .15s;${open ? "transform:rotate(90deg)" : ""}">▸</span><strong>${esc(c.name || c.email || "—")}</strong>${c.active ? "" : ' <span class="pill st-cancelled">off</span>'}${c.has_pin ? "" : ' <span class="pill" title="No PIN yet">no PIN</span>'}</td>
+      ${list.map((c) => { const open = openSet.has(c.id); return `<tr class="csum click" data-cid="${c.id}" data-cname="${esc(c.name || c.email)}" data-ctoggle aria-expanded="${open}"><td><span class="caret" style="display:inline-block;width:1rem;transition:transform .15s;${open ? "transform:rotate(90deg)" : ""}">▸</span><strong>${esc(c.name || c.email || "—")}</strong>${c.active ? "" : ' <span class="pill st-cancelled">off</span>'}${c.has_pin ? "" : ' <span class="pill" title="No PIN yet">no PIN</span>'}${c.company ? `<div class="muted" style="font-size:.78rem">${esc(c.company)}</div>` : ""}</td>
         ${isRep() ? "" : `<td>${esc(c.rep_name || "—")}</td>`}<td class="num">${c.orders}</td><td class="num">${c.vials}</td><td class="num"><strong>${money(c.total_cents)}</strong></td><td class="num">${money(c.spent_cents)}</td><td class="num">${c.open_cents ? money(c.open_cents) : "—"}</td><td>${c.last_order ? when(c.last_order) : "—"}</td></tr>
         <tr class="cdet" data-cid="${c.id}" data-cname="${esc(c.name || c.email)}"${open ? "" : " hidden"}><td colspan="${isRep() ? 7 : 8}" style="background:var(--ground,#f6f7f9)">
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:.8rem 1.2rem;padding:.4rem .2rem">
@@ -915,7 +915,7 @@ async function customers() {
   const editForm = (c) => {
     const a = c.address || {};
     const f = (id, label, val = "", type = "text") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}" value="${esc(val)}"></div>`;
-    document.getElementById("cNew").innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Edit customer</h2><div class="grid2">${f("ec-n", "Name", c.name)}${f("ec-e", "Email (optional)", c.email || "", "email")}${f("ec-p", "Phone", c.phone, "tel")}</div>
+    document.getElementById("cNew").innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Edit customer</h2><div class="grid2">${f("ec-n", "Name", c.name)}${f("ec-co", "Business name (optional)", c.company || "")}${f("ec-e", "Email (optional)", c.email || "", "email")}${f("ec-p", "Phone", c.phone, "tel")}</div>
       <label class="chk"><input type="checkbox" id="ec-sms"${c.sms_ok ? " checked" : ""}> Customer agreed to get order updates by text at this number</label>
       <div class="grid2">${f("ec-1", "Street address", a.line1)}${f("ec-2", "Apt, suite", a.line2)}${f("ec-c", "City", a.city)}${f("ec-s", "State", a.state)}${f("ec-z", "ZIP", a.zip)}</div>
       <div class="row2"><button class="btn solid" type="button" id="ecSave">Save changes</button><button class="btn" type="button" id="ecCancel">Cancel</button></div></div>`;
@@ -923,7 +923,7 @@ async function customers() {
     document.getElementById("ecCancel").onclick = () => { document.getElementById("cNew").innerHTML = ""; paneDirty = false; };
     document.getElementById("ecSave").onclick = async () => {
       const g = (x) => document.getElementById(x).value;
-      await api("/customers/" + c.id, { method: "PATCH", body: { edit: true, name: g("ec-n"), email: g("ec-e"), phone: g("ec-p"), smsOk: document.getElementById("ec-sms").checked, address: { line1: g("ec-1"), line2: g("ec-2"), city: g("ec-c"), state: g("ec-s"), zip: g("ec-z") } } });
+      await api("/customers/" + c.id, { method: "PATCH", body: { edit: true, name: g("ec-n"), company: g("ec-co"), email: g("ec-e"), phone: g("ec-p"), smsOk: document.getElementById("ec-sms").checked, address: { line1: g("ec-1"), line2: g("ec-2"), city: g("ec-c"), state: g("ec-s"), zip: g("ec-z") } } });
       toast("Customer updated"); paneDirty = false; document.getElementById("cNew").innerHTML = ""; load();
     };
   };
@@ -979,7 +979,7 @@ async function customers() {
     const box = document.getElementById("cNew");
     if (box.innerHTML) { box.innerHTML = ""; return; }
     const f = (id, label, type = "text") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}"></div>`;
-    box.innerHTML = `<div class="panel"><h2>Add customer</h2><div class="grid2">${f("nc-n", "Name")}${f("nc-e", "Email (optional)", "email")}${f("nc-p", "Phone", "tel")}</div>
+    box.innerHTML = `<div class="panel"><h2>Add customer</h2><div class="grid2">${f("nc-n", "Name")}${f("nc-co", "Business name (optional)")}${f("nc-e", "Email (optional)", "email")}${f("nc-p", "Phone", "tel")}</div>
       <p class="muted" style="margin:-.3rem 0 0">Email is only needed for order confirmations and password sign-in; a PIN works without one.</p>
       <div class="grid2">${f("nc-1", "Street address")}${f("nc-2", "Apt, suite")}${f("nc-c", "City")}${f("nc-s", "State")}${f("nc-z", "ZIP")}</div>
       <div class="grid2"${isRep() ? " hidden" : ""}><div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-rep">Sales rep (for commission)</label><select id="nc-rep"><option value="">— none —</option>${activeReps.map((r) => `<option value="${r.id}">${esc(r.name)} · ${r.commission_rate}%</option>`).join("")}</select></div>
@@ -994,7 +994,7 @@ async function customers() {
       if (g("nc-mk") === "custom" && !(parseFloat(mk) >= 0)) return toast("Enter the custom markup as a percent, like 35");
       const wantPin = !isRep() && document.getElementById("nc-pin").checked, name = g("nc-n"), typedPin = wantPin ? g("nc-pinval").trim() : "";
       if (typedPin && !/^\d{4,8}$/.test(typedPin)) { const i = document.getElementById("nc-pinval"); i.focus(); i.style.borderColor = "#b91c1c"; return toast("Customer PINs are 4 to 8 digits"); }
-      const r = await api("/customers", { method: "POST", body: { name: g("nc-n"), email: g("nc-e"), phone: g("nc-p"), repId: g("nc-rep") || null, markup: mk, address: { line1: g("nc-1"), line2: g("nc-2"), city: g("nc-c"), state: g("nc-s"), zip: g("nc-z") }, givePin: wantPin, pin: typedPin } });
+      const r = await api("/customers", { method: "POST", body: { name: g("nc-n"), company: g("nc-co"), email: g("nc-e"), phone: g("nc-p"), repId: g("nc-rep") || null, markup: mk, address: { line1: g("nc-1"), line2: g("nc-2"), city: g("nc-c"), state: g("nc-s"), zip: g("nc-z") }, givePin: wantPin, pin: typedPin } });
       box.innerHTML = ""; toast("Customer added"); await load();
       if (r.pin) showPin(name, r.pin); // saved in the same step: nothing else to tap
       else if (r.pinError) givePin(r.id, name, r.pinError);

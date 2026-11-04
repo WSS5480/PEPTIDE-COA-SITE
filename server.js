@@ -61,7 +61,7 @@ function publicSettings(s) {
 const markupOf = (v) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 && n <= 1000 ? Math.round(n * 100) / 100 : null; };
 // visitors who aren't signed in (Site settings → guest prices): the store price plus a markup, rounded to the cent
 const guestPrice = (cents, up) => (cents === null || cents === undefined || !up ? cents : Math.round(cents * (1 + up / 100)));
-const priceFor = (p, markup) => (markup !== null && markup !== undefined && p.cost_cents !== null && p.cost_cents !== undefined ? Math.round(p.cost_cents * (1 + Number(markup) / 100)) : p.price_cents);
+const priceFor = (p, markup) => (markup !== null && markup !== undefined && p.cost_cents !== null && p.cost_cents !== undefined ? Math.round(p.cost_cents * (1 + Number(markup) / 100) / 100) * 100 : p.price_cents); // a customer's own price (cost + markup) is rounded to the dollar
 // The two ways to get an order, as the store, the rep app and order creation see them.
 function fulfillmentOptions(s) {
   const out = [];
@@ -1651,8 +1651,8 @@ admin.post("/pin-requests/:id/approve", owner, wrap(async (req, res) => {
     if (ex) cid = ex.id;
     else {
       const repId = intOrNull(b.repId) && (await q("select 1 from users where id = $1 and role = 'rep'", [intOrNull(b.repId)])).rows.length ? intOrNull(b.repId) : null;
-      const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash, rep_id, markup) values ($1,$2,$3,$4,$5,$6,$7) returning id",
-        [email || null, str(b.name ?? r.name, 120) || r.name, str(b.phone ?? r.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId, b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup)]);
+      const { rows: [c] } = await q("insert into customers(email, name, company, phone, address, pass_hash, rep_id, markup) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id",
+        [email || null, str(b.name ?? r.name, 120) || r.name, str(r.company, 120), str(b.phone ?? r.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId, b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup)]);
       cid = c.id;
     }
   }
@@ -1667,13 +1667,13 @@ admin.post("/pin-requests/:id/dismiss", owner, wrap(async (req, res) => {
 /* ---------- admin: customers ---------- */
 admin.get("/customers", wrap(async (req, res) => {
   const term = str(req.query.q, 80).toLowerCase();
-  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.sms_ok, c.active, c.created_at, c.markup, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.rep_id, (select name from users where id = c.rep_id) rep_name,
+  const { rows } = await q(`select c.id, c.name, c.company, c.email, c.phone, c.sms_ok, c.active, c.created_at, c.markup, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.rep_id, (select name from users where id = c.rep_id) rep_name,
       count(o.id) filter (where o.status <> 'cancelled')::int orders, coalesce(sum(o.total_cents) filter (where o.status in ('paid','shipped','delivered')), 0)::int spent_cents,
       coalesce(sum(o.total_cents) filter (where o.status <> 'cancelled'), 0)::int total_cents, coalesce(sum(o.total_cents) filter (where o.status <> 'cancelled' and o.paid_at is null), 0)::int open_cents,
       max(o.created_at) filter (where o.status <> 'cancelled') last_order,
       coalesce((select sum(i.qty) from order_items i join orders x on x.id = i.order_id where x.customer_id = c.id and x.status <> 'cancelled'), 0)::int vials
     from customers c left join orders o on o.customer_id = c.id
-    where ($1 = '' or lower(c.name) like '%' || $1 || '%' or lower(c.email) like '%' || $1 || '%') ${isRep(req) ? "and c.rep_id = $2" : ""}
+    where ($1 = '' or lower(c.name) like '%' || $1 || '%' or lower(c.company) like '%' || $1 || '%' or lower(c.email) like '%' || $1 || '%') ${isRep(req) ? "and c.rep_id = $2" : ""}
     group by c.id order by c.created_at desc limit 3000`, isRep(req) ? [term, req.user.id] : [term]);
   res.json({ customers: rows });
 }));
@@ -1685,8 +1685,8 @@ admin.post("/customers", (req, res, next) => (isRep(req) ? next() : owner(req, r
   // they sign in with the PIN you give them; this random password is never shown to anyone
   if (isRep(req)) { b.repId = req.user.id; b.markup = ""; } // a rep's new customer is theirs; pricing is set by the owner
   const repId = intOrNull(b.repId) && (await q("select 1 from users where id = $1 and role = 'rep'", [intOrNull(b.repId)])).rows.length ? intOrNull(b.repId) : null;
-  const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash, rep_id, markup) values ($1,$2,$3,$4,$5,$6,$7) returning id",
-    [email || null, str(b.name, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId, b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup)]);
+  const { rows: [c] } = await q("insert into customers(email, name, company, phone, address, pass_hash, rep_id, markup) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id",
+    [email || null, str(b.name, 120), str(b.company, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId, b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup)]);
   if (email) await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
   let pin = null;
   if (!isRep(req) && b.givePin) { try { pin = await assignCustomerPin(c.id, b.pin); } catch (e) { return res.json({ ok: true, id: c.id, pinError: e.message }); } } // the customer is saved either way; the PIN can be given from their row
@@ -1740,7 +1740,7 @@ admin.patch("/customers/:id", (req, res, next) => (isRep(req) ? next() : owner(r
     if (!str(b.name, 120)) return bad(res, "Enter the customer's name.");
     if (email && !isEmail(email)) return bad(res, "That email doesn't look right. Leave it blank if they don't have one.");
     if (email) { const { rows: [dup] } = await q("select 1 from customers where lower(email) = $1 and id <> $2", [email, id]); if (dup) return bad(res, "Another customer already uses that email."); }
-    await q("update customers set name = $1, email = $2, phone = $3, address = $4 where id = $5", [str(b.name, 120), email || null, str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), id]);
+    await q("update customers set name = $1, email = $2, phone = $3, address = $4, company = coalesce($6, company) where id = $5", [str(b.name, 120), email || null, str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), id, b.company === undefined ? null : str(b.company, 120)]);
     if (b.smsOk !== undefined) await q("update customers set sms_ok = $1 where id = $2", [!!b.smsOk && !!sms.norm(b.phone), id]);
     return res.json({ ok: true });
   }
@@ -2833,7 +2833,7 @@ rep.get("/me", wrap(async (req, res) => {
   res.json({ rep: u, customers: c.n, totals: commTotals(rows), month: { orders: month.length, sales: month.reduce((t, r) => t + r.subtotal_cents - r.discount_cents, 0), commission: month.reduce((t, r) => t + r.commission_cents, 0) }, brand: s.brand });
 }));
 rep.get("/customers", wrap(async (req, res) => {
-  const { rows } = await q(`select c.id, c.name, c.email, c.phone, c.address, c.created_at, c.active, c.markup,
+  const { rows } = await q(`select c.id, c.name, c.company, c.email, c.phone, c.address, c.created_at, c.active, c.markup,
       (select count(*)::int from orders o where o.customer_id = c.id and o.status <> 'cancelled') orders,
       coalesce((select sum(o.subtotal_cents - o.discount_cents) from orders o where o.customer_id = c.id and o.status <> 'cancelled'), 0)::int sales_cents,
       (select max(created_at) from orders o where o.customer_id = c.id) last_order
@@ -2847,8 +2847,8 @@ rep.post("/customers", wrap(async (req, res) => {
   const addr = cleanAddress(b.address);
   if (!addr.line1 || !addr.city || !addr.state || !addr.zip) return bad(res, "Enter the customer's full shipping address.");
   if (email) { const { rows: [ex] } = await q("select id, rep_id from customers where lower(email) = $1", [email]); if (ex) return bad(res, ex.rep_id === req.repId ? "That customer is already on your list." : "A customer with that email already exists. Ask the office to assign them to you."); }
-  const { rows: [c] } = await q("insert into customers(email, name, phone, address, pass_hash, rep_id) values ($1,$2,$3,$4,$5,$6) returning id",
-    [email || null, str(b.name, 120), str(b.phone, 40), JSON.stringify(addr), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), req.repId]);
+  const { rows: [c] } = await q("insert into customers(email, name, company, phone, address, pass_hash, rep_id) values ($1,$2,$3,$4,$5,$6,$7) returning id",
+    [email || null, str(b.name, 120), str(b.company, 120), str(b.phone, 40), JSON.stringify(addr), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), req.repId]);
   if (email) await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
   res.json({ ok: true, id: c.id });
 }));
@@ -2857,12 +2857,12 @@ rep.patch("/customers/:id", wrap(async (req, res) => {
   const { rows: [c] } = await q("select id from customers where id = $1 and rep_id = $2", [id, req.repId]);
   if (!c) return bad(res, "Customer not found", 404);
   const addr = cleanAddress(b.address);
-  await q("update customers set name = coalesce(nullif($1,''), name), phone = $2, address = $3 where id = $4", [str(b.name, 120), str(b.phone, 40), JSON.stringify(addr), id]);
+  await q("update customers set name = coalesce(nullif($1,''), name), phone = $2, address = $3, company = coalesce($5, company) where id = $4", [str(b.name, 120), str(b.phone, 40), JSON.stringify(addr), id, b.company === undefined ? null : str(b.company, 120)]);
   res.json({ ok: true });
 }));
-rep.get("/catalog", wrap(async (req, res) => {
+rep.get("/catalog", wrap(async (req, res) => { // reps order from what's on the shelf: counted and in stock
   const [{ rows: products }, s] = await Promise.all([
-    q("select id, name, strength, manufacturer, category, price_cents, cost_cents, stock, max_per_order from products where active order by sort, name, strength, manufacturer, id"),
+    q("select id, name, strength, manufacturer, category, price_cents, cost_cents, stock, max_per_order from products where active and stock is not null and stock > 0 order by sort, name, strength, manufacturer, id"),
     getSettings()
   ]);
   // priced for one of the rep's customers when asked (their markup); our cost never leaves the server

@@ -124,8 +124,8 @@ async function customers(editId) {
     <div class="list" id="cList"></div>`;
   const draw = () => {
     const t = ($("cq").value || "").toLowerCase();
-    const rows = list.filter((c) => !t || [c.name, c.email, c.phone].join(" ").toLowerCase().includes(t));
-    $("cList").innerHTML = rows.length ? rows.map((c) => `<div class="item" data-cid="${c.id}"><div class="top2"><span>${esc(c.name)}</span><span>${c.orders ? money(c.sales_cents) : ""}</span></div>
+    const rows = list.filter((c) => !t || [c.name, c.company, c.email, c.phone].join(" ").toLowerCase().includes(t));
+    $("cList").innerHTML = rows.length ? rows.map((c) => `<div class="item" data-cid="${c.id}"><div class="top2"><span>${esc(c.name)}${c.company ? ` <span class="muted">· ${esc(c.company)}</span>` : ""}</span><span>${c.orders ? money(c.sales_cents) : ""}</span></div>
       <small>${esc(c.email || "no email")}${c.phone ? " · " + esc(c.phone) : ""}${c.markup !== null && c.markup !== undefined ? ` · markup +${Number(c.markup)}% over cost` : ""}</small><small>${[a(c).city, a(c).state].filter(Boolean).join(", ")}${c.orders ? ` · ${c.orders} order${c.orders === 1 ? "" : "s"} · last ${when(c.last_order)}` : " · no orders yet"}${c.active ? "" : " · account off"}</small></div>`).join("")
       : `<p class="muted">${list.length ? "No customer matches." : "No customers yet. Add your first one."}</p>`;
   };
@@ -134,7 +134,7 @@ async function customers(editId) {
     const ad = c ? a(c) : {};
     const f = (id, label, val = "", type = "text", ac = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}" value="${esc(val)}" autocomplete="${ac}"></div>`;
     $("cForm").innerHTML = `<div class="panel"><h2>${c ? "Edit customer" : "New customer"}</h2>
-      <div class="grid2">${f("c-n", "Full name", c?.name, "text", "name")}${c ? `<div class="field"><label class="eyebrow">Email</label><input value="${esc(c.email || "")}" placeholder="none" disabled></div>` : f("c-e", "Email (optional)", "", "email", "email")}${f("c-p", "Phone", c?.phone, "tel", "tel")}</div>
+      <div class="grid2">${f("c-n", "Full name", c?.name, "text", "name")}${f("c-co", "Business name (optional)", c?.company, "text", "organization")}${c ? `<div class="field"><label class="eyebrow">Email</label><input value="${esc(c.email || "")}" placeholder="none" disabled></div>` : f("c-e", "Email (optional)", "", "email", "email")}${f("c-p", "Phone", c?.phone, "tel", "tel")}</div>
       <div class="grid2"><div class="field" style="grid-column:1/-1">${""}<label class="eyebrow" for="c-1">Street address</label><input id="c-1" value="${esc(ad.line1)}" autocomplete="address-line1"></div>
         ${f("c-2", "Apt, suite (optional)", ad.line2)}${f("c-c", "City", ad.city)}${f("c-s", "State", ad.state)}${f("c-z", "ZIP", ad.zip)}</div>
       <div class="err" id="cErr" hidden></div>
@@ -144,7 +144,7 @@ async function customers(editId) {
     $("cCancel").onclick = () => { $("cForm").innerHTML = ""; paneDirty = false; };
     if ($("cOrder")) $("cOrder").onclick = () => { paneDirty = false; pick = c.id; go("neworder"); };
     $("cSave").onclick = async () => {
-      const body = { name: g("c-n"), phone: g("c-p"), address: { line1: g("c-1"), line2: g("c-2"), city: g("c-c"), state: g("c-s"), zip: g("c-z") } };
+      const body = { name: g("c-n"), company: g("c-co"), phone: g("c-p"), address: { line1: g("c-1"), line2: g("c-2"), city: g("c-c"), state: g("c-s"), zip: g("c-z") } };
       if (!c) body.email = g("c-e");
       try {
         if (c) { await api("/customers/" + c.id, { method: "PATCH", body }); toast("Customer updated"); }
@@ -161,19 +161,18 @@ async function customers(editId) {
 /* ---------- new order ---------- */
 async function neworder() {
   const [{ customers: list }, { products, fulfillment: ful, cardPayments }] = await Promise.all([api("/customers"), api("/catalog")]);
-  const showOut0 = localStorage.getItem("orderShowOut") === "1";
-  const sellable0 = products.filter((p) => p.price_cents !== null && (showOut0 || p.stock === null || p.stock > 0));
+  const sellable0 = products.filter((p) => p.price_cents !== null && p.stock !== null && p.stock > 0); // reps order from what's on the shelf
   const label = (p) => `${p.name} ${p.strength}`.trim() + (p.manufacturer ? ` · ${p.manufacturer}` : "");
   pane().innerHTML = `<header><h1>New order</h1></header>
     ${!list.length ? `<div class="panel"><p>You need a customer first.</p><div><button class="btn solid rep" data-nav="customers">Add a customer</button></div></div>` : `
     <div class="panel"><h2>1. Customer</h2>
-      <div class="field"><label class="eyebrow" for="oCust">Who is this order for?</label><select id="oCust"><option value="">Choose a customer…</option>${list.filter((c) => c.active).map((c) => `<option value="${c.id}"${pick === c.id ? " selected" : ""}>${esc(c.name)}${c.email ? " — " + esc(c.email) : c.phone ? " — " + esc(c.phone) : ""}</option>`).join("")}</select></div>
+      <div class="field"><label class="eyebrow" for="oCust">Who is this order for?</label><select id="oCust"><option value="">Choose a customer…</option>${list.filter((c) => c.active).map((c) => `<option value="${c.id}"${pick === c.id ? " selected" : ""}>${esc(c.name)}${c.company ? " · " + esc(c.company) : ""}${c.email ? " — " + esc(c.email) : c.phone ? " — " + esc(c.phone) : ""}</option>`).join("")}</select></div>
       <p class="muted" id="oAddr"></p></div>
     <div class="panel"><h2>2. Products</h2>
-      <div class="filters" style="align-items:center;flex-wrap:wrap;gap:.5rem 1rem"><input id="oq" type="search" placeholder="Filter products" style="flex:1 1 12rem"><label class="chk" style="margin:0"><input type="checkbox" id="oOut"${showOut0 ? " checked" : ""}> Show out-of-stock products</label></div>
+      <div class="filters" style="align-items:center;flex-wrap:wrap;gap:.5rem 1rem"><input id="oq" type="search" placeholder="Filter products" style="flex:1 1 12rem"><span class="muted">In-stock products only</span></div>
       <div class="lines" id="oLines">${sellable0.map((p) => `<div class="line2" data-pid="${p.id}" data-txt="${esc(label(p).toLowerCase())}"><div class="nm">${esc(label(p))}<small>${money(p.price_cents)} each${p.stock !== null ? (p.stock > 0 ? ` · ${p.stock} in stock` : " · out of stock (backorder)") : ""}${p.max_per_order ? ` · max ${p.max_per_order}` : ""}</small></div>
         <input data-qty inputmode="numeric" placeholder="0" max="${p.max_per_order || 999}"><div class="amt" data-amt></div></div>`).join("")}</div>
-      ${sellable0.length ? "" : '<p class="muted">No products have a price yet.</p>'}</div>
+      ${sellable0.length ? "" : '<p class="muted">Nothing is in stock with a price right now.</p>'}</div>
     <div class="panel"><h2>3. Ship or deliver, discount, notes</h2>
       ${ful.length ? `<div class="choices" id="oFul">${ful.map((f, i) => `<label class="choice-opt"><input type="radio" name="oFul" value="${esc(f.key)}"${i === 0 ? " checked" : ""}><span><strong>${esc(f.label)}</strong>${f.note || f.freeOverCents ? `<small>${esc(f.note)}${f.freeOverCents ? `${f.note ? " · " : ""}Free over ${money(f.freeOverCents)}` : ""}</small>` : ""}</span><span class="amt" data-fulamt="${esc(f.key)}">${f.cents ? money(f.cents) : "Free"}</span></label>`).join("")}</div>` : '<p class="muted">Shipping is confirmed by the office.</p>'}
       <div class="field"><label class="eyebrow" for="oCode">Discount code (optional)</label><div class="coderow"><input id="oCode" autocomplete="off" autocapitalize="characters" placeholder="Enter a code" style="height:2.6rem"><button class="btn" type="button" id="oCodeApply" style="height:2.6rem">Apply</button></div><span class="muted" id="oCodeMsg"></span></div>
@@ -186,15 +185,15 @@ async function neworder() {
   let code = null; // applied discount code { code, kind, value, minSubtotalCents }
   const addr = () => { const c = list.find((x) => String(x.id) === $("oCust").value); const a = c && c.address || {}; $("oAddr").textContent = c ? (a.line1 ? `Ships or delivers to ${[a.line1, a.line2, a.city, a.state, a.zip].filter(Boolean).join(", ")}` : "This customer has no address yet. Add it under Customers first.") + (c.markup !== null && c.markup !== undefined ? ` · Pricing: cost +${Number(c.markup)}% (this customer's own prices)` : " · Store prices") : ""; };
   // prices change with the customer (some have their own markup): reload the product list for them
-  let priced = products; const showOut = () => !!($("oOut") && $("oOut").checked);
-  let sellable = priced.filter((p) => p.price_cents !== null && (showOut() || p.stock === null || p.stock > 0));
+  let priced = products;
+  let sellable = priced.filter((p) => p.price_cents !== null && p.stock !== null && p.stock > 0);
   const lineHtml = (p) => `<div class="line2" data-pid="${p.id}" data-txt="${esc(label(p).toLowerCase())}"><div class="nm">${esc(label(p))}<small>${money(p.price_cents)} each${p.stock !== null ? (p.stock > 0 ? ` · ${p.stock} in stock` : " · out of stock (backorder)") : ""}${p.max_per_order ? ` · max ${p.max_per_order}` : ""}</small></div>
         <input data-qty inputmode="numeric" placeholder="0" max="${p.max_per_order || 999}"><div class="amt" data-amt></div></div>`;
   const reprice = async () => {
     const id = $("oCust").value; if (!id) return;
     const qtys = {}; document.querySelectorAll("#oLines [data-pid]").forEach((r) => { qtys[r.dataset.pid] = r.querySelector("[data-qty]").value; });
     ({ products: priced } = await api("/catalog?customerId=" + id));
-    sellable = priced.filter((p) => p.price_cents !== null && (showOut() || p.stock === null || p.stock > 0));
+    sellable = priced.filter((p) => p.price_cents !== null && p.stock !== null && p.stock > 0);
     $("oLines").innerHTML = sellable.map(lineHtml).join("");
     document.querySelectorAll("#oLines [data-pid]").forEach((r) => { if (qtys[r.dataset.pid]) r.querySelector("[data-qty]").value = qtys[r.dataset.pid]; });
     total();
@@ -223,7 +222,6 @@ async function neworder() {
   };
   addr(); if ($("oCust").value) reprice();
   $("oCust").onchange = () => { addr(); reprice(); };
-  $("oOut").onchange = () => { localStorage.setItem("orderShowOut", showOut() ? "1" : "0"); const qtys = {}; document.querySelectorAll("#oLines [data-pid]").forEach((r) => { qtys[r.dataset.pid] = r.querySelector("[data-qty]").value; }); sellable = priced.filter((p) => p.price_cents !== null && (showOut() || p.stock === null || p.stock > 0)); $("oLines").innerHTML = sellable.map(lineHtml).join(""); document.querySelectorAll("#oLines [data-pid]").forEach((r) => { if (qtys[r.dataset.pid]) r.querySelector("[data-qty]").value = qtys[r.dataset.pid]; }); total(); $("oq").oninput(); };
   $("oq").oninput = () => { const t = $("oq").value.toLowerCase(); document.querySelectorAll("#oLines [data-pid]").forEach((r) => { r.hidden = t && !r.dataset.txt.includes(t) && !r.querySelector("[data-qty]").value; }); };
   pane().oninput = (e) => { if (e.target.matches("[data-qty]")) total(); };
   pane().onchange = (e) => { if (e.target.matches("#oFul input")) total(); };
