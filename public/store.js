@@ -457,6 +457,24 @@ function acctView(mode) {
     };
     return;
   }
+  if (!ME && mode === "forgot") {
+    // a link to choose a new PIN goes to the email on the account (the reply is the same whether or not the email is on file)
+    b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Forgot your PIN?</h2>${close}</div>
+      <div class="tabs"><button type="button" data-acct="signin">Sign in</button><button class="on" type="button">Forgot PIN</button></div>
+      <p class="dist">Enter the email on your account and we'll send you a link to choose a new PIN. The link works for 1 hour.</p>
+      <form id="acForm" class="stack">${fld("fgE", "Your email", "email", "email")}<label class="hp">Leave this empty <input id="fgW" tabindex="-1" autocomplete="off"></label>
+      <div class="err" id="acErr" hidden></div><button class="btn solid wide">Email me a link</button></form>
+      <p class="dist">No email on your account? <button class="linkbtn" type="button" data-acct="request">Ask us for a PIN</button>${S.contact ? ` or reach us at ${esc(S.contact)}` : ""}.</p>`;
+    $("fgE").focus();
+    $("acForm").onsubmit = async (e) => {
+      e.preventDefault(); const em = $("fgE").value.trim();
+      try {
+        await post("/api/account/pin-reset", { email: em, website: $("fgW").value });
+        b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Check your email</h2>${close}</div><div class="okbox"><strong>If ${esc(em)} is on file, a link is on its way.</strong><span>Open it to choose a new PIN — it works for 1 hour. Not there in a few minutes? Check your spam folder${S.contact ? `, or reach us at ${esc(S.contact)}` : ""}.</span></div>`;
+      } catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; }
+    };
+    return;
+  }
   if (!ME && HOUSE) {
     b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Office sign-in</h2>${close}</div>
       <p class="dist">You're signed in with the store PIN. Store prices are showing and the cart is open; checkout asks for the customer's name and email, like a walk-in order. Customers with their own PIN see their own pricing instead.</p>
@@ -474,6 +492,7 @@ function acctView(mode) {
       <p class="dist">Enter the PIN ${esc(S.brand || "we")} gave you. It signs you in, shows your pricing and keeps your orders in one place.</p>
       <form id="acForm" class="stack"><div class="field"><label class="eyebrow" for="acPin">Your PIN</label><input id="acPin" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="4 to 8 digits" style="font:600 1.4rem/1 var(--mono);letter-spacing:.3em;text-align:center"></div>
       <div class="err" id="acErr" hidden></div><button class="btn solid wide">Sign in</button></form>
+      <p class="dist">Forgot your PIN? <button class="linkbtn" type="button" data-acct="forgot">Get a link to choose a new one</button></p>
       <p class="dist">No PIN yet? <button class="linkbtn" type="button" data-acct="request">Request one</button> — accounts are set up by us, not online. You can still order as a guest.</p>
       <p class="dist" style="margin-top:.6rem">Staff: the store PIN signs the office in here; <a href="/admin">Admin</a> and the <a href="/rep">rep app</a> use your email and password.</p>`;
     $("acPin").focus();

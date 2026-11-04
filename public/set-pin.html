@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Your PIN · 360 Peptides</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Poppins:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/store.css?v=1793405000">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#0b4d96">
+<style>
+body { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 1rem;
+  background: radial-gradient(40rem 30rem at 70% 30%, rgba(150,214,248,.35), rgba(11,77,150,0) 60%), linear-gradient(120deg, #07173a, #0b4d96); }
+.pinbox { width: min(24rem, 100%); display: grid; gap: 1rem; justify-items: center; padding: 2rem 1.5rem 1.6rem; background: var(--card); border-radius: var(--radius); box-shadow: 0 30px 60px -30px rgba(0,0,0,.6); }
+.pinbox h1 { font: 700 1.8rem/1 var(--display); text-transform: uppercase; letter-spacing: .02em; text-align: center; }
+.pinbox p { color: var(--ink-2); font-size: .9rem; text-align: center; max-width: 30ch; }
+.pinbox form { display: grid; gap: .8rem; width: 100%; }
+.pinbox .field input { font: 600 1.5rem/1 var(--mono); letter-spacing: .35em; text-align: center; height: 3.2rem; }
+.msg { min-height: 1.2rem; color: #9b1c1c; font-size: .85rem; font-weight: 500; text-align: center; }
+.msg.ok { color: #176b3a; }
+.rules { font-size: .8rem; color: var(--ink-2); text-align: center; margin: -.2rem 0 0; }
+.btn.solid { height: 3rem; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="pinbox" id="box">
+  <img class="brandimg big" src="/site-logo" alt="360 Peptides">
+  <h1 id="h">One moment…</h1>
+  <p id="p">Checking your link.</p>
+  <form id="f" autocomplete="off" hidden>
+    <div class="field"><label class="eyebrow" for="pin">Your new PIN</label><input id="pin" inputmode="numeric" maxlength="8" placeholder="4 to 8 digits" autocomplete="off"></div>
+    <div class="field"><label class="eyebrow" for="pin2">Type it again</label><input id="pin2" inputmode="numeric" maxlength="8" placeholder="4 to 8 digits" autocomplete="off"></div>
+    <p class="rules">Digits only. Pick something you'll remember — it's how you sign in.</p>
+    <div class="msg" id="msg" role="alert"></div>
+    <button class="btn solid wide" type="submit" id="go">Save my PIN</button>
+  </form>
+  <a class="btn wide" id="toStore" href="/?signin=1" hidden style="display:inline-grid;place-items:center;text-decoration:none;height:2.8rem;font-weight:600">Go to the store sign-in</a>
+</div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id), k = new URLSearchParams(location.search).get("k") || "";
+  const gone = (why) => { $("h").textContent = "This link has expired"; $("p").textContent = why || "Links work for a limited time and only once. Use \"Forgot your PIN?\" on the store's sign-in to get a new one."; $("f").hidden = true; $("toStore").hidden = false; };
+  if (!k) return gone();
+  fetch("/api/pin-link?k=" + encodeURIComponent(k), { credentials: "same-origin" }).then(async (r) => {
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return gone(j.error);
+    document.title = (j.hasPin ? "Choose a new PIN" : "Create your PIN") + " · " + (j.brand || "360 Peptides");
+    $("h").textContent = j.hasPin ? "Choose a new PIN" : "Create your PIN";
+    const w = (j.name || "").trim().split(/\s+/).filter(Boolean), hi = !w.length ? "there" : /^(dr|mr|mrs|ms|mx|prof|rev)\.?$/i.test(w[0]) && w.length > 1 ? `${w[0]} ${w[w.length - 1]}` : w[0];
+    $("p").textContent = `Hi ${hi}. Pick 4 to 8 digits — this is how you sign in to ${j.brand || "the store"}.`;
+    $("f").hidden = false; $("pin").focus();
+  }).catch(() => gone("We couldn't check your link. Make sure you're online and try again."));
+  let busy = false;
+  $("f").onsubmit = async (e) => {
+    e.preventDefault(); if (busy) return;
+    const pin = $("pin").value.replace(/\D/g, ""), again = $("pin2").value.replace(/\D/g, ""), msg = $("msg");
+    msg.className = "msg"; msg.textContent = "";
+    if (!/^\d{4,8}$/.test(pin)) { msg.textContent = "Your PIN is 4 to 8 digits."; $("pin").focus(); return; }
+    if (pin !== again) { msg.textContent = "The two PINs don't match. Type the same one twice."; $("pin2").focus(); return; }
+    busy = true; $("go").disabled = true;
+    try {
+      const r = await fetch("/api/pin-link", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ k, pin }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { if (r.status === 410) return gone(j.error); msg.textContent = j.error || "That didn't work. Try again."; busy = false; $("go").disabled = false; return; }
+      msg.className = "msg ok"; msg.textContent = "PIN saved — you're signed in. Taking you to the store…";
+      try { sessionStorage.setItem("cidTab", "1"); } catch (x) { /* private mode */ } // the store's "signed in in this tab" mark (stores set to sign out on leaving)
+      setTimeout(() => location.replace("/"), 900);
+    } catch (x) { msg.textContent = "We couldn't reach the store. Check your connection and try again."; busy = false; $("go").disabled = false; }
+  };
+})();
+</script>
+</body>
+</html>

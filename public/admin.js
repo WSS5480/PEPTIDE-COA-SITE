@@ -862,6 +862,24 @@ async function customers() {
          <div class="row2" style="flex-wrap:nowrap;margin-top:.3rem"><button class="btn" data-pin="set">Change</button><button class="btn" data-pin="revoke">Revoke</button></div>`
       : `<button class="btn" data-pin="set">Give PIN</button>`;
   };
+  // the welcome invite: tells them the PIN the office just set (while this page still knows it), or asks them to create one
+  const knownPins = {}; // customer id → the PIN shown on this page, so an invite sent now can carry it
+  const inviteCell = (c) => {
+    const sent = c.invite_sent_at ? `Sent ${when(c.invite_sent_at)}${c.invite_count > 1 ? ` · ${c.invite_count} sent` : ""}` : "Not sent yet";
+    if (!isOwner()) return c.invite_sent_at ? sent : "";
+    if (!c.email) return `<span class="muted">Add an email (Edit) to send one</span>`;
+    return `<button class="btn" data-invite>${c.invite_sent_at ? "Resend invite" : "Send invite"}</button><div class="muted" style="font-size:.75rem;margin-top:.3rem">${sent} · <a href="#" data-invite-preview>preview</a></div>`;
+  };
+  const inviteSays = (says) => says === "pin" ? "it tells them their PIN" : says === "newpin" ? "they already have a PIN, so it lets them choose a new one if it's lost" : "it asks them to create their PIN";
+  const sendInvite = async (id, name, email) => {
+    try {
+      const r = await api(`/customers/${id}/invite`, { method: "POST", body: { pin: knownPins[id] || "" } });
+      document.getElementById("pinShow").innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Invite sent to ${esc(name)}</h2><p>Emailed to <strong>${esc(r.to)}</strong> — ${inviteSays(r.says)}. Press Send invite again any time to resend it.</p><div class="row2"><button class="btn" type="button" id="pinHide">Done</button></div></div>`;
+      document.getElementById("pinHide").onclick = () => { document.getElementById("pinShow").innerHTML = ""; };
+      window.scrollTo(0, 0); load();
+    } catch (e) { if (e.message !== "signed out" && e.message === "error") toast("The invite didn't go out. Try again."); } // api() already toasts the server's reason
+  };
+  const previewInvite = (id) => window.open(`/api/admin/customers/${id}/invite-preview?pin=${encodeURIComponent(knownPins[id] || "")}`, "_blank");
   const F = (() => { try { return JSON.parse(localStorage.getItem("custView") || "{}"); } catch (e) { return {}; } })();
   const openSet = new Set(); // customers expanded to show their details
   const st = { rep: F.rep || "", month: F.month || "", buy: F.buy || "", sort: F.sort || "created", dir: F.dir || "" };
@@ -894,7 +912,7 @@ async function customers() {
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:.8rem 1.2rem;padding:.4rem .2rem">
             ${det("Email", c.email ? `<a href="#" data-cust-orders="${esc(c.email)}">${esc(c.email)}</a>` : `<a href="#" data-cust-orders="${esc(c.name)}" class="muted">no email · see orders</a>`)}
             ${det("Phone", c.phone ? `<a href="tel:${esc(c.phone)}">${esc(c.phone)}</a>` : '<span class="muted">—</span>')}
-            ${det("Pricing", markupCell(c))}${isRep() ? "" : det("Sales rep", repCell(c))}${det("Site PIN", pinCell(c))}
+            ${det("Pricing", markupCell(c))}${isRep() ? "" : det("Sales rep", repCell(c))}${det("Site PIN", pinCell(c))}${isRep() ? "" : det("Invite email", inviteCell(c))}
             ${det("Joined", when(c.created_at))}${det("Account", `<label class="chk"><input type="checkbox" data-cact${c.active ? " checked" : ""}${ro()}> Active</label>`)}
             ${det("Average order", c.orders ? money(Math.round(c.total_cents / c.orders)) : "—")}</div>
           <div class="row2" style="margin-top:.6rem">${acts}</div></td></tr>`; }).join("")}</table>` : `<p class="muted">No customers yet.${isOwner() || isRep() ? " Use Add customer to set one up." : ""}</p>`;
@@ -927,12 +945,24 @@ async function customers() {
       toast("Customer updated"); paneDirty = false; document.getElementById("cNew").innerHTML = ""; load();
     };
   };
-  const showPin = (name, pin) => {
+  const showPin = (name, pin, id, email) => {
+    if (id) knownPins[id] = pin;
+    email = email || (lastList.find((x) => String(x.id) === String(id)) || {}).email || "";
     document.getElementById("pinShow").innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>PIN for ${esc(name)}</h2>
       <p style="font:700 2rem/1 var(--mono);letter-spacing:.2em">${esc(pin)}</p>
-      <p class="muted">Send this to the customer now. For security it isn't shown again. If it's lost, click Change to give them a new one.</p>
-      <div class="row2"><button class="btn" type="button" id="pinCopy">Copy PIN</button><button class="btn" type="button" id="pinHide">Done</button></div></div>`;
+      <p class="muted">${email ? `Send invite emails it to ${esc(email)} with how to sign in. ` : "Send this to the customer now. "}For security it isn't shown here again. If it's lost, click Change to give them a new one${email ? ", or they can use \"Forgot your PIN?\" on the store" : ""}.</p>
+      <div class="row2">${email && id ? `<button class="btn solid" type="button" id="pinMail">Send invite email</button>` : ""}<button class="btn" type="button" id="pinCopy">Copy PIN</button><button class="btn" type="button" id="pinHide">Done</button></div></div>`;
+    if (document.getElementById("pinMail")) document.getElementById("pinMail").onclick = () => sendInvite(id, name, email);
     document.getElementById("pinCopy").onclick = () => navigator.clipboard?.writeText(pin).then(() => toast("PIN copied"), () => toast("Copy failed"));
+    document.getElementById("pinHide").onclick = () => { document.getElementById("pinShow").innerHTML = ""; };
+    window.scrollTo(0, 0);
+  };
+  // a new customer with an email but no PIN yet: offer the invite (it asks them to create their own PIN)
+  const offerInvite = (id, name, email) => {
+    document.getElementById("pinShow").innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>${esc(name)} added</h2>
+      <p class="muted">Send them the welcome email? It goes to ${esc(email)} with a link to create their PIN (good for 7 days). You can also send it later from their row under Customers.</p>
+      <div class="row2"><button class="btn solid" type="button" id="pinMail">Send invite email</button><button class="btn" type="button" id="pinHide">Not now</button></div></div>`;
+    document.getElementById("pinMail").onclick = () => sendInvite(id, name, email);
     document.getElementById("pinHide").onclick = () => { document.getElementById("pinShow").innerHTML = ""; };
     window.scrollTo(0, 0);
   };
@@ -947,7 +977,7 @@ async function customers() {
   const givePin = async (id, name, err) => {
     const typed = await askPin(name, err); if (typed === null) return;
     if (typed && !/^\d{4,8}$/.test(typed)) { return givePin(id, name, "A customer PIN is 4 to 8 digits — " + typed.length + " typed. Try again."); }
-    try { const r = await api(`/customers/${id}/pin`, { method: "POST", body: { pin: typed } }); showPin(name, r.pin); load(); }
+    try { const r = await api(`/customers/${id}/pin`, { method: "POST", body: { pin: typed } }); showPin(name, r.pin, id); load(); }
     catch (e) { if (e.message !== "signed out") return givePin(id, name, e.message === "error" ? "That didn't work. Try again." : e.message); } // the reason stays on screen (a toast is easy to miss)
   };
   let t; document.getElementById("cq").oninput = (e) => { clearTimeout(t); t = setTimeout(() => { term = e.target.value; load(); }, 250); };
@@ -980,7 +1010,7 @@ async function customers() {
     if (box.innerHTML) { box.innerHTML = ""; return; }
     const f = (id, label, type = "text") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}"></div>`;
     box.innerHTML = `<div class="panel"><h2>Add customer</h2><div class="grid2">${f("nc-n", "Name")}${f("nc-co", "Business name (optional)")}${f("nc-e", "Email (optional)", "email")}${f("nc-p", "Phone", "tel")}</div>
-      <p class="muted" style="margin:-.3rem 0 0">Email is only needed for order confirmations and password sign-in; a PIN works without one.</p>
+      <p class="muted" style="margin:-.3rem 0 0">Email is needed for order confirmations and the welcome invite (it tells them their PIN, or lets them create one); a PIN works without one.</p>
       <div class="grid2">${f("nc-1", "Street address")}${f("nc-2", "Apt, suite")}${f("nc-c", "City")}${f("nc-s", "State")}${f("nc-z", "ZIP")}</div>
       <div class="grid2"${isRep() ? " hidden" : ""}><div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-rep">Sales rep (for commission)</label><select id="nc-rep"><option value="">— none —</option>${activeReps.map((r) => `<option value="${r.id}">${esc(r.name)} · ${r.commission_rate}%</option>`).join("")}</select></div>
       <div class="field" style="max-width:20rem"><label class="eyebrow" for="nc-mk">Markup over our cost</label><div class="row2" style="flex-wrap:nowrap"><select id="nc-mk" style="flex:1"><option value="">Store prices</option>${MK.map((m) => `<option value="${m}">+${m}%</option>`).join("")}<option value="custom">Custom…</option></select><input id="nc-mkc" inputmode="decimal" placeholder="%" style="width:5rem" hidden></div></div></div>
@@ -995,9 +1025,11 @@ async function customers() {
       const wantPin = !isRep() && document.getElementById("nc-pin").checked, name = g("nc-n"), typedPin = wantPin ? g("nc-pinval").trim() : "";
       if (typedPin && !/^\d{4,8}$/.test(typedPin)) { const i = document.getElementById("nc-pinval"); i.focus(); i.style.borderColor = "#b91c1c"; return toast("Customer PINs are 4 to 8 digits"); }
       const r = await api("/customers", { method: "POST", body: { name: g("nc-n"), company: g("nc-co"), email: g("nc-e"), phone: g("nc-p"), repId: g("nc-rep") || null, markup: mk, address: { line1: g("nc-1"), line2: g("nc-2"), city: g("nc-c"), state: g("nc-s"), zip: g("nc-z") }, givePin: wantPin, pin: typedPin } });
+      const email = g("nc-e").trim();
       box.innerHTML = ""; toast("Customer added"); await load();
-      if (r.pin) showPin(name, r.pin); // saved in the same step: nothing else to tap
+      if (r.pin) showPin(name, r.pin, r.id, email); // saved in the same step: nothing else to tap
       else if (r.pinError) givePin(r.id, name, r.pinError);
+      else if (email && isOwner()) offerInvite(r.id, name, email);
     };
   };
   document.getElementById("ct").onclick = async (e) => {
@@ -1011,11 +1043,13 @@ async function customers() {
       if (!confirm(`Delete ${tr.dataset.cname}? Their login and PIN are removed. Past orders are kept with the name and address they were placed with.${c && c.orders ? ` (${c.orders} order${c.orders === 1 ? "" : "s"})` : ""}`)) return;
       await api("/customers/" + tr.dataset.cid, { method: "DELETE" }); toast("Customer deleted"); return load();
     }
+    if (tr && e.target.closest("[data-invite]")) { const c = lastList.find((x) => String(x.id) === tr.dataset.cid); return sendInvite(tr.dataset.cid, tr.dataset.cname, c ? c.email : ""); }
+    if (tr && e.target.closest("[data-invite-preview]")) { e.preventDefault(); return previewInvite(tr.dataset.cid); }
     const pb = e.target.closest("[data-pin]");
     if (pb && tr) {
       if (pb.dataset.pin === "revoke") {
         if (!confirm(`Revoke ${tr.dataset.cname}'s PIN? They lose access to the site right away.`)) return;
-        await api(`/customers/${tr.dataset.cid}/pin`, { method: "DELETE" }); toast("PIN revoked"); return load();
+        await api(`/customers/${tr.dataset.cid}/pin`, { method: "DELETE" }); delete knownPins[tr.dataset.cid]; toast("PIN revoked"); return load();
       }
       return givePin(tr.dataset.cid, tr.dataset.cname);
     }

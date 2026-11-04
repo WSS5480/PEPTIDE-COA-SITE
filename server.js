@@ -121,7 +121,7 @@ const owner = (req, res, next) => (req.user.role === "owner" ? next() : bad(res,
 /* ---------- site PIN ---------- */
 // When the owner turns the PIN on, nothing on the store (pages, products, lab reports, orders)
 // is served until the visitor enters it. The admin, its login and the files it needs stay open.
-const PIN_OPEN = [/^\/api\/hub\//, /^\/invoice\/[A-Za-z0-9-]+$/, /^\/sso$/, /^\/(admin|rep)\/(sso|portal|go\/tracker)$/, /^\/go\/tracker$/, /^\/api\/rep-list$/, /^\/xlsx\.full\.min\.js$/, /^\/collapse\.js$/, /^\/uni-(render|admin|rep)\.js$/, /^\/push\.js$/, /^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/api\/stripe\//, /^\/pay\//,
+const PIN_OPEN = [/^\/api\/hub\//, /^\/invoice\/[A-Za-z0-9-]+$/, /^\/sso$/, /^\/(admin|rep)\/(sso|portal|go\/tracker)$/, /^\/go\/tracker$/, /^\/api\/rep-list$/, /^\/xlsx\.full\.min\.js$/, /^\/collapse\.js$/, /^\/uni-(render|admin|rep)\.js$/, /^\/push\.js$/, /^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/set-pin$/, /^\/api\/pin-link$/, /^\/api\/account\/pin-reset$/, /^\/api\/stripe\//, /^\/pay\//,
   /^\/store\.css$/, /^\/install\.js$/, /^\/refresh\.js$/, /^\/sw\.js$/, /^\/manifest\.webmanifest$/, /^\/vial\.js$/, /^\/vial-logo$/, /^\/site-logo$/, /^\/vial-photo$/, /^\/vial-photo\.jpg$/, /^\/brand-(logo|mark|vial-logo)\.png$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
 let pinCache = { at: 0, on: false, hash: "", secret: "", customerPins: 0 };
 async function pinState() {
@@ -895,6 +895,108 @@ app.post("/api/account/pin", jsonOnly, limit("cpin", 10, 15 * 60 * 1000), wrap(a
   await startCustomerSession(res, c.id);
   res.json({ ok: true });
 }));
+/* ---------- PIN links: a signed, time-limited link that lets one customer choose their own PIN ----------
+   Sent in the welcome invite (admin → Customers → Send invite) and by "Forgot your PIN?" on the store's sign-in box.
+   The link is tied to the customer's PIN version, so it stops working once a PIN is set, changed or revoked. */
+const pinLink = (st, c, ttlMs) => { const exp = Date.now() + ttlMs; return `${BASE_URL}/set-pin?k=${c.id}.${c.pin_version}.${exp}.${hmac(st.secret, `setpin:${c.id}:${c.pin_version}:${exp}`)}`; };
+async function pinLinkCustomer(k) {
+  const m = /^(\d{1,9})\.(\d{1,9})\.(\d{10,16})\.([0-9a-f]{64})$/.exec(String(k || ""));
+  if (!m || +m[3] < Date.now()) return null;
+  const st = await pinState();
+  if (!sameStr(m[4], hmac(st.secret, `setpin:${m[1]}:${m[2]}:${m[3]}`))) return null;
+  const { rows: [c] } = await q("select id, name, email, company, pin_version, (access_pin_key is not null) has_pin from customers where id = $1 and active and pin_version = $2", [+m[1], +m[2]]);
+  return c || null;
+}
+const LINK_GONE = "This link has expired or was already used. Use \"Forgot your PIN?\" on the store's sign-in to get a new one.";
+app.get("/api/pin-link", limit("pinlink", 30, 15 * 60 * 1000), wrap(async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const c = await pinLinkCustomer(req.query.k);
+  if (!c) return bad(res, LINK_GONE, 410);
+  const s = await getSettings();
+  res.json({ ok: true, name: c.name, hasPin: c.has_pin, brand: s.brand || "360 Peptides" });
+}));
+app.post("/api/pin-link", jsonOnly, limit("pinset", 10, 15 * 60 * 1000), wrap(async (req, res) => {
+  const c = await pinLinkCustomer(req.body?.k);
+  if (!c) return bad(res, LINK_GONE, 410);
+  const pin = String(req.body?.pin || "").replace(/\D/g, "");
+  if (!/^\d{4,8}$/.test(pin)) return bad(res, "Your PIN is 4 to 8 digits.");
+  if (/^(\d)\1+$/.test(pin) || /^(0123|1234)/.test(pin)) return bad(res, "Pick a PIN that's harder to guess — not all one digit, and not starting with 1234.");
+  try { await assignCustomerPin(c.id, pin); }
+  catch (e) { return bad(res, /already belongs|shared PIN|team login/.test(e.message) ? "That PIN is already in use here. Please pick a different one." : e.message); }
+  // signed in with the new PIN right away, like a sign-in from the store's box
+  const st = await pinState(), { rows: [now] } = await q("update customers set pin_used_at = now() where id = $1 returning pin_version", [c.id]);
+  res.append("Set-Cookie", `spin=${customerPass(st, c.id, now.pin_version)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`);
+  res.append("Set-Cookie", HOUSE_COOKIE("", 0));
+  await startCustomerSession(res, c.id);
+  res.json({ ok: true, name: c.name });
+}));
+// The welcome invite (kind "invite": create a PIN — or the PIN itself when the office just set it and passes it along —
+// or choose a new one when a PIN exists but isn't at hand) and the "Forgot your PIN?" email (kind "reset").
+// "Maria Garza" → Maria · "Dr. Maria Garza" → Dr. Garza
+const greetName = (name) => { const w = String(name || "").trim().split(/\s+/).filter(Boolean); if (!w.length) return "there"; return /^(dr|mr|mrs|ms|mx|prof|rev)\.?$/i.test(w[0]) && w.length > 1 ? `${w[0]} ${w[w.length - 1]}` : w[0]; };
+async function pinEmail(c, kind, s, opts = {}) {
+  const st = await pinState(), brand = s.brand || "360 Peptides", first = greetName(c.name);
+  const link = opts.preview ? `${BASE_URL}/set-pin?k=preview` : pinLink(st, c, kind === "reset" ? 60 * 60 * 1000 : 7 * 86400000);
+  const signin = `${BASE_URL}/?signin=1`, legal = `${escHtml(brand)}${s.contact ? ` · ${escHtml(s.contact)}` : ""}<br>Products are sold for laboratory research use only.`;
+  const rep = c.rep_id ? (await q("select name, phone from users where id = $1 and active", [c.rep_id])).rows[0] : null;
+  const repFact = rep ? [["Your sales rep", escHtml(rep.name) + (rep.phone ? ` · <a href="tel:${escHtml(rep.phone)}" style="color:${BLUE}">${escHtml(rep.phone)}</a>` : "")]] : [];
+  const storeFact = ["Sign in at", `<a href="${escHtml(signin)}" style="color:${BLUE}">${escHtml(BASE_URL.replace(/^https?:\/\//, ""))}</a>`];
+  const keep = `Your PIN is your sign-in — keep it private. Forgot it later? Use "Forgot your PIN?" on the store's sign-in box.`;
+  if (kind === "reset") return {
+    subject: `${brand}: choose a new PIN`, link,
+    text: [`Hi ${first},`, "", `Someone asked to reset the PIN for this email address on the ${brand} store. If that was you, choose a new PIN here (the link works for 1 hour):`, link, "", "If it wasn't you, you can ignore this email — your PIN stays the same.", "", `— ${brand}`].join("\n"),
+    html: emailHtml(s, { eyebrow: "Sign-in help", kicker: "PIN reset", title: "Choose a new PIN", preheader: "A link to choose a new PIN for the store (good for 1 hour)",
+      intro: `Hi ${first}, someone asked to reset the PIN for this email address on the ${brand} store. If that was you, choose a new PIN with the button below. The link works for 1 hour.`,
+      button: { text: "Choose a new PIN", url: link },
+      after: `<span style="color:${INK2};font-size:13px">If it wasn't you, you can ignore this email — your PIN stays the same. Your PIN is your sign-in: keep it private.</span>`, footer: legal })
+  };
+  const pin = String(opts.pin || ""), setup = `${brand} set up a store account for you${c.company ? ` (${c.company})` : ""}.`;
+  if (pin) return {
+    subject: `Welcome to ${brand} — your PIN`, link: signin,
+    text: [`Hi ${first},`, "", setup, "", `Your PIN: ${pin}`, "", `Enter it under "Sign in" at ${BASE_URL} to see your pricing, keep your orders in one place and reorder in a few taps.`, ...(rep ? ["", `Your sales rep: ${rep.name}${rep.phone ? ` · ${rep.phone}` : ""}`] : []), "", keep, "", `— ${brand}`].join("\n"),
+    html: emailHtml(s, { eyebrow: "Welcome", kicker: "Your account is ready", title: `Welcome, ${first}`, badge: { text: "Account ready", tone: "ok" }, preheader: `Your ${brand} PIN and how to sign in`,
+      intro: `${setup} Your PIN is below — enter it under "Sign in" on the store to see your pricing, keep your orders in one place and reorder in a few taps.`,
+      facts: [["Your PIN", `<span style="display:inline-block;padding:8px 14px;border-radius:8px;background:${TEAL_WASH};font:700 26px/1 ${FONT};letter-spacing:.25em;color:${INK}">${escHtml(pin)}</span>`], storeFact, ...repFact],
+      button: { text: "Open the store", url: signin }, after: `<span style="color:${INK2};font-size:13px">${escHtml(keep)}</span>`, footer: legal })
+  };
+  if (c.has_pin) return {
+    subject: `Welcome to ${brand} — your store sign-in`, link,
+    text: [`Hi ${first},`, "", setup, "", `You already have a PIN for the store: enter it under "Sign in" at ${BASE_URL} to see your pricing and reorder in a few taps. Don't have it handy? Choose a new one here (the link works for 7 days):`, link, ...(rep ? ["", `Your sales rep: ${rep.name}${rep.phone ? ` · ${rep.phone}` : ""}`] : []), "", keep, "", `— ${brand}`].join("\n"),
+    html: emailHtml(s, { eyebrow: "Welcome", kicker: "Your account is ready", title: `Welcome, ${first}`, badge: { text: "Account ready", tone: "ok" }, preheader: `How to sign in to the ${brand} store`,
+      intro: `${setup} You already have a PIN for the store — enter it under "Sign in" to see your pricing and reorder in a few taps. Don't have it handy? Choose a new one with the button below (the link works for 7 days).`,
+      facts: [storeFact, ...repFact], button: { text: "Choose a new PIN", url: link }, after: `<span style="color:${INK2};font-size:13px">${escHtml(keep)}</span>`, footer: legal })
+  };
+  return {
+    subject: `Welcome to ${brand} — create your PIN`, link,
+    text: [`Hi ${first},`, "", setup, "", "Create your PIN here (the link works for 7 days):", link, "", `Then sign in with it any time at ${BASE_URL} to see your pricing, keep your orders in one place and reorder in a few taps. Pick 4 to 8 digits you'll remember.`, ...(rep ? ["", `Your sales rep: ${rep.name}${rep.phone ? ` · ${rep.phone}` : ""}`] : []), "", keep, "", `— ${brand}`].join("\n"),
+    html: emailHtml(s, { eyebrow: "Welcome", kicker: "Your account is ready", title: `Welcome, ${first}`, badge: { text: "Create your PIN", tone: "info" }, preheader: `Create your PIN to sign in to the ${brand} store`,
+      intro: `${setup} Create your PIN with the button below, then sign in with it any time to see your pricing, keep your orders in one place and reorder in a few taps.`,
+      facts: [storeFact, ...repFact], button: { text: "Create my PIN", url: link },
+      after: `Pick 4 to 8 digits you'll remember. The link works for 7 days.<br><br><span style="color:${INK2};font-size:13px">${escHtml(keep)}</span>`, footer: legal })
+  };
+}
+async function sendPinEmail(c, kind, s, opts = {}) {
+  const m = await pinEmail(c, kind, s, opts);
+  const r = await mail.send({ to: c.email, subject: m.subject, text: m.text, html: m.html, replyTo: isEmail(s.orderEmail || "") ? s.orderEmail : undefined }, s);
+  if (r.ok && kind === "invite") await q("update customers set invite_sent_at = now(), invite_count = invite_count + 1 where id = $1", [c.id]);
+  return r;
+}
+// "Forgot your PIN?" on the store's sign-in box: an email with a link to choose a new PIN. The answer is the same whether or
+// not the email is on file, and it goes back before the email is sent, so nobody can tell which addresses have accounts.
+app.post("/api/account/pin-reset", jsonOnly, limit("pinreset", 5, 60 * 60 * 1000), wrap(async (req, res) => {
+  const email = str(req.body?.email, 160).toLowerCase();
+  if (req.body?.website) return res.json({ ok: true }); // honeypot
+  if (!isEmail(email)) return bad(res, "Enter the email address on your account.");
+  res.json({ ok: true });
+  try {
+    const { rows: [c] } = await q("select id, name, email, company, rep_id, pin_version, (access_pin_key is not null) has_pin from customers where lower(email) = $1 and active", [email]);
+    if (!c) return;
+    const s = await getSettings();
+    if (!mail.info(s).ready || !BASE_URL) return console.error(`PIN reset for ${email}: email isn't set up (Site settings → Email)${BASE_URL ? "" : " / BASE_URL"}`);
+    const r = await sendPinEmail(c, "reset", s);
+    if (!r.ok) console.error(`PIN reset email to ${email} failed: ${r.error}`);
+  } catch (e) { console.error("PIN reset failed:", e.message); }
+}));
 app.post("/api/account/login", jsonOnly, limit("clogin", 12, 15 * 60 * 1000), wrap(async (req, res) => {
   const email = str(req.body?.email, 160).toLowerCase();
   if (!email) return bad(res, "Email or password is wrong.", 401);
@@ -1667,7 +1769,7 @@ admin.post("/pin-requests/:id/dismiss", owner, wrap(async (req, res) => {
 /* ---------- admin: customers ---------- */
 admin.get("/customers", wrap(async (req, res) => {
   const term = str(req.query.q, 80).toLowerCase();
-  const { rows } = await q(`select c.id, c.name, c.company, c.email, c.phone, c.sms_ok, c.active, c.created_at, c.markup, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.rep_id, (select name from users where id = c.rep_id) rep_name,
+  const { rows } = await q(`select c.id, c.name, c.company, c.email, c.phone, c.sms_ok, c.active, c.created_at, c.markup, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.invite_sent_at, c.invite_count, c.rep_id, (select name from users where id = c.rep_id) rep_name,
       count(o.id) filter (where o.status <> 'cancelled')::int orders, coalesce(sum(o.total_cents) filter (where o.status in ('paid','shipped','delivered')), 0)::int spent_cents,
       coalesce(sum(o.total_cents) filter (where o.status <> 'cancelled'), 0)::int total_cents, coalesce(sum(o.total_cents) filter (where o.status <> 'cancelled' and o.paid_at is null), 0)::int open_cents,
       max(o.created_at) filter (where o.status <> 'cancelled') last_order,
@@ -1720,6 +1822,32 @@ admin.post("/customers/:id/pin", owner, wrap(async (req, res) => {
   const id = intOrNull(req.params.id);
   let pin; try { pin = await assignCustomerPin(id, req.body?.pin); } catch (e) { return bad(res, e.message, e.message === "Customer not found" ? 404 : 400); }
   res.json({ ok: true, pin }); // shown once to the owner so it can be given to the customer
+}));
+// The welcome invite (sent again whenever it's pressed). The office can pass along the PIN it just set — it is checked
+// against the account before it goes in the email — otherwise the email asks them to create one (or choose a new one).
+async function inviteOf(req, res) {
+  const { rows: [c] } = await q("select id, name, email, company, rep_id, active, pin_version, access_pin_key, (access_pin_key is not null) has_pin from customers where id = $1", [intOrNull(req.params.id)]);
+  if (!c) { bad(res, "Not found", 404); return null; }
+  if (!isEmail(c.email || "")) { bad(res, "This customer has no email address. Add one with Edit, then send the invite."); return null; }
+  if (!c.active) { bad(res, "This account is turned off. Turn it on first."); return null; }
+  if (!BASE_URL) { bad(res, "The store's address isn't set on the host (BASE_URL), so the link can't be made."); return null; }
+  const st = await pinState(), typed = String((req.body && req.body.pin) || req.query.pin || "").replace(/\D/g, "");
+  c.pin = typed && c.access_pin_key && sameStr(customerPinKey(st, typed), c.access_pin_key) ? typed : "";
+  return c;
+}
+admin.post("/customers/:id/invite", owner, wrap(async (req, res) => {
+  const c = await inviteOf(req, res); if (!c) return;
+  const s = await getSettings();
+  if (!mail.info(s).ready) return bad(res, "Email isn't set up yet (Site settings → Email), so the invite can't be sent.");
+  const r = await sendPinEmail(c, "invite", s, { pin: c.pin });
+  if (!r.ok) return bad(res, `The email didn't go out: ${r.error}`);
+  res.json({ ok: true, to: c.email, says: c.pin ? "pin" : c.has_pin ? "newpin" : "create" });
+}));
+// what the invite (or the "Forgot your PIN?" email, ?kind=reset) looks like, with a dead link
+admin.get("/customers/:id/invite-preview", owner, wrap(async (req, res) => {
+  const c = await inviteOf(req, res); if (!c) return;
+  const m = await pinEmail(c, req.query.kind === "reset" ? "reset" : "invite", await getSettings(), { pin: c.pin, preview: true });
+  res.set("Cache-Control", "no-store").type("html").send(m.html);
 }));
 admin.delete("/customers/:id/pin", owner, wrap(async (req, res) => {
   const id = intOrNull(req.params.id);
@@ -2920,7 +3048,7 @@ function stampedPage(file) {
   if (!pageCache.has(file)) pageCache.set(file, require("fs").readFileSync(path.join(__dirname, "public", file), "utf8").replace(/((?:src|href)=")(\/[\w./-]+\.(?:js|css))(?:\?v=[^"]*)?"/g, (m, a, f) => `${a}${f}?v=${STAMP}"`));
   return pageCache.get(file);
 }
-const PAGES = { "/": "index.html", "/index.html": "index.html", "/lab-reports": "index.html", "/admin": "admin.html", "/admin.html": "admin.html", "/rep": "rep.html", "/rep.html": "rep.html", "/policy": "policy.html", "/policy.html": "policy.html" };
+const PAGES = { "/": "index.html", "/index.html": "index.html", "/lab-reports": "index.html", "/admin": "admin.html", "/admin.html": "admin.html", "/rep": "rep.html", "/rep.html": "rep.html", "/policy": "policy.html", "/policy.html": "policy.html", "/set-pin": "set-pin.html" };
 app.get(Object.keys(PAGES), (req, res) => res.set("Cache-Control", "no-cache").type("html").send(stampedPage(PAGES[req.path])));
 // the service worker's cache is named after the build too, so an old shell is dropped the moment a new version is live
 app.get("/sw.js", (req, res) => res.set("Cache-Control", "no-cache").type("application/javascript").send(require("fs").readFileSync(path.join(__dirname, "public", "sw.js"), "utf8").replace(/const CACHE = "[^"]*";/, `const CACHE = "store-${STAMP}";`)));
