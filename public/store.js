@@ -8,7 +8,7 @@ const norm = (s) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const sizeKey = (s) => norm(s).replace(/mg$/, "");
 const money = (c) => (c < 0 ? "-$" : "$") + (Math.abs(c) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const fmtDate = (iso) => { const [y, m, d] = String(iso || "").slice(0, 10).split("-").map(Number); return y && m && d ? `${MONTHS[m - 1]} ${d}, ${y}` : ""; };
+const fmtDate = (iso) => { const s = String(iso || ""); const day = /T/.test(s) ? new Date(s).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) : s.slice(0, 10); const [y, m, d] = day.split("-").map(Number); return y && m && d ? `${MONTHS[m - 1]} ${d}, ${y}` : ""; };
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 const para = (t) => { const m = /^([^:]{2,40}):\s+(.*)$/.exec(String(t)); return m ? `<strong>${esc(m[1])}.</strong> ${esc(m[2])}` : esc(t); };
 const isPurity = (n) => /^purity$/i.test(String(n).trim());
@@ -136,7 +136,7 @@ function drawProducts() {
         <h3 class="pname">${esc(p.name)}</h3>
         <span class="pmeta">${[p.strength, purity ? `${purity} purity` : ""].filter(Boolean).map(esc).join(" · ")}</span>
         ${descHtml(p.description, p)}
-        <div class="pbuy">${price}${stock}
+        <div class="pbuy">${stock}${price}
         <p class="research">For laboratory research use only.</p>
         <div class="pact">${buy}${r ? `<a class="btn" href="/lab-reports#${esc(rid(r))}" data-report="${r.id}" data-pid="${p.id}">Lab report</a>` : `<span class="stockline">No report yet</span>`}${docsFor(p).length ? `<button class="btn" type="button" data-docs="${p.id}">Documents (${docsFor(p).length})</button>` : ""}</div></div>
       </div>
@@ -576,12 +576,12 @@ let first = true;
 function drawFromSnapshot() {
   const snap = store.get("storeSnap");
   if (!snap || !Array.isArray(snap.products) || !snap.settings || LAB) return;
-  try { S = snap.settings; PRODUCTS = snap.products; REPORTS = snap.reports || []; DOCS = snap.documents || []; PENDING = true; drawProducts(); } catch (e) { PENDING = false; }
+  try { S = snap.settings; PRODUCTS = snap.products; REPORTS = snap.reports || []; DOCS = snap.documents || []; PENDING = true; drawProducts(); gate(); } catch (e) { PENDING = false; }
 }
 async function load() {
   const res = await fetch("/api/store"); const j = await res.json();
   PENDING = false;
-  if (Array.isArray(j.products)) store.set("storeSnap", { settings: j.settings, products: j.products, reports: j.reports, documents: j.documents });
+  if (Array.isArray(j.products)) store.set("storeSnap", { settings: j.settings, products: j.products.map((p) => ({ ...p, price_cents: null })), reports: j.reports, documents: j.documents }); // no prices in the snapshot: a shared phone never shows the last person's pricing
   S = j.settings; if ($("cSmsRow")) $("cSmsRow").hidden = !S.smsCustomer; PRODUCTS = j.products; REPORTS = j.reports; FUL = j.fulfillment || []; DOCS = j.documents || [];
   banner(document.getElementById("announce"), S);
   PRICING = j.pricing || null; HIDDEN = !!j.pricesHidden; SIGN_TO_ORDER = !!j.signToOrder;
@@ -652,7 +652,11 @@ const _la = loadAccount; let started = false;
 // a customer the server has already signed out for being away is told so, instead of the store quietly going back to guest
 loadAccount = async function (idleCheck) { const was = ME; await _la(); if (started && ME) tabMark(true); if (!ME) tabMark(false); if (idleCheck && started && was && !ME) toast(awayMsg(), 6000); };
 drawFromSnapshot();
-Promise.all([load().catch(() => { if (!PRODUCTS.length) $("pgrid").innerHTML = `<div class="card empty"><p><strong>The store couldn't load.</strong> Refresh the page to try again.</p></div>`; }), _la()]).then(async () => {
+Promise.all([load().catch(() => {
+  if (!PRODUCTS.length) { $("pgrid").innerHTML = `<div class="card empty"><p><strong>The store couldn't load.</strong> Refresh the page to try again.</p></div>`; return; }
+  if (!$("loadErr")) $("pgrid").insertAdjacentHTML("beforebegin", `<div class="card empty" id="loadErr" style="margin-bottom:.8rem"><p><strong>The store couldn't load</strong> — this is the last catalog this phone saw, without prices. Refresh to try again.</p></div>`);
+  toast("The store couldn't load. Refresh to try again.", 6000);
+}), _la()]).then(async () => {
   if (ME && NOW0() && !tabMarked()) await leaveOut(); else if (ME) tabMark(true);
   started = true;
 });

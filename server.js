@@ -1701,7 +1701,7 @@ async function assignCustomerPin(id, wanted) {
     const { rows: [other] } = await q("select name, email from customers where access_pin_key = $1 and id <> $2", [customerPinKey(st, p), id]);
     if (other) return `That PIN already belongs to another customer (${other.name || other.email}). Pick another.`;
     if (st.hash && (await bcrypt.compare(p, st.hash))) return "That's the store's shared PIN. Pick another.";
-    const u = await teamByPin(p); if (u) return `That's a team login's PIN (${u.name || u.email}). Pick another.`;
+    if (await teamByPin(p)) return "That's a team login's PIN. Pick another.";
     return "";
   };
   if (pin) {
@@ -1801,16 +1801,19 @@ const normName = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const normSize = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/mg$/, "");
 // A blend listed by its parts ("10 mg / 10 mg", "5 mg + 5 mg") is the same size as the total ("20 mg", "10 mg"): the parts add up.
 const sizeKeys = (v) => {
-  const s = String(v ?? "").toLowerCase().trim(), keys = new Set([normSize(s)]);
+  const s = String(v ?? "").toLowerCase().trim(), out = { plain: normSize(s), total: null };
   const parts = s.split(/\s*[\/+&]\s*/).filter(Boolean);
   if (parts.length > 1) {
     const nums = parts.map((x) => /^(\d+(?:\.\d+)?)\s*(mg|mcg|iu|ml|g|units?)?$/.exec(x.trim()));
-    const units = new Set(nums.map((m) => (m ? m[2] || "" : "?")));
-    if (nums.every(Boolean) && units.size === 1) keys.add(normSize(String(+nums.reduce((t, m) => t + parseFloat(m[1]), 0).toFixed(3)) + [...units][0]));
+    const units = new Set(nums.map((m) => (m ? m[2] || "" : "?")).filter((u) => u !== "")); // "10/10 mg": the unit on one part covers the others
+    if (nums.every(Boolean) && units.size <= 1) out.total = normSize(String(+nums.reduce((t, m) => t + parseFloat(m[1]), 0).toFixed(3)) + ([...units][0] || ""));
   }
-  return keys;
+  return out;
 };
-const sameSize = (a, b) => { const ka = sizeKeys(a); for (const k of sizeKeys(b)) if (ka.has(k)) return true; return false; };
+// the same size: written the same way, or one is the parts and the other is their total ("10 mg / 10 mg" = "20 mg"; two part-lists never match by total alone)
+const sameSize = (a, b) => { const ka = sizeKeys(a), kb = sizeKeys(b); return ka.plain === kb.plain || (ka.total !== null && kb.total === null && ka.total === kb.plain) || (kb.total !== null && ka.total === null && kb.total === ka.plain); };
+const sizeKeyOf = (v) => { const k = sizeKeys(v); return k.total !== null ? k.total : k.plain; }; // one key per size for "is it in the file twice"
+
 async function costSheetMatches() {
   const file = path.join(__dirname, "seed", `catalog-${COST_SHEET}.json`);
   const list = JSON.parse(require("fs").readFileSync(file, "utf8"));
@@ -2223,7 +2226,7 @@ const dateOrNull = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? v : nul
 // receive one or more lines in a single shipment; updates the average cost per unit
 admin.post("/inventory/receive", wrap(async (req, res) => {
   const b = req.body || {};
-  const lines = (Array.isArray(b.lines) ? b.lines : []).map((l) => ({ id: intOrNull(l.productId), qty: intOrNull(l.qty), cost: centsOrNull(String(l.costEach ?? "").replace(/[$,\s]/g, "")), lot: str(l.lot, 60), expires: dateOrNull(l.expires) }))
+  const lines = (Array.isArray(b.lines) ? b.lines : []).map((l) => ({ id: intOrNull(l.productId), qty: intOrNull(l.qty), cost: req.user.role === "owner" ? centsOrNull(String(l.costEach ?? "").replace(/[$,\s]/g, "")) : null, lot: str(l.lot, 60), expires: dateOrNull(l.expires) }))
     .filter((l) => l.id && l.qty > 0);
   if (!lines.length) return bad(res, "Enter a quantity for at least one product.");
   const client = await pool.connect();
@@ -2308,7 +2311,7 @@ async function newProductPlan(rows) {
     const name = str(r && r.name, 120), strength = tidySize(str(r && r.strength, 40)), manufacturer = str(r && r.manufacturer, 80);
     const row = { i, name, strength, manufacturer, ok: false, why: "", category: "", specs: false, costCents: null, priceCents: null, from: "" };
     if (!name) { row.why = "no product name"; out.push(row); continue; }
-    const key = normName(name) + "|" + normSize(strength) + "|" + normName(manufacturer);
+    const key = normName(name) + "|" + sizeKeyOf(strength) + "|" + normName(manufacturer);
     if (seenKeys.has(key)) { row.why = "in the file twice"; out.push(row); continue; } seenKeys.add(key);
     const same = existing.filter((p) => normName(p.name) === normName(name) && sameSize(p.strength, strength));
     const dup = manufacturer ? same.find((p) => normName(p.manufacturer) === normName(manufacturer)) : same[0];
@@ -2318,7 +2321,7 @@ async function newProductPlan(rows) {
     row.category = (inCat && inCat.category) || (sibling && sibling.category) || (/blend/i.test(name) ? "Blends" : "Research peptide");
     if (inCat && sameSize(inCat.strength, strength) && typeof inCat.cost === "number") { row.costCents = Math.round(inCat.cost * 100); row.priceCents = row.costCents * 2; }
     const sheetCost = r && r.cost !== undefined && String(r.cost).trim() !== "" ? centsOrNull(String(r.cost).replace(/[$,\s]/g, "")) : null; // a Cost each column in the file wins over the catalog
-    if (sheetCost !== null) { row.costCents = sheetCost; row.priceCents = sheetCost * 2; row.costFrom = "file"; }
+    if (sheetCost !== null && sheetCost > 0) { row.costCents = sheetCost; row.priceCents = sheetCost * 2; row.costFrom = "file"; }
     row.description = descriptionFor(name, strength) || (sibling && sibling.description ? String(sibling.description).replace(new RegExp(String(sibling.strength || "").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), String(strength).trim()) : "");
     row.specs = !!row.description; row.from = inCat ? "catalog" : sibling ? "same peptide, other size" : "";
     row.ok = true; out.push(row);
@@ -2342,7 +2345,8 @@ admin.post("/inventory/new-products", owner, wrap(async (req, res) => {
 // post a count: each counted product is set to what was counted (on shelf = available + held in open orders); every difference is a logged stock move
 admin.post("/inventory/counts", wrap(async (req, res) => {
   const b = req.body || {};
-  const lines = (Array.isArray(b.lines) ? b.lines : []).map((l) => ({ id: intOrNull(l.productId), counted: intOrNull(l.counted), cost: req.user.role === "owner" && l.costEach !== undefined && String(l.costEach).trim() !== "" ? centsOrNull(String(l.costEach).replace(/[$,\s]/g, "")) : null })).filter((l) => l.id && l.counted !== null);
+  const costOf = (v) => { const c = req.user.role === "owner" && v !== undefined && String(v).trim() !== "" ? centsOrNull(String(v).replace(/[$,\s]/g, "")) : null; return c !== null && c > 0 ? c : null; }; // owners only; 0 or less means "no cost given"
+  const lines = (Array.isArray(b.lines) ? b.lines : []).map((l) => ({ id: intOrNull(l.productId), counted: intOrNull(l.counted), cost: costOf(l.costEach) })).filter((l) => l.id && l.counted !== null);
   if (!lines.length) return bad(res, "Enter a count for at least one product.");
   if (lines.some((l) => l.counted < 0)) return bad(res, "A count can't be negative.");
   if (new Set(lines.map((l) => l.id)).size !== lines.length) return bad(res, "A product is on the sheet twice.");

@@ -520,16 +520,18 @@ async function init() {
   // Add to cart line up across a row — the long ones wrapped onto two lines on phones and pushed the cards apart.
   const { rows: [shortDone] } = await q("select 1 from settings where key = 'bulletsShort1'");
   if (!shortDone) {
-    let map = {};
+    let map = null;
     try { map = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "seed", "short-bullets.json"), "utf8")); delete map._note; } catch (e) { console.error("seed/short-bullets.json: " + e.message); }
-    const { rows: prods } = await q("select id, description from products where description is not null and description <> ''");
-    let n = 0;
-    for (const p of prods) {
-      const next = p.description.split(/\r?\n/).map((l) => { const m = /^(\s*[-•*]\s*)(.*?)\s*$/.exec(l); return m && map[m[2]] ? m[1] + map[m[2]] : l; }).join("\n");
-      if (next !== p.description) { await q("update products set description = $1 where id = $2", [next, p.id]); n++; }
+    if (map) {
+      const { rows: prods } = await q("select id, description from products where description is not null and description <> ''");
+      let n = 0;
+      for (const p of prods) {
+        const next = p.description.split(/\r?\n/).map((l) => { const m = /^(\s*[-•*]\s*)(.*?)\s*$/.exec(l); return m && Object.hasOwn(map, m[2]) ? m[1] + map[m[2]] : l; }).join("\n");
+        if (next !== p.description) { await q("update products set description = $1 where id = $2", [next, p.id]); n++; }
+      }
+      if (n) console.log(`Store cards: shortened the benefit bullets on ${n} products`);
+      await q("insert into settings(key, value) values ('bulletsShort1', 'true') on conflict (key) do nothing");
     }
-    if (n) console.log(`Store cards: shortened the benefit bullets on ${n} products`);
-    await q("insert into settings(key, value) values ('bulletsShort1', 'true') on conflict (key) do nothing");
   }
   if (firstRun) {
     for (const r of readSeedReports()) {

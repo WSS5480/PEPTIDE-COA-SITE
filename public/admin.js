@@ -997,7 +997,7 @@ async function customers() {
       const r = await api("/customers", { method: "POST", body: { name: g("nc-n"), email: g("nc-e"), phone: g("nc-p"), repId: g("nc-rep") || null, markup: mk, address: { line1: g("nc-1"), line2: g("nc-2"), city: g("nc-c"), state: g("nc-s"), zip: g("nc-z") }, givePin: wantPin, pin: typedPin } });
       box.innerHTML = ""; toast("Customer added"); await load();
       if (r.pin) showPin(name, r.pin); // saved in the same step: nothing else to tap
-      else if (r.pinError) { toast(r.pinError); givePin(r.id, name); }
+      else if (r.pinError) givePin(r.id, name, r.pinError);
     };
   };
   document.getElementById("ct").onclick = async (e) => {
@@ -1616,7 +1616,7 @@ async function inventory() {
     panel.querySelectorAll("[data-orderq]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); oFilter = { status: "", q: a.dataset.orderq }; go("orders"); }));
     panel.scrollIntoView({ behavior: "smooth", block: "start" });
   };
-  document.getElementById("rcvBtn").onclick = () => receiveForm(null);
+  document.getElementById("rcvBtn").onclick = () => { const qb = document.getElementById("qtyBox"); if (qb) qb.innerHTML = ""; receiveForm(null); }; // one panel at a time
   document.getElementById("qtyUp").onclick = () => qtyUploadBox(items);
   document.getElementById("invQ").oninput = draw;
   pane().onclick = async (e) => {
@@ -1882,10 +1882,7 @@ function importBox(list) {
       heads.forEach((h) => { const n = normH(h); const k = Object.keys(HEADER_ALIASES).find((key) => HEADER_ALIASES[key].includes(n)); if (k && !map[k]) map[k] = h; });
       if (!map.name) { prev.innerHTML = `<div class="err">Couldn't find a Name column. The columns found were: ${heads.map(esc).join(", ")}</div>`; return; }
       const rows = raw.map((r) => Object.fromEntries(Object.entries(map).map(([k, h]) => [k, String(r[h] ?? "").trim()]))).filter((r) => r.name);
-      // a blend listed by its parts ("10 mg / 10 mg") is the same size as the total ("20 mg"): the parts add up
       const sk = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/mg$/, "");
-      const sizeKeys = (v) => { const s = String(v ?? "").toLowerCase().trim(), keys = new Set([sk(s)]); const parts = s.split(/\s*[\/+&]\s*/).filter(Boolean); if (parts.length > 1) { const nums = parts.map((x) => /^(\d+(?:\.\d+)?)\s*(mg|mcg|iu|ml|g|units?)?$/.exec(x.trim())); const units = new Set(nums.map((m) => (m ? m[2] || "" : "?"))); if (nums.every(Boolean) && units.size === 1) keys.add(sk(String(+nums.reduce((t, m) => t + parseFloat(m[1]), 0).toFixed(3)) + [...units][0])); } return keys; };
-      const sameSize = (a, b) => { const ka = sizeKeys(a); for (const k of sizeKeys(b)) if (ka.has(k)) return true; return false; };
       const same = (r) => list.filter((p) => p.name.toLowerCase() === r.name.toLowerCase() && sk(p.strength) === sk(r.strength));
       const isUpd = (r) => r.manufacturer ? same(r).some((p) => nrm(p.manufacturer) === nrm(r.manufacturer)) : same(r).length === 1;
       const nNew = rows.filter((r) => !isUpd(r)).length, nUpd = rows.length - nNew;
@@ -1936,10 +1933,10 @@ function qtyUploadBox(items) {
       const AL = { name: HEADER_ALIASES.name, strength: HEADER_ALIASES.strength, manufacturer: HEADER_ALIASES.manufacturer, qty: ["qty", "quantity", "count", "counted", "onhand", "onshelf", "stock", "units", "vials", "received", "amount"], lot: ["lot", "lotnumber", "batch"], expires: ["expires", "expiry", "expiration", "expdate", "exp"], cost: ["cost", "costeach", "unitcost", "ourcost", "cost$"] };
       const map = {}; heads.forEach((h) => { const n = normH(h); const k = Object.keys(AL).find((key) => AL[key].includes(n)); if (k && !map[k]) map[k] = h; });
       if (!map.name || !map.qty) { prev.innerHTML = `<div class="err">Need a Name column and a Qty column. Columns found: ${heads.map(esc).join(", ")}</div>`; return; }
-      // a blend listed by its parts ("10 mg / 10 mg") is the same size as the total ("20 mg"): the parts add up
+      // a blend listed by its parts ("10 mg / 10 mg", "10/10 mg") is the same size as its total ("20 mg"); two part-lists only match when written the same (same rules as the server)
       const sk = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/mg$/, "");
-      const sizeKeys = (v) => { const s = String(v ?? "").toLowerCase().trim(), keys = new Set([sk(s)]); const parts = s.split(/\s*[\/+&]\s*/).filter(Boolean); if (parts.length > 1) { const nums = parts.map((x) => /^(\d+(?:\.\d+)?)\s*(mg|mcg|iu|ml|g|units?)?$/.exec(x.trim())); const units = new Set(nums.map((m) => (m ? m[2] || "" : "?"))); if (nums.every(Boolean) && units.size === 1) keys.add(sk(String(+nums.reduce((t, m) => t + parseFloat(m[1]), 0).toFixed(3)) + [...units][0])); } return keys; };
-      const sameSize = (a, b) => { const ka = sizeKeys(a); for (const k of sizeKeys(b)) if (ka.has(k)) return true; return false; };
+      const sizeKeys = (v) => { const s = String(v ?? "").toLowerCase().trim(), out = { plain: sk(s), total: null }; const parts = s.split(/\s*[\/+&]\s*/).filter(Boolean); if (parts.length > 1) { const nums = parts.map((x) => /^(\d+(?:\.\d+)?)\s*(mg|mcg|iu|ml|g|units?)?$/.exec(x.trim())); const units = new Set(nums.map((m) => (m ? m[2] || "" : "?")).filter((u) => u !== "")); if (nums.every(Boolean) && units.size <= 1) out.total = sk(String(+nums.reduce((t, m) => t + parseFloat(m[1]), 0).toFixed(3)) + ([...units][0] || "")); } return out; };
+      const sameSize = (a, b) => { const ka = sizeKeys(a), kb = sizeKeys(b); return ka.plain === kb.plain || (ka.total !== null && kb.total === null && ka.total === kb.plain) || (kb.total !== null && ka.total === null && kb.total === ka.plain); };
       const rows = raw.map((r, i) => ({ row: i + 2, name: String(r[map.name] ?? "").trim(), strength: map.strength ? String(r[map.strength] ?? "").trim() : "", manufacturer: map.manufacturer ? String(r[map.manufacturer] ?? "").trim() : "", qty: String(r[map.qty] ?? "").trim(), lot: map.lot ? String(r[map.lot] ?? "").trim() : "", expires: map.expires ? String(r[map.expires] ?? "").trim() : "", cost: map.cost ? String(r[map.cost] ?? "").trim() : "" })).filter((r) => r.name);
       const match = (r) => { let c = items.filter((p) => p.name.toLowerCase() === r.name.toLowerCase()); if (r.strength) c = c.filter((p) => sameSize(p.strength, r.strength)); if (c.length > 1 && r.manufacturer) c = c.filter((p) => nrm(p.manufacturer) === nrm(r.manufacturer)); return c.length === 1 ? c[0] : c.length > 1 ? "many" : null; };
       const seen = new Set(), lines = [], problems = [], fresh = []; // fresh: rows that match no product → offered as new products
@@ -1975,7 +1972,7 @@ function qtyUploadBox(items) {
           ${problems.length ? `<details style="margin-top:.6rem"><summary class="muted" style="cursor:pointer">Skipped rows</summary><ul class="muted">${problems.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
           ${lines.length || adding.length ? `<div class="row2" style="margin-top:.6rem"><button class="btn solid" type="button" id="qtyGo" style="white-space:normal;text-align:left">${adding.length ? `Add ${adding.length} product${adding.length === 1 ? "" : "s"} and ` : ""}${mode === "count" ? (adding.length ? "post count sheet" : "Post count sheet") : (adding.length ? "receive into stock" : "Receive into stock")} (${lines.length + adding.filter((f) => f.qty !== null).length})</button><button class="btn" type="button" id="qtyCancel">Cancel</button></div>` : ""}`;
         prev.querySelectorAll("[data-newadd]").forEach((cb) => { cb.onchange = () => { fresh[+cb.dataset.newadd].add = cb.checked; draw(); }; });
-        if (document.getElementById("qtyCancel")) document.getElementById("qtyCancel").onclick = () => { box.innerHTML = ""; };
+        if (document.getElementById("qtyCancel")) document.getElementById("qtyCancel").onclick = () => { box.innerHTML = ""; paneDirty = false; };
         if (document.getElementById("qtyGo")) document.getElementById("qtyGo").onclick = async () => {
           const note = document.getElementById("qtyNote").value || `Uploaded from ${file.name}`;
           const b = document.getElementById("qtyGo"); b.disabled = true;
@@ -1994,7 +1991,7 @@ function qtyUploadBox(items) {
           } catch (x) { b.disabled = false; }
         };
       };
-      draw(); document.getElementById("qtyMode").onchange = draw;
+      draw(); paneDirty = true; document.getElementById("qtyMode").onchange = draw;
     } catch (x) { prev.innerHTML = `<div class="err">${esc(x.message || "Couldn't read that file.")}</div>`; }
   };
 }
