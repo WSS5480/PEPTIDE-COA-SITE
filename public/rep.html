@@ -64,6 +64,7 @@ body { overscroll-behavior-y: contain; }
 .tbl th { padding: .6rem .7rem; background: var(--ground); color: var(--ink-2); font: 600 .66rem/1.3 var(--body); letter-spacing: .08em; text-transform: uppercase; text-align: left; white-space: nowrap; }
 .tbl td { padding: .6rem .7rem; border-top: 1px solid var(--line); vertical-align: middle; }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tbl th.num, .tbl th.n, .tbl td.n { text-align: right; } /* a column's header lines up with its numbers */
 .muted { color: var(--ink-2); font-size: .85rem; }
 .btn.rep { background: var(--rep); border-color: var(--rep); color: #fff; } .btn.rep:hover { background: var(--rep-2); border-color: var(--rep-2); color: #fff; }
 .login { display: grid; place-items: center; min-height: 100vh; min-height: 100dvh; padding: 1rem; background: linear-gradient(120deg, #0f1b33, #1c2f57); }

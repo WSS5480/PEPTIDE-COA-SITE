@@ -3019,13 +3019,24 @@ app.get("/api/hub/ping", hubAuth, (req, res) => res.json({ ok: true, hub: "pepti
 // a signed call to the portal
 // after a login changes here, the portal is told to pull people again right away (otherwise it refreshes within a minute)
 function pokeTracker() { if (!HUB_SECRET || !TRACKER_URL) return; fetch(`${TRACKER_URL}/api/hub/sync`, { method: "POST", headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }) }, signal: AbortSignal.timeout(8000) }).catch(() => {}); }
-async function trackerGet(pathname, query = {}) {
+// the portal's free server sleeps when idle; while it wakes, Render answers 429/502/503 (or an HTML page) — wait for it, as the portal does for the store
+const trackerWaking = (r) => [429, 502, 503, 504].includes(r.status) || !/json/i.test(r.headers.get("content-type") || "");
+async function trackerFetch(pathname, init = {}, wait = 60000) {
   if (!HUB_SECRET || !TRACKER_URL) throw new Error("The portal isn't linked: set HUB_SECRET and TRACKER_URL on the host.");
+  const until = Date.now() + wait, pause = () => new Promise((ok) => setTimeout(ok, 3000));
+  for (;;) {
+    let r;
+    try { r = await fetch(`${TRACKER_URL}${pathname}`, { ...init, headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }), "Content-Type": "application/json", ...(init.headers || {}) }, signal: AbortSignal.timeout(20000) }); }
+    catch (e) { if (Date.now() + 3000 >= until) throw new Error("The portal didn't answer — it may be waking up. Try again in a minute."); await pause(); continue; }
+    if (trackerWaking(r)) { if (Date.now() + 3000 < until) { await pause(); continue; } throw new Error(`The portal is waking up (answered ${r.status}) — try again in a minute.`); }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `The portal answered ${r.status}`);
+    return j;
+  }
+}
+async function trackerGet(pathname, query = {}) {
   const qs = new URLSearchParams(query).toString();
-  const r = await fetch(`${TRACKER_URL}${pathname}${qs ? "?" + qs : ""}`, { headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }) }, signal: AbortSignal.timeout(12000) });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || `The portal answered ${r.status}`);
-  return j;
+  return trackerFetch(`${pathname}${qs ? "?" + qs : ""}`);
 }
 // single sign-on: a signed-in person is handed to the portal with a 2-minute token; the portal makes its own session from it
 app.get(["/go/tracker", "/admin/go/tracker", "/rep/go/tracker"], wrap(async (req, res) => {
@@ -3116,11 +3127,7 @@ admin.get("/hub/tracker-reps", owner, wrap(async (req, res) => {
 // Each rep's portal plan (quota, metric, counts rule, carry, commission, pay, territory) and the team quota rows, read and saved
 // through the apps' link, so the Team page is the one place for everything about a person.
 async function trackerSend(pathname, method, body) {
-  if (!HUB_SECRET || !TRACKER_URL) throw new Error("The portal isn't linked: set HUB_SECRET and TRACKER_URL on the host.");
-  const r = await fetch(`${TRACKER_URL}${pathname}`, { method, headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify(body || {}), signal: AbortSignal.timeout(12000) });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || `The portal answered ${r.status}`);
-  return j;
+  return trackerFetch(pathname, { method, body: JSON.stringify(body || {}) });
 }
 admin.get("/hub/plans", owner, wrap(async (req, res) => {
   try { res.json({ ok: true, ...(await trackerGet("/api/hub/plans")) }); } catch (e) { res.json({ ok: false, error: e.message, rows: [], counts: [] }); }
