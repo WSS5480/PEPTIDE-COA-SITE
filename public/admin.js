@@ -2539,11 +2539,11 @@ async function staff() {
   if (!isOwner()) return dashboard();
   const PLAN_ON = await api("/commissions/plan").then((j) => j.on).catch(() => false);
   const PORTAL = !!(HUB.linked && HUB.apps && HUB.apps.tracker);
-  const [{ users }, repStats, plans] = await Promise.all([api("/users"), api("/reps").then((j) => j.reps).catch(() => []), PORTAL ? api("/hub/plans").catch((e) => ({ ok: false, error: e.message, rows: [], counts: [] })) : Promise.resolve({ ok: false, rows: [], counts: [] })]);
+  const [{ users }, repStats, plans, portalReps] = await Promise.all([api("/users"), api("/reps").then((j) => j.reps).catch(() => []), PORTAL ? api("/hub/plans").catch((e) => ({ ok: false, error: e.message, rows: [], counts: [] })) : Promise.resolve({ ok: false, rows: [], counts: [] }), PORTAL ? api("/hub/tracker-reps").catch((e) => ({ ok: false, error: e.message, reps: [], accounts: [] })) : Promise.resolve({ ok: false, reps: [], accounts: [] })]);
   const statsBy = Object.fromEntries(repStats.map((r) => [r.id, r]));
   // each rep's portal plan row: matched by their login id, then by name
   const planOf = (u) => plans.rows.find((r) => r.role !== "Team" && r.hub === u.id) || plans.rows.find((r) => r.role !== "Team" && String(r.rep).trim().toLowerCase() === u.name.trim().toLowerCase()) || null;
-  users.forEach((u) => { u.st = statsBy[u.id] || null; u.plan = PORTAL && u.role === "rep" ? planOf(u) : null; });
+  users.forEach((u) => { u.st = statsBy[u.id] || null; u.plan = PORTAL && u.role === "rep" ? planOf(u) : null; u.portal = (portalReps.reps || []).find((r) => r.hub === u.id) || null; });
   const COUNTS = plans.counts && plans.counts.length ? plans.counts : ["All", "New only", "New + Existing", "Legacy only"];
   const COUNT_LABEL = { "New + Existing": "New + Existing (no legacy)", "New only": "New only", "Legacy only": "Legacy only", "All": "All (legacy too)" };
   const money0 = (n) => "$" + Number(n || 0).toLocaleString("en-US");
@@ -2591,7 +2591,7 @@ async function staff() {
         ${F("Cell phone", `<input data-k="phone" type="tel" value="${esc(u.phone || "")}">`)}
         ${F("Texts", `<label class="chk" data-texts${rep ? "" : " hidden"}><input type="checkbox" data-k="smsOn"${u.sms_on ? " checked" : ""}> Text their customers' orders to this cell</label><span class="muted" data-notexts${rep ? " hidden" : ""}>— (reps only)</span>`)}
         ${F("Commission", planPick(u, PLAN_ON, rep).replace("justify-content:flex-end", "justify-content:flex-start") + `<span class="muted" data-noplan${rep ? " hidden" : ""}>— (reps only)</span>`)}
-        ${F("PIN", `<input data-k="pin" inputmode="numeric" placeholder="${u.pin_set ? "Set · type to change" : "4–10 digits"}" title="Name + PIN sign-in on both apps">`)}
+        ${F("PIN", `<input data-k="pin" inputmode="numeric" placeholder="${u.pin_set ? "Set · type to change" : "4–10 digits"}" title="Name + PIN sign-in on both apps">${u.portal && u.portal.pinDup ? `<span class="muted" style="font-size:.78rem;color:#92400e">Also has an older portal PIN that still works. Set a PIN here and that becomes the only one.</span>` : ""}`)}
         ${F("New password", `<input data-k="password" type="password" placeholder="Leave blank to keep" autocomplete="new-password">`)}
         ${F("Apps", `<div class="row2" style="gap:.2rem 1rem;flex-wrap:wrap"><label class="chk"><input type="checkbox" data-app="store"${ap.store ? " checked" : ""}> Peptide store</label><label class="chk"><input type="checkbox" data-app="tracker"${ap.tracker ? " checked" : ""}> 360 Medical Portal</label></div>`)}
         ${F("Status", `<label class="chk"><input type="checkbox" data-k="active"${u.active ? " checked" : ""}${u.id === me.id ? " disabled" : ""}> Active</label>`)}
@@ -2719,28 +2719,35 @@ async function staff() {
     };
   };
   // reps that exist only in the portal (set up there before Team existed): give them a login, or take them out of the portal
-  api("/hub/tracker-reps").then((r) => {
-    const box = document.getElementById("trackerImport"); if (!box) return;
+  (() => {
+    const r = portalReps, box = document.getElementById("trackerImport"); if (!box || !PORTAL) return;
     if (!r.ok) { box.innerHTML = `<p class="muted">360 Medical Portal: ${esc(r.error)}</p>`; return; }
-    const missing = (r.reps || []).filter((t) => !users.some((u) => u.name.trim().toLowerCase() === String(t.rep).trim().toLowerCase()));
+    const have = (name) => users.some((u) => u.name.trim().toLowerCase() === String(name).trim().toLowerCase());
+    const missing = (r.reps || []).filter((t) => !have(t.rep)).map((t) => ({ kind: "rep", name: t.rep, pin: t.pin || "", active: t.active, email: `${String(t.rep).toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "")}@360medical.net`, guessed: true }));
+    for (const a of r.accounts || []) { // a portal sign-in account: its email is the real one for that rep's row, or a person of its own
+      const own = a.kind === "rep" && a.rep ? missing.find((m) => m.kind === "rep" && m.name.trim().toLowerCase() === String(a.rep).trim().toLowerCase()) : null;
+      if (own) { Object.assign(own, { email: a.email, guessed: false, acct: true, passkeys: a.passkeys }); continue; }
+      if (a.kind === "rep" && a.rep && have(a.rep)) continue; // that rep has a login already (under another email)
+      missing.push({ kind: a.kind === "rep" ? "rep" : "manager", name: a.kind === "rep" && a.rep ? a.rep : a.name, email: a.email, pin: "", active: true, passkeys: a.passkeys, acct: true, sameName: have(a.name) });
+    }
     if (!missing.length) return;
-    box.innerHTML = `<details class="panel" style="border-color:var(--blue)" open><summary><strong>In the portal only (${missing.length})</strong> <span class="muted">· reps without a login yet</span></summary>
-      <p class="muted">These reps were set up in the portal before Team existed. <strong>Add</strong> gives them one login for both apps (360 Medical Portal ticked, same PIN they use today; the email is only for email + password sign-in — change it if they have a real one). <strong>Remove</strong> takes them out of the portal's rep list; their logged cases stay.</p>
+    box.innerHTML = `<details class="panel" style="border-color:var(--blue)" open><summary><strong>In the portal only (${missing.length})</strong> <span class="muted">· people without a login here yet</span></summary>
+      <p class="muted">Set up in the portal before Team existed. <strong>Add login</strong> gives each one login for both apps: reps get the 360 Medical Portal ticked and keep the PIN they use today; a portal sign-in account keeps its email (and Face ID on their phone still works) — give them a password or PIN on their card after. <strong>Remove</strong> takes a rep out of the portal's rep list; their logged cases stay.</p>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr));gap:.6rem">
-      ${missing.map((t, i) => `<div style="border:1px solid var(--line);border-radius:10px;padding:.6rem .7rem"><strong>${esc(t.rep)}</strong>${t.active === false ? ' <span class="muted">(off)</span>' : ""}<label class="eyebrow" style="display:block;margin-top:.3rem">Email for their login</label><input data-imp="${i}" type="email" style="width:100%" value="${esc(String(t.rep).toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, ""))}@360medical.net">
-        <div class="row2" style="gap:.4rem;margin-top:.4rem"><button class="btn solid" type="button" data-impadd="${i}">Add login</button><button class="btn danger" type="button" data-imprm="${i}" title="Remove from the portal's rep list (their cases stay)">Remove</button></div></div>`).join("")}</div>
+      ${missing.map((t, i) => `<div style="border:1px solid var(--line);border-radius:10px;padding:.6rem .7rem"><strong>${esc(t.name)}</strong> <span class="pill">${t.kind === "rep" ? "Sales rep" : "Manager"}</span>${t.active === false ? ' <span class="muted">(off)</span>' : ""}${t.acct ? ` <span class="muted">· portal sign-in account${t.passkeys ? ` · ${t.passkeys} Face ID device${t.passkeys === 1 ? "" : "s"}` : ""}</span>` : ""}${t.sameName ? ` <div class="muted" style="font-size:.78rem;color:#92400e">A login with this name exists under another email — if it's the same person, skip this.</div>` : ""}<label class="eyebrow" style="display:block;margin-top:.3rem">Email for their login${t.guessed ? " (change it if they have a real one)" : ""}</label><input data-imp="${i}" type="email" style="width:100%" value="${esc(t.email)}">
+        <div class="row2" style="gap:.4rem;margin-top:.4rem"><button class="btn solid" type="button" data-impadd="${i}">Add login</button>${t.kind === "rep" && !t.acct ? `<button class="btn danger" type="button" data-imprm="${i}" title="Remove from the portal's rep list (their cases stay)">Remove</button>` : ""}</div></div>`).join("")}</div>
       ${missing.length > 1 ? `<div style="margin-top:.5rem"><button class="btn" type="button" id="impReps">Add all ${missing.length}</button></div>` : ""}</details>`;
     const addOne = async (i) => {
-      const email = (document.querySelector(`[data-imp="${i}"]`).value || "").trim(); if (!email) { toast("Enter an email for " + missing[i].rep); return false; }
-      try { await api("/users", { method: "POST", body: { name: missing[i].rep, email, password: "temp-" + Math.random().toString(36).slice(2, 10) + "A1", role: "rep", rate: "0", pin: missing[i].pin || "", apps: { store: false, tracker: true } } }); return true; } catch (e) { return false; }
+      const t = missing[i], email = (document.querySelector(`[data-imp="${i}"]`).value || "").trim(); if (!email) { toast("Enter an email for " + t.name); return false; }
+      try { await api("/users", { method: "POST", body: { name: t.name, email, password: "temp-" + Math.random().toString(36).slice(2, 10) + "A1", role: t.kind === "rep" ? "rep" : "staff", rate: "0", pin: t.pin || "", apps: { store: t.kind !== "rep", tracker: true } } }); return true; } catch (e) { return false; }
     };
     box.onclick = async (e) => {
       const a = e.target.closest("[data-impadd]"), rm = e.target.closest("[data-imprm]");
       if (a) { if (await addOne(+a.dataset.impadd)) { toast("Login added"); staff(); } return; }
-      if (rm) { const t = missing[+rm.dataset.imprm]; if (!confirm(`Remove ${t.rep} from the portal's rep list? Their logged cases stay.`)) return; try { await api("/hub/tracker-reps/" + encodeURIComponent(t.rep), { method: "DELETE" }); toast("Removed from the portal"); staff(); } catch (er) {} return; }
+      if (rm) { const t = missing[+rm.dataset.imprm]; if (!confirm(`Remove ${t.name} from the portal's rep list? Their logged cases stay.`)) return; try { await api("/hub/tracker-reps/" + encodeURIComponent(t.name), { method: "DELETE" }); toast("Removed from the portal"); staff(); } catch (er) {} return; }
       if (e.target.id === "impReps") { let n = 0; for (let i = 0; i < missing.length; i++) if (await addOne(i)) n++; toast(`Added ${n} login${n === 1 ? "" : "s"}`); staff(); }
     };
-  }).catch(() => {});
+  })();
 }
 
 /* ---------- account ---------- */

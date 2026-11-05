@@ -2908,6 +2908,19 @@ function hubVerify(token) {
 const hubAuth = (req, res, next) => { const t = /^Hub (.+)$/.exec(req.headers.authorization || ""); if (!HUB_SECRET || !t || !(hubVerify(t[1]) || {}).svc) return bad(res, "Hub signature missing or wrong", 401); next(); };
 const hubUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, phone: u.phone || "", sms_on: !!u.sms_on, pin_set: u.pin_set !== undefined ? !!u.pin_set : u.pin_hash !== undefined ? !!u.pin_hash : undefined, commission_rate: u.commission_rate, active: u.active, apps: appsOf(u), pin_version: u.pin_version || 0 });
 // the people the portal should know: everyone with the 360 Medical Portal box ticked
+// the portal retiring its own rep PINs: that PIN becomes the login's store PIN when the login has none (never overwrites one)
+app.post("/api/hub/set-pin", hubAuth, wrap(async (req, res) => {
+  const id = intOrNull(req.body?.id), pin = String(req.body?.pin || "").replace(/\D/g, "");
+  const { rows: [u] } = await q("select id, name, pin_hash from users where id = $1 and active", [id]);
+  if (!u) return bad(res, "No such login", 404);
+  if (pin.length < 4 || pin.length > 10) return bad(res, "A PIN is 4 to 10 digits.");
+  if (u.pin_hash) return res.json({ ok: true, kept: true, same: await bcrypt.compare(pin, u.pin_hash) }); // the login has a PIN already: say whether it is this one
+  const { rows: [other] } = await q("select 1 from customers where access_pin_key = $1", [customerPinKey(await pinState(), pin)]);
+  if (other || (await teamByPin(pin))) return res.json({ ok: false, clash: true, error: "That PIN is already used by someone else on the store" });
+  await q("update users set pin_hash = $1, pin_version = pin_version + 1 where id = $2", [await bcrypt.hash(pin, 11), id]);
+  console.log(`PIN for ${u.name} carried over from the portal`);
+  res.json({ ok: true, set: true });
+}));
 app.get("/api/hub/people", hubAuth, wrap(async (req, res) => {
   const { rows } = await q("select id, email, name, role, phone, sms_on, commission_rate, active, apps, pin_version, (pin_hash is not null) pin_set from users order by name");
   res.json({ people: rows.filter((u) => appsOf(u).tracker).map(hubUser), at: new Date().toISOString() });
