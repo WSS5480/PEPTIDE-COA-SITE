@@ -2066,7 +2066,8 @@ admin.post("/costs/add-missing", owner, wrap(async (req, res) => {
 // Product descriptions: seed/descriptions.json has one per catalog name (blends included). Fills products whose description is blank.
 // First line: what's in the vial ({size} = the product's size); then "- " lines = the benefit bullets shown on the store.
 const DESCRIPTIONS = (() => { try { return Object.fromEntries(Object.entries(JSON.parse(require("fs").readFileSync(path.join(__dirname, "seed", "descriptions.json"), "utf8"))).filter(([k]) => !k.startsWith("_")).map(([k, v]) => [k.split("|").map(normName).join("|"), v])); } catch (e) { console.error("seed/descriptions.json: " + e.message); return {}; } })();
-const descriptionFor = (name, strength) => (DESCRIPTIONS[normName(name) + "|" + normName(strength)] || DESCRIPTIONS[normName(name)] || "").replace(/\{size\}/g, String(strength || "").trim());
+// line 1 of a single-peptide entry ("<name> {size}") takes the product's own name, so a spelling found through another entry still reads as itself
+const descriptionFor = (name, strength) => (DESCRIPTIONS[normName(name) + "|" + normName(strength)] || DESCRIPTIONS[normName(name)] || "").replace(/^[^\n]*\{size\}(?=\n|$)/, `${String(name || "").trim()} {size}`).replace(/\{size\}/g, String(strength || "").trim());
 // A peptide the library doesn't know: Claude writes the description in the house format (ANTHROPIC_API_KEY on the host;
 // DESC_MODEL, default claude-sonnet-5-5). The answer is checked line by line, so the store only ever shows the standard shape.
 const DESC_MODEL = process.env.DESC_MODEL || process.env.READ_MODEL || "claude-sonnet-5-5";
@@ -2081,7 +2082,7 @@ async function writeDescription(name, strength) {
   const prompt = `Write the card text for the product "${name}" (vial size ${strength || "unknown"}) in exactly this shape:\n` +
     "Line 1: what is in the vial — the peptide name(s) with the amount, e.g. \"BPC-157 10 mg\"; for a blend list each peptide with its mg joined by \" + \" (use the known make-up of that blend; if the split isn't known, list the peptides without amounts).\n" +
     "Then exactly 4 lines, each starting with \"- \": one research focus or benefit each, 2 to 3 words, at most 22 characters, title-case first word only, no periods, no medical or treatment claims, no disease names, written like these examples:\n\n" + examples +
-    "\n\nIf the name is not a peptide or research compound you know, answer with just the word UNKNOWN.";
+    "\n\nThe store sells research peptides and related research compounds, so treat an unfamiliar name as one of those: write it from what the name tells you (an analog or modified form of a known peptide — e.g. a Semax or BPC analog — gets that peptide's research focus; a bioregulator-style name gets the organ it is named for). Answer with just the word UNKNOWN only when the name is clearly not a compound at all (a random word, a person, a piece of equipment).";
   const r = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" }, signal: AbortSignal.timeout(45000),
     body: JSON.stringify({ model: DESC_MODEL, max_tokens: 300, system, messages: [{ role: "user", content: prompt }] }) });
   const j = await r.json().catch(() => ({}));
