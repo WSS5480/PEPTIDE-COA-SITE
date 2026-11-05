@@ -340,7 +340,8 @@ async function showPayment(pay, email) {
   const elements = st.elements({ clientSecret: pay.clientSecret, ...(pay.customerSession ? { customerSessionClientSecret: pay.customerSession } : {}), fonts: [{ cssSrc: "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" }],
     appearance: { theme: "stripe", variables: { colorPrimary: v("--blue", "#0b4d96"), colorText: v("--ink", "#111827"), colorDanger: "#b91c1c", fontFamily: "Poppins, system-ui, sans-serif", fontSizeBase: "15px", borderRadius: "10px", spacingUnit: "4px" },
       rules: { ".Input": { padding: "12px", borderColor: v("--line-strong", "#cbd5e1") }, ".Input:focus": { boxShadow: `0 0 0 2px ${v("--blue", "#0b4d96")}` }, ".Tab": { borderRadius: "10px" }, ".Label": { fontWeight: "600", fontSize: "13px" } } } });
-  const el = elements.create("payment", { layout: "tabs" });
+  // Link (Stripe's wallet) is never shown: it remembers cards in the browser outside the store's sign-in
+  const el = elements.create("payment", { layout: "tabs", wallets: { link: "never" } });
   el.mount("#payEl");
   el.on("ready", () => { $("payBtn").disabled = false; });
   el.on("loaderror", (e) => fail((e.error && e.error.message) || "The payment form couldn't load. Try again in a moment."));
