@@ -332,7 +332,7 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
   const items = Array.isArray(b.items) ? b.items.slice(0, 50) : [];
   if (!items.length) return bad(res, "Your cart is empty.");
   // the order belongs to the signed-in customer, or to a customer with the same email; their sales rep gets the commission
-  let cust = await customerFrom(req);
+  let cust = await customerFrom(req); const me = cust; // `me` stays the signed-in customer (or null): saved cards follow the login, never an email match
   const markup = cust && cust.markup !== null ? Number(cust.markup) : null; // only a signed-in customer gets their own prices (that's what they saw)
   if (!cust) cust = (await q("select id, rep_id from customers where lower(email) = $1 and active", [email])).rows[0] || null;
   else cust.rep_id = (await q("select rep_id from customers where id = $1", [cust.id])).rows[0]?.rep_id ?? null;
@@ -345,8 +345,8 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
     if (payCard) {
       // in the store's own checkout (card form on the page) when the publishable key is set and the store asked for it;
       // otherwise the customer pays on Stripe's page. Either way the order is marked paid on confirmation and by the webhook.
-      if (b.inpage && STRIPE_PK) { const pay = await payIntentFor(r.id, "Customer"); return res.json({ ok: true, ...r, ...pay }); }
-      const payUrl = await payLinkFor(r.id, originOf(req), "Customer");
+      if (b.inpage && STRIPE_PK) { const pay = await payIntentFor(r.id, "Customer", me); return res.json({ ok: true, ...r, ...pay }); }
+      const payUrl = await payLinkFor(r.id, originOf(req), "Customer", me);
       return res.json({ ok: true, ...r, payUrl });
     }
     notifyOrder(r.id, "new").catch((e) => console.error("Order email failed:", e.message));
@@ -455,8 +455,9 @@ app.post("/api/orders/pay", limit("pay", 12, 15 * 60 * 1000), wrap(async (req, r
   const { rows: [o] } = await q("select id from orders where number = $1 and lower(email) = $2", [number, email]);
   if (!o) return bad(res, "No order matches that number and email.", 404);
   try {
-    if (req.body?.inpage && STRIPE_PK) return res.json({ ok: true, ...(await payIntentFor(o.id, "Customer")) });
-    res.json({ ok: true, payUrl: await payLinkFor(o.id, originOf(req), "Customer") });
+    const me = await customerFrom(req);
+    if (req.body?.inpage && STRIPE_PK) return res.json({ ok: true, ...(await payIntentFor(o.id, "Customer", me)) });
+    res.json({ ok: true, payUrl: await payLinkFor(o.id, originOf(req), "Customer", me) });
   } catch (e) { bad(res, e.message); }
 }));
 // The card form inside the store confirmed a payment: check it with Stripe and mark the order paid (the webhook does the same).
@@ -475,7 +476,23 @@ app.post("/api/pay/confirm", limit("payok", 30, 15 * 60 * 1000), wrap(async (req
 const originOf = (req) => `${req.protocol}://${req.get("host")}`;
 // Builds Stripe's hosted payment page for an unpaid order (items, shipping, any discount) and remembers the
 // session on the order. The order is marked paid when the customer returns, and again by the webhook (whichever is first).
-async function payLinkFor(orderId, origin, who) {
+/* Cards and the customer's login. Stripe's own wallet (Link) is never offered: it remembers a card in the browser and under an email,
+   outside the store's sign-in, so anyone on that device could reuse it. A card can only be saved by a customer who is signed in with
+   their PIN, and it is kept by Stripe under a Stripe customer record tied to that login (customers.stripe_customer_id). Saved cards show
+   only in that customer's own signed-in checkout (through a Stripe CustomerSession) and under My account, where they can be removed. */
+async function stripeCustomerFor(c) {
+  if (!stripe || !c) return null;
+  const { rows: [row] } = await q("select id, name, email, phone, stripe_customer_id from customers where id = $1", [c.id]);
+  if (!row) return null;
+  if (row.stripe_customer_id) return row.stripe_customer_id;
+  const sc = await stripe.customers.create({ name: row.name || undefined, email: isEmail(row.email || "") ? row.email : undefined, phone: row.phone || undefined, metadata: { storeCustomerId: String(row.id) } });
+  await q("update customers set stripe_customer_id = $1 where id = $2 and stripe_customer_id is null", [sc.id, row.id]);
+  const { rows: [again] } = await q("select stripe_customer_id from customers where id = $1", [row.id]); // two checkouts at once: keep the first
+  return again.stripe_customer_id || sc.id;
+}
+// the order belongs to the signed-in customer → their Stripe customer id; a guest, or someone else's order → null
+async function ownerStripeCustomer(o, cust) { return cust && o.customer_id && o.customer_id === cust.id ? stripeCustomerFor(cust) : null; }
+async function payLinkFor(orderId, origin, who, cust) {
   if (!stripe) throw new Error("Card payments aren't set up yet.");
   const { rows: [o] } = await q("select * from orders where id = $1", [orderId]);
   if (!o) throw new Error("Order not found.");
@@ -490,8 +507,10 @@ async function payLinkFor(orderId, origin, who) {
     const c = await stripe.coupons.create({ amount_off: Math.min(o.discount_cents, o.subtotal_cents), currency: "usd", duration: "once", name: `Discount on order ${o.number}`, max_redemptions: 1 });
     extra.discounts = [{ coupon: c.id }];
   }
+  const scus = await ownerStripeCustomer(o, cust);
   const session = await stripe.checkout.sessions.create({
-    mode: "payment", customer_email: o.email, client_reference_id: o.number,
+    mode: "payment", payment_method_types: ["card"], client_reference_id: o.number,
+    ...(scus ? { customer: scus, saved_payment_method_options: { payment_method_save: "enabled" } } : { customer_email: isEmail(o.email || "") ? o.email : undefined }),
     metadata: { orderId: String(o.id), number: o.number },
     payment_intent_data: { description: `${s.brand} order ${o.number}`, metadata: { orderId: String(o.id), number: o.number } },
     line_items, ...extra,
@@ -504,28 +523,60 @@ async function payLinkFor(orderId, origin, who) {
 }
 // The card form inside the store: a PaymentIntent for the order's total (reused while it is still open, so a customer who
 // comes back to an unpaid order doesn't leave half-made payments behind). Returns what the page needs to show the form.
-async function payIntentFor(orderId, who) {
+async function payIntentFor(orderId, who, cust) {
   if (!stripe) throw new Error("Card payments aren't set up yet.");
   const { rows: [o] } = await q("select * from orders where id = $1", [orderId]);
   if (!o) throw new Error("Order not found.");
   if (o.paid_at) throw new Error("This order is already paid.");
   if (o.status === "cancelled") throw new Error("This order was cancelled.");
   const s = await getSettings();
+  const scus = await ownerStripeCustomer(o, cust); // only the signed-in customer paying their own order
   let pi = o.stripe_pi ? await stripe.paymentIntents.retrieve(o.stripe_pi).catch(() => null) : null;
   if (pi && pi.status === "succeeded") { await markPaid(o, pi); throw new Error("This order is already paid."); }
   if (pi && ["canceled", "requires_capture"].includes(pi.status)) pi = null;
-  if (pi && pi.amount !== o.total_cents) pi = await stripe.paymentIntents.update(pi.id, { amount: o.total_cents }).catch(() => null);
+  if (pi && pi.customer && pi.customer !== scus) { await stripe.paymentIntents.cancel(pi.id).catch(() => {}); pi = null; } // started under another login: start over
+  if (pi) {
+    const fix = {};
+    if (pi.amount !== o.total_cents) fix.amount = o.total_cents;
+    if ((pi.automatic_payment_methods && pi.automatic_payment_methods.enabled) || (pi.payment_method_types || []).join() !== "card") fix.payment_method_types = ["card"];
+    if (scus && !pi.customer) fix.customer = scus;
+    if (Object.keys(fix).length) pi = await stripe.paymentIntents.update(pi.id, fix).catch(() => null);
+  }
   if (!pi) {
     pi = await stripe.paymentIntents.create({
-      amount: o.total_cents, currency: "usd", automatic_payment_methods: { enabled: true },
+      amount: o.total_cents, currency: "usd", payment_method_types: ["card"], ...(scus ? { customer: scus } : {}),
       description: `${s.brand} order ${o.number}`, receipt_email: isEmail(o.email || "") ? o.email : undefined,
       metadata: { orderId: String(o.id), number: o.number }
     });
     await q("update orders set stripe_pi = $1, updated_at = now() where id = $2", [pi.id, o.id]);
     await q("insert into order_events(order_id, who, text) values ($1, $2, $3)", [o.id, who || "Stripe", "Card payment started in the store"]);
   }
-  return { clientSecret: pi.client_secret, pi: pi.id, amountCents: o.total_cents, number: o.number };
+  // the signed-in customer's own checkout: their saved cards show, and a "save this card" box — both tied to this login only
+  let customerSession = null;
+  if (scus) {
+    const cs = await stripe.customerSessions.create({ customer: scus, components: { payment_element: { enabled: true, features: { payment_method_redisplay: "enabled", payment_method_redisplay_limit: 5, payment_method_save: "enabled", payment_method_save_usage: "off_session", payment_method_remove: "enabled" } } } });
+    customerSession = cs.client_secret;
+  }
+  return { clientSecret: pi.client_secret, customerSession, saved: !!scus, pi: pi.id, amountCents: o.total_cents, number: o.number };
 }
+// Saved cards under My account (signed-in customers only): list, and take one off
+app.get("/api/account/cards", wrap(async (req, res) => {
+  const c = await customerFrom(req); if (!c) return bad(res, "Sign in first.", 401);
+  const { rows: [row] } = await q("select stripe_customer_id from customers where id = $1", [c.id]);
+  if (!stripe || !row || !row.stripe_customer_id) return res.json({ cards: [] });
+  const list = await stripe.paymentMethods.list({ customer: row.stripe_customer_id, type: "card", limit: 10 });
+  res.json({ cards: (list.data || []).map((m) => ({ id: m.id, brand: m.card ? m.card.brand : "card", last4: m.card ? m.card.last4 : "", exp: m.card ? `${String(m.card.exp_month).padStart(2, "0")}/${String(m.card.exp_year).slice(-2)}` : "" })) });
+}));
+app.delete("/api/account/cards/:id", wrap(async (req, res) => {
+  const c = await customerFrom(req); if (!c) return bad(res, "Sign in first.", 401);
+  const { rows: [row] } = await q("select stripe_customer_id from customers where id = $1", [c.id]);
+  const id = str(req.params.id, 80);
+  if (!stripe || !row || !row.stripe_customer_id || !/^pm_[A-Za-z0-9_]+$/.test(id)) return bad(res, "That card isn't on your account.", 404);
+  const pm = await stripe.paymentMethods.retrieve(id).catch(() => null);
+  if (!pm || pm.customer !== row.stripe_customer_id) return bad(res, "That card isn't on your account.", 404); // never someone else's
+  await stripe.paymentMethods.detach(id);
+  res.json({ ok: true });
+}));
 // Records a Stripe payment once (safe to call from the return page, the in-store confirmation and the webhook).
 // `session` is a Checkout Session (hosted page) or a PaymentIntent (card form in the store).
 async function markPaid(o, session) {

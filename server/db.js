@@ -239,6 +239,7 @@ alter table customers add column if not exists markup numeric(6,2);
 alter table customers add column if not exists company text not null default '';  -- business / clinic name
 alter table customers add column if not exists invite_sent_at timestamptz;          -- the last welcome / PIN invite email
 alter table customers add column if not exists invite_count int not null default 0;
+alter table customers add column if not exists stripe_customer_id text;              -- Stripe's record for this login: saved cards live there, shown only to this signed-in customer
 alter table customer_sessions add column if not exists seen timestamptz not null default now();
 alter table sessions add column if not exists seen timestamptz not null default now();
 alter table orders add column if not exists price_markup numeric(6,2);

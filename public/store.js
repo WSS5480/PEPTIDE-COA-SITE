@@ -329,14 +329,15 @@ async function showPayment(pay, email) {
     <div id="payEl"><p class="dist">Loading the secure payment form…</p></div>
     <div class="err" id="payErr" hidden></div>
     <button class="btn solid wide" type="button" id="payBtn" disabled>Pay ${esc(amount)}</button>
-    <p class="dist">Secure payment through Stripe — your card number goes to Stripe, never to us. Not ready? <button class="linkbtn" type="button" id="payLater">Pay later</button>: your order is saved, and you can pay under "Check an order" with your order number and email.</p>`;
+    <p class="dist">Secure payment through Stripe — your card number goes to Stripe, never to us. ${pay.saved ? "Tick \"save\" and the card is kept under your account only: it shows here when you're signed in, and you can remove it under My account." : "Nothing about your card is kept after this payment."} Not ready? <button class="linkbtn" type="button" id="payLater">Pay later</button>: your order is saved, and you can pay under "Check an order" with your order number and email.</p>`;
   openD($("checkout"));
   const fail = (m) => { $("payErr").textContent = m; $("payErr").hidden = false; };
   $("payLater").onclick = () => { closeD($("checkout")); toast(`Order ${pay.number} is saved. Pay any time under "Check an order".`, 6000); };
   try { await loadStripeJs(); } catch (e) { return fail(e.message); }
   const st = window.Stripe(S.stripePk);
   const css = getComputedStyle(document.documentElement), v = (k, d) => (css.getPropertyValue(k) || "").trim() || d;
-  const elements = st.elements({ clientSecret: pay.clientSecret, fonts: [{ cssSrc: "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" }],
+  // a signed-in customer's own order: their saved cards and a "save this card" box, tied to their login (a Stripe CustomerSession); guests get a plain card form
+  const elements = st.elements({ clientSecret: pay.clientSecret, ...(pay.customerSession ? { customerSessionClientSecret: pay.customerSession } : {}), fonts: [{ cssSrc: "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" }],
     appearance: { theme: "stripe", variables: { colorPrimary: v("--blue", "#0b4d96"), colorText: v("--ink", "#111827"), colorDanger: "#b91c1c", fontFamily: "Poppins, system-ui, sans-serif", fontSizeBase: "15px", borderRadius: "10px", spacingUnit: "4px" },
       rules: { ".Input": { padding: "12px", borderColor: v("--line-strong", "#cbd5e1") }, ".Input:focus": { boxShadow: `0 0 0 2px ${v("--blue", "#0b4d96")}` }, ".Tab": { borderRadius: "10px" }, ".Label": { fontWeight: "600", fontSize: "13px" } } } });
   const el = elements.create("payment", { layout: "tabs" });
@@ -361,6 +362,18 @@ async function showPayment(pay, email) {
       $("coDone").innerHTML = `<div class="sectionhead" style="padding:0"><h2>Payment started</h2><button class="btn" type="button" data-close>Close</button></div><div class="okbox"><span class="eyebrow">Order ${esc(pay.number)}</span><span>Your payment is being processed. The order shows as paid as soon as it clears — check it any time under "Check an order".</span></div>`;
     } catch (x) { fail("Couldn't reach the store. Check your connection and try again."); btn.disabled = false; btn.textContent = `Pay ${amount}`; }
   };
+}
+
+// cards a signed-in customer saved at checkout: kept by Stripe under this login only; removable here
+async function loadCards() {
+  const box = $("acCards"); if (!box) return;
+  try {
+    const j = await (await fetch("/api/account/cards", { credentials: "same-origin" })).json();
+    const cards = j.cards || [];
+    box.innerHTML = `<span class="eyebrow">Saved cards</span>${cards.length ? cards.map((c) => `<div class="row2" style="align-items:center;justify-content:space-between;padding:.35rem 0"><span>${esc((c.brand || "Card").replace(/^\w/, (m) => m.toUpperCase()))} •••• ${esc(c.last4)}${c.exp ? ` · exp ${esc(c.exp)}` : ""}</span><button class="btn" type="button" style="height:2rem;padding:0 .7rem;font-size:.82rem" data-rmcard="${esc(c.id)}">Remove</button></div>`).join("")
+      : `<p class="dist">No saved cards. At checkout, tick "save" to keep a card here — it's held by Stripe under your account only, and only shows when you're signed in.</p>`}`;
+    box.querySelectorAll("[data-rmcard]").forEach((b) => { b.onclick = async () => { if (!confirm("Remove this card from your account?")) return; b.disabled = true; try { await post("/api/account/cards/" + encodeURIComponent(b.dataset.rmcard), {}, "DELETE"); toast("Card removed"); loadCards(); } catch (x) { toast(x.message); b.disabled = false; } }; });
+  } catch (e) { box.innerHTML = `<span class="eyebrow">Saved cards</span><p class="dist">Couldn't load saved cards right now.</p>`; }
 }
 
 /* ---------- lab report library ---------- */
@@ -568,8 +581,10 @@ function acctView(mode) {
         ${o.canPay ? `<span><button class="btn solid" type="button" data-payorder="${esc(o.number)}">Pay now by card</button></span>` : ""}</div>`).join("") : `<p class="dist">No orders yet.</p>`}</div>`
     : `<form id="acForm" class="stack"><div class="grid2">${fld("mN", "Full name", "text", "name", ME.name)}${fld("mPh", "Phone", "tel", "tel", ME.phone)}</div>
       <div class="grid2">${fld("m1", "Street address", "text", "address-line1", a.line1)}${fld("m2", "Apt, suite", "text", "address-line2", a.line2)}${fld("mC", "City", "text", "address-level2", a.city)}${fld("mS", "State", "text", "address-level1", a.state)}${fld("mZ", "ZIP", "text", "postal-code", a.zip)}</div>
-      <div class="err" id="acErr" hidden></div><button class="btn solid wide">Save</button></form>`}`;
+      <div class="err" id="acErr" hidden></div><button class="btn solid wide">Save</button></form>
+      ${S.cardPayments && S.stripePk ? `<div id="acCards" style="margin-top:.8rem;padding-top:.8rem;border-top:1px solid var(--line)"><span class="eyebrow">Saved cards</span><p class="dist">Loading…</p></div>` : ""}`}`;
   $("acOut").onclick = async () => { await post("/api/account/logout", {}); await loadAccount(); await load(); toast("Signed out"); closeD($("acct")); };
+  if (tab === "details" && $("acCards")) loadCards();
   if (tab === "details") $("acForm").onsubmit = async (e) => {
     e.preventDefault();
     try {
