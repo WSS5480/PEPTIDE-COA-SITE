@@ -339,10 +339,12 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
   const markup = cust && cust.markup !== null ? Number(cust.markup) : null; // only a signed-in customer gets their own prices (that's what they saw)
   if (!cust && office && b.customerId !== undefined) {
     const pick = intOrNull(b.customerId);
-    if (pick) { cust = (await q("select id, rep_id from customers where id = $1 and active", [pick])).rows[0] || null; if (!cust) return bad(res, "That customer is no longer on file. Pick again."); }
+    if (pick) { cust = (await q("select id, rep_id, approved, name from customers where id = $1 and active", [pick])).rows[0] || null; if (!cust) return bad(res, "That customer is no longer on file. Pick again."); }
     else cust = null; // walk-in
-  } else if (!cust) cust = (await q("select id, rep_id from customers where lower(email) = $1 and active", [email])).rows[0] || null;
+  } else if (!cust) cust = (await q("select id, rep_id, approved, name from customers where lower(email) = $1 and active", [email])).rows[0] || null;
   else cust.rep_id = (await q("select rep_id from customers where id = $1", [cust.id])).rows[0]?.rep_id ?? null;
+  // a customer a rep added waits for the owner's approval and pricing before any order goes on their account
+  if (cust && cust.approved === false) return bad(res, me ? "Your account is waiting for approval. We'll let you know as soon as you can order." : office ? `${cust.name} is waiting for approval and pricing — approve them under Customers first, or place this as a walk-in.` : "This email belongs to an account that's waiting for approval. We'll let you know as soon as it's ready.");
   const placedBy = staff ? `${staff.role === "owner" ? "Owner" : staff.role === "rep" ? "Rep" : "Staff"}: ${staff.name}` : house ? "Office" : "Customer";
   const forWhom = office && cust ? ` for customer #${cust.id}` : office ? " (walk-in, no customer account)" : "";
   const payCard = b.pay === "card";
@@ -931,7 +933,7 @@ async function houseFrom(req) {
 async function customerFrom(req) {
   const token = parseCookies(req.headers.cookie).cid;
   if (!token) return null;
-  const { rows } = await q("select c.id, c.email, c.name, c.phone, c.address, c.markup, s.seen from customer_sessions s join customers c on c.id = s.customer_id where s.token = $1 and s.expires > now() and c.active", [token]);
+  const { rows } = await q("select c.id, c.email, c.name, c.phone, c.address, c.markup, c.approved, s.seen from customer_sessions s join customers c on c.id = s.customer_id where s.token = $1 and s.expires > now() and c.active", [token]);
   if (!rows[0]) return null;
   if (!(await touchSession("customer_sessions", token, rows[0].seen, await idleMinutes("custIdleMin")))) return null;
   delete rows[0].seen; return rows[0];
@@ -1945,6 +1947,17 @@ admin.get("/pin-requests", wrap(async (req, res) => {
   const { rows } = await q("select r.*, c.name customer_name from pin_requests r left join customers c on c.id = r.customer_id where r.status = 'new' or r.created_at > now() - interval '14 days' order by (r.status = 'new') desc, r.created_at desc limit 100");
   res.json({ requests: rows });
 }));
+// A customer a rep added: the owner approves them with their pricing (store prices, or cost plus a markup). Orders wait until then.
+admin.post("/customers/:id/approve", owner, wrap(async (req, res) => {
+  const id = intOrNull(req.params.id), b = req.body || {};
+  const { rows: [c] } = await q("select id, name, approved, rep_id, (select name from users where id = customers.rep_id) rep_name from customers where id = $1", [id]);
+  if (!c) return bad(res, "Customer not found", 404);
+  const m = b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup);
+  if (b.markup !== "" && b.markup !== null && b.markup !== undefined && m === null) return bad(res, "Enter the markup as a percent, like 35");
+  await q("update customers set markup = $1, approved = true, approved_at = now(), approved_by = $3 where id = $2", [m, id, req.user.name || req.user.email]);
+  console.log(`Customer "${c.name}" approved by ${req.user.name || req.user.email} (${m === null ? "store prices" : `cost +${m}%`})`);
+  res.json({ ok: true, markup: m });
+}));
 // Approve: make the customer (name, email, phone, optional rep + pricing); the screen then gives the PIN.
 admin.post("/pin-requests/:id/approve", owner, wrap(async (req, res) => {
   const { rows: [r] } = await q("select * from pin_requests where id = $1", [intOrNull(req.params.id)]);
@@ -1973,7 +1986,7 @@ admin.post("/pin-requests/:id/dismiss", owner, wrap(async (req, res) => {
 /* ---------- admin: customers ---------- */
 admin.get("/customers", wrap(async (req, res) => {
   const term = str(req.query.q, 80).toLowerCase();
-  const { rows } = await q(`select c.id, c.name, c.company, c.email, c.phone, c.sms_ok, c.active, c.created_at, c.markup, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.invite_sent_at, c.invite_count, c.rep_id, (select name from users where id = c.rep_id) rep_name,
+  const { rows } = await q(`select c.id, c.name, c.company, c.email, c.phone, c.sms_ok, c.active, c.created_at, c.markup, c.approved, c.approved_at, c.approved_by, c.created_by, (c.access_pin_key is not null) has_pin, c.pin_set_at, c.pin_used_at, c.invite_sent_at, c.invite_count, c.rep_id, (select name from users where id = c.rep_id) rep_name,
       count(o.id) filter (where o.status <> 'cancelled')::int orders, coalesce(sum(o.total_cents) filter (where o.status in ('paid','shipped','delivered')), 0)::int spent_cents,
       coalesce(sum(o.total_cents) filter (where o.status <> 'cancelled'), 0)::int total_cents, coalesce(sum(o.total_cents) filter (where o.status <> 'cancelled' and o.paid_at is null), 0)::int open_cents,
       max(o.created_at) filter (where o.status <> 'cancelled') last_order,
@@ -1989,14 +2002,24 @@ admin.post("/customers", (req, res, next) => (isRep(req) ? next() : owner(req, r
   if (email && !isEmail(email)) return bad(res, "That email doesn't look right. Leave it blank if they don't have one.");
   if (email) { const { rows: [ex] } = await q("select id from customers where lower(email) = $1", [email]); if (ex) return bad(res, "A customer with that email already exists."); }
   // they sign in with the PIN you give them; this random password is never shown to anyone
-  if (isRep(req)) { b.repId = req.user.id; b.markup = ""; } // a rep's new customer is theirs; pricing is set by the owner
+  if (isRep(req)) { b.repId = req.user.id; b.markup = ""; } // a rep's new customer is theirs; pricing is set by the owner, who approves them first
   const repId = intOrNull(b.repId) && (await q("select 1 from users where id = $1 and role = 'rep'", [intOrNull(b.repId)])).rows.length ? intOrNull(b.repId) : null;
-  const { rows: [c] } = await q("insert into customers(email, name, company, phone, address, pass_hash, rep_id, markup) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id",
-    [email || null, str(b.name, 120), str(b.company, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId, b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup)]);
+  const pending = isRep(req), by = req.user.name || req.user.email;
+  const { rows: [c] } = await q("insert into customers(email, name, company, phone, address, pass_hash, rep_id, markup, approved, approved_at, approved_by, created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id",
+    [email || null, str(b.name, 120), str(b.company, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId, b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup), !pending, pending ? null : new Date(), pending ? "" : by, by]);
   if (email) await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
+  if (pending) { // the office approves and sets pricing before any order can be placed for them
+    const s = await getSettings(), name = str(b.name, 120), company = str(b.company, 120);
+    console.log(`Customer "${name}" added by rep ${by} — waiting for approval`);
+    if (s.pushOn !== false && s.pushOrderOffice !== false) pushOffice({ title: `New customer to approve · ${name}`, body: `Added by ${by}${company ? ` · ${company}` : ""} — set their pricing to approve`, url: "/admin#customers", tag: `custok-${c.id}` }, s).catch(() => {});
+    if (s.orderEmailOn && isEmail(s.orderEmail || "")) {
+      const text = [`${by} added a customer: ${name}${company ? ` (${company})` : ""}`, email ? `Email: ${email}` : "", b.phone ? `Phone: ${str(b.phone, 40)}` : "", "", "No orders can be placed for them until you approve them and set their pricing.", BASE_URL ? `Customers in admin: ${BASE_URL}/admin#customers` : ""].filter((x) => x !== "").join("\n");
+      mail.send({ to: s.orderEmail, subject: `Customer to approve · ${name}`, text, html: emailHtml(s, { eyebrow: "Store admin", kicker: "New customer", title: name, badge: { text: "Waiting for approval", tone: "info" }, intro: `${by} added ${name}${company ? ` from ${company}` : ""} as a customer. No orders can be placed for them until you approve them and set their pricing (store prices, or cost plus a markup).`, button: BASE_URL ? { text: "Open Customers", url: `${BASE_URL}/admin#customers` } : null, footer: `Sent to the store's order email. Turn these off under Email & approvals.` }) }, s).catch((e) => console.error("Customer-approval email failed:", e.message));
+    }
+  }
   let pin = null;
   if (!isRep(req) && b.givePin) { try { pin = await assignCustomerPin(c.id, b.pin); } catch (e) { return res.json({ ok: true, id: c.id, pinError: e.message }); } } // the customer is saved either way; the PIN can be given from their row
-  res.json({ ok: true, id: c.id, pin });
+  res.json({ ok: true, id: c.id, pin, pending });
 }));
 // give a customer a PIN (typed, 4 to 8 digits, or made up): returns the pin or throws a message
 async function assignCustomerPin(id, wanted) {
@@ -2086,8 +2109,10 @@ admin.patch("/customers/:id", (req, res, next) => (isRep(req) ? next() : owner(r
   if (req.body?.markup !== undefined) {
     const m = req.body.markup === "" || req.body.markup === null ? null : markupOf(req.body.markup);
     if (req.body.markup !== "" && req.body.markup !== null && m === null) return bad(res, "Enter the markup as a percent, like 35");
-    await q("update customers set markup = $1 where id = $2", [m, id]);
-    return res.json({ ok: true, markup: m });
+    const { rows: [was] } = await q("select approved, name from customers where id = $1", [id]);
+    await q("update customers set markup = $1, approved = true, approved_at = coalesce(approved_at, now()), approved_by = case when approved then approved_by else $3 end where id = $2", [m, id, req.user.name || req.user.email]);
+    if (was && !was.approved) console.log(`Customer "${was.name}" approved by ${req.user.name || req.user.email} (${m === null ? "store prices" : `cost +${m}%`})`);
+    return res.json({ ok: true, markup: m, approved: true });
   }
   const active = req.body?.active !== false;
   await q("update customers set active = $1 where id = $2", [active, id]);
@@ -3270,7 +3295,7 @@ rep.get("/me", wrap(async (req, res) => {
   res.json({ rep: u, customers: c.n, totals: commTotals(rows), month: { orders: month.length, sales: month.reduce((t, r) => t + r.subtotal_cents - r.discount_cents, 0), commission: month.reduce((t, r) => t + r.commission_cents, 0) }, brand: s.brand });
 }));
 rep.get("/customers", wrap(async (req, res) => {
-  const { rows } = await q(`select c.id, c.name, c.company, c.email, c.phone, c.address, c.created_at, c.active, c.markup,
+  const { rows } = await q(`select c.id, c.name, c.company, c.email, c.phone, c.address, c.created_at, c.active, c.markup, c.approved,
       (select count(*)::int from orders o where o.customer_id = c.id and o.status <> 'cancelled') orders,
       coalesce((select sum(o.subtotal_cents - o.discount_cents) from orders o where o.customer_id = c.id and o.status <> 'cancelled'), 0)::int sales_cents,
       (select max(created_at) from orders o where o.customer_id = c.id) last_order
@@ -3309,8 +3334,9 @@ rep.get("/catalog", wrap(async (req, res) => { // reps order from what's on the 
 }));
 rep.post("/orders", wrap(async (req, res) => {
   const b = req.body || {};
-  const { rows: [c] } = await q("select id, name, email, phone, address, markup from customers where id = $1 and rep_id = $2 and active", [intOrNull(b.customerId), req.repId]);
+  const { rows: [c] } = await q("select id, name, email, phone, address, markup, approved from customers where id = $1 and rep_id = $2 and active", [intOrNull(b.customerId), req.repId]);
   if (!c) return bad(res, "Pick one of your customers.");
+  if (!c.approved) return bad(res, `${c.name} is waiting for the office to approve them and set their pricing. You can place the order once that's done.`);
   const items = (Array.isArray(b.items) ? b.items : []).filter((i) => intOrNull(i.qty) > 0).slice(0, 100);
   if (!items.length) return bad(res, "Add at least one product.");
   const a = c.address || {};

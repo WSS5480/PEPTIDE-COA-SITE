@@ -850,8 +850,9 @@ async function customers() {
     <div class="filters" style="flex-wrap:wrap;gap:.5rem"><input id="cq" type="search" placeholder="Search customers">
       ${isRep() ? "" : `<select id="cRep"><option value="">All reps</option><option value="none">No rep</option></select>`}
       <select id="cMonth" title="Month the customer was added"><option value="">Added: any month</option></select>
-      <select id="cBuy"><option value="">Any orders</option><option value="buyers">Have ordered</option><option value="none">Never ordered</option><option value="open">Owes a balance</option></select>
+      <select id="cBuy"><option value="">Any orders</option><option value="buyers">Have ordered</option><option value="none">Never ordered</option><option value="open">Owes a balance</option><option value="pending">Waiting for approval</option></select>
       <select id="cSort">${[["created", "Newest added"], ["spend", "Total sales"], ["orders", "Total orders"], ["vials", "Vials"], ["paid", "Paid total"], ["open", "Open balance"], ["last", "Last order"], ["name", "Name A–Z"]].map(([k, l]) => `<option value="${k}">Sort: ${l}</option>`).join("")}</select></div>
+    <div id="cPending" hidden style="margin:.4rem 0;padding:.6rem .8rem;border:1px solid #f59e0b;border-radius:10px;background:#fffbeb;color:#78350f"></div>
     <div class="row2" style="justify-content:space-between;align-items:center"><p class="muted" id="cSum" style="margin:0"></p><button class="btn" type="button" id="cAll">Expand all</button></div>
     <div class="tblwrap" id="ct"><p class="muted">Loading…</p></div>`;
   let term = "";
@@ -864,7 +865,9 @@ async function customers() {
   const markupCell = (c) => {
     const cur = c.markup === null || c.markup === undefined ? "" : String(Number(c.markup));
     const custom = cur !== "" && !MK.includes(cur);
-    if (!isOwner()) return cur ? `+${esc(cur)}% over cost` : "Store prices";
+    if (!isOwner()) return (cur ? `+${esc(cur)}% over cost` : "Store prices") + (c.approved === false ? ` <span class="pill" style="background:#fde68a;color:#78350f">waiting for approval</span>` : "");
+    if (c.approved === false) return `<div class="row2" style="flex-wrap:wrap;gap:.4rem;align-items:center"><span class="pill" style="background:#fde68a;color:#78350f">Waiting for approval</span><span class="muted" style="font-size:.8rem">added by ${esc(c.created_by || "a rep")} · pick their pricing and approve</span></div>
+      <div class="row2" style="flex-wrap:nowrap;margin-top:.3rem"><select data-approve-mk style="min-width:7.5rem"><option value="">Store prices</option>${MK.map((m) => `<option value="${m}">+${m}%</option>`).join("")}<option value="custom">Custom…</option></select><input data-approve-custom inputmode="decimal" placeholder="%" style="width:4.5rem" hidden><button class="btn solid" type="button" data-approve="${c.id}">Approve</button></div>`;
     return `<div class="row2" style="flex-wrap:nowrap"><select data-markup style="min-width:7.5rem" title="What this customer pays: our cost plus this markup"><option value="">Store prices</option>${MK.map((m) => `<option value="${m}"${cur === m ? " selected" : ""}>+${m}%</option>`).join("")}<option value="custom"${custom ? " selected" : ""}>Custom…</option></select><input data-markup-custom inputmode="decimal" value="${custom ? esc(cur) : ""}" placeholder="%" style="width:4.5rem"${custom ? "" : " hidden"}></div>`;
   };
   const pinCell = (c) => {
@@ -906,7 +909,7 @@ async function customers() {
   const SORTS = { created: (c) => new Date(c.created_at).getTime(), spend: (c) => c.total_cents, orders: (c) => c.orders, vials: (c) => c.vials, paid: (c) => c.spent_cents, open: (c) => c.open_cents, last: (c) => (c.last_order ? new Date(c.last_order).getTime() : 0), name: (c) => (c.name || c.email || "").toLowerCase() };
   const view = (all) => {
     let l = all.filter((c) => (!st.rep || (st.rep === "none" ? !c.rep_id : String(c.rep_id) === st.rep)) && (!st.month || ym(c.created_at) === st.month)
-      && (!st.buy || (st.buy === "buyers" ? c.orders > 0 : st.buy === "none" ? !c.orders : c.open_cents > 0)));
+      && (!st.buy || (st.buy === "buyers" ? c.orders > 0 : st.buy === "none" ? !c.orders : st.buy === "pending" ? c.approved === false : c.open_cents > 0)));
     const key = SORTS[st.sort] || SORTS.created, asc = st.dir ? st.dir === "asc" : st.sort === "name";
     l.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * (asc ? 1 : -1); });
     return l;
@@ -920,6 +923,7 @@ async function customers() {
     const rs = document.getElementById("cRep"); if (rs) rs.innerHTML = `<option value="">All reps</option><option value="none"${st.rep === "none" ? " selected" : ""}>No rep</option>` + repList.map((r) => `<option value="${r.id}"${st.rep === String(r.id) ? " selected" : ""}>${esc(r.name)}${r.active ? "" : " (off)"}</option>`).join("");
     document.getElementById("cBuy").value = st.buy; document.getElementById("cSort").value = st.sort;
     const list = view(all);
+    { const n = all.filter((c) => c.approved === false).length, w = document.getElementById("cPending"); if (w) { w.hidden = !n; w.innerHTML = n ? `<strong>${n} customer${n === 1 ? "" : "s"} waiting for approval</strong> — added by a rep; no orders can be placed for them until you set their pricing. <button class="linkbtn" type="button" id="cShowPending">Show them</button>` : ""; const sb = document.getElementById("cShowPending"); if (sb) sb.onclick = () => { st.buy = "pending"; document.getElementById("cBuy").value = "pending"; save(); load(); }; } }
     document.getElementById("cSum").textContent = list.length ? `${list.length} customer${list.length === 1 ? "" : "s"}${list.length !== all.length ? ` of ${all.length}` : ""} · ${list.reduce((t, c) => t + c.orders, 0)} orders · ${list.reduce((t, c) => t + c.vials, 0)} vials · ${money(list.reduce((t, c) => t + c.total_cents, 0))} sales · ${money(list.reduce((t, c) => t + c.spent_cents, 0))} paid · ${money(list.reduce((t, c) => t + c.open_cents, 0))} open` : "";
     const acts = isOwner() ? `<button class="btn" data-corder>New order</button><button class="btn" data-cedit>Edit</button><button class="btn danger" data-cdel>Delete</button>` : isRep() ? `<button class="btn" data-corder>New order</button><button class="btn" data-cedit>Edit</button>` : `<button class="btn" data-corder>New order</button>`;
     const det = (lab, html) => `<div><div class="eyebrow" style="margin-bottom:.2rem">${lab}</div>${html}</div>`;
@@ -1054,6 +1058,15 @@ async function customers() {
     const link = e.target.closest("[data-cust-orders]");
     if (link) { e.preventDefault(); oFilter = { status: "", q: link.dataset.custOrders }; go("orders"); return; }
     const tr = e.target.closest("tr[data-cid]");
+    const ap = e.target.closest("[data-approve]");
+    if (ap) {
+      const sel = ap.parentElement.querySelector("[data-approve-mk]"), cu = ap.parentElement.querySelector("[data-approve-custom]");
+      const mk = sel.value === "custom" ? cu.value.trim() : sel.value;
+      if (sel.value === "custom" && !(parseFloat(mk) >= 0)) return toast("Enter the custom markup as a percent, like 35");
+      ap.disabled = true;
+      try { await api(`/customers/${ap.dataset.approve}/approve`, { method: "POST", body: { markup: mk } }); toast(`Approved · ${mk ? `pays cost +${mk}%` : "pays store prices"}`); load(); } catch (x) { ap.disabled = false; }
+      return;
+    }
     if (tr && e.target.closest("[data-corder]")) { pickCustomer = +tr.dataset.cid; go("neworder"); return; }
     if (tr && e.target.closest("[data-cedit]")) { const c = lastList.find((x) => String(x.id) === tr.dataset.cid); if (c) editForm(c); return; }
     if (tr && e.target.closest("[data-cdel]")) {
@@ -1075,6 +1088,8 @@ async function customers() {
     if (box) { await api("/customers/" + box.closest("tr").dataset.cid, { method: "PATCH", body: { active: box.checked } }); toast(box.checked ? "Account turned on" : "Account turned off"); }
   };
   document.getElementById("ct").onchange = async (e) => {
+    const amk = e.target.closest("[data-approve-mk]");
+    if (amk) { const inp = amk.parentElement.querySelector("[data-approve-custom]"); inp.hidden = amk.value !== "custom"; if (amk.value === "custom") inp.focus(); return; }
     const mk = e.target.closest("[data-markup]");
     if (mk) {
       const inp = mk.parentElement.querySelector("[data-markup-custom]");

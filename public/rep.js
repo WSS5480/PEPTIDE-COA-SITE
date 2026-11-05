@@ -138,7 +138,7 @@ async function customers(editId) {
     const t = ($("cq").value || "").toLowerCase();
     const rows = list.filter((c) => !t || [c.name, c.company, c.email, c.phone].join(" ").toLowerCase().includes(t));
     $("cList").innerHTML = rows.length ? rows.map((c) => `<div class="item" data-cid="${c.id}"><div class="top2"><span>${esc(c.name)}${c.company ? ` <span class="muted">· ${esc(c.company)}</span>` : ""}</span><span>${c.orders ? money(c.sales_cents) : ""}</span></div>
-      <small>${esc(c.email || "no email")}${c.phone ? " · " + esc(c.phone) : ""}${c.markup !== null && c.markup !== undefined ? ` · markup +${Number(c.markup)}% over cost` : ""}</small><small>${[a(c).city, a(c).state].filter(Boolean).join(", ")}${c.orders ? ` · ${c.orders} order${c.orders === 1 ? "" : "s"} · last ${when(c.last_order)}` : " · no orders yet"}${c.active ? "" : " · account off"}</small></div>`).join("")
+      <small>${esc(c.email || "no email")}${c.phone ? " · " + esc(c.phone) : ""}${c.markup !== null && c.markup !== undefined ? ` · markup +${Number(c.markup)}% over cost` : ""}${c.approved === false ? ` · <span style="color:#92400e;font-weight:600">waiting for office approval</span>` : ""}</small><small>${[a(c).city, a(c).state].filter(Boolean).join(", ")}${c.orders ? ` · ${c.orders} order${c.orders === 1 ? "" : "s"} · last ${when(c.last_order)}` : " · no orders yet"}${c.active ? "" : " · account off"}</small></div>`).join("")
       : `<p class="muted">${list.length ? "No customer matches." : "No customers yet. Add your first one."}</p>`;
   };
   draw(); $("cq").oninput = draw;
@@ -150,7 +150,8 @@ async function customers(editId) {
       <div class="grid2"><div class="field" style="grid-column:1/-1">${""}<label class="eyebrow" for="c-1">Street address</label><input id="c-1" value="${esc(ad.line1)}" autocomplete="address-line1"></div>
         ${f("c-2", "Apt, suite (optional)", ad.line2)}${f("c-c", "City", ad.city)}${f("c-s", "State", ad.state)}${f("c-z", "ZIP", ad.zip)}</div>
       <div class="err" id="cErr" hidden></div>
-      <div class="row2"><button class="btn solid rep" id="cSave">${c ? "Save changes" : "Add customer"}</button>${c ? `<button class="btn" id="cOrder">Place an order for ${esc((c.name || "").split(" ")[0])}</button>` : ""}<button class="btn" id="cCancel">Cancel</button></div></div>`;
+      ${c && c.approved === false ? `<p class="muted" style="color:#92400e">Waiting for the office to approve this customer and set their pricing. Orders can be placed once that's done.</p>` : ""}
+      <div class="row2"><button class="btn solid rep" id="cSave">${c ? "Save changes" : "Add customer"}</button>${c && c.approved !== false ? `<button class="btn" id="cOrder">Place an order for ${esc((c.name || "").split(" ")[0])}</button>` : ""}<button class="btn" id="cCancel">Cancel</button></div></div>`;
     $("cForm").scrollIntoView({ behavior: "smooth", block: "start" });
     const g = (x) => $(x).value.trim();
     $("cCancel").onclick = () => { $("cForm").innerHTML = ""; paneDirty = false; };
@@ -160,7 +161,7 @@ async function customers(editId) {
       if (!c) body.email = g("c-e");
       try {
         if (c) { await api("/customers/" + c.id, { method: "PATCH", body }); toast("Customer updated"); }
-        else { const r = await api("/customers", { method: "POST", body }); toast("Customer added"); pick = r.id; }
+        else { const r = await api("/customers", { method: "POST", body }); toast(r.pending ? "Customer added — the office will approve them and set their pricing before orders can be placed" : "Customer added", r.pending ? 4500 : 1800); pick = r.id; }
         paneDirty = false; customers();
       } catch (e) { $("cErr").textContent = e.message; $("cErr").hidden = false; }
     };
@@ -178,7 +179,7 @@ async function neworder() {
   pane().innerHTML = `<header><h1>New order</h1></header>
     ${!list.length ? `<div class="panel"><p>You need a customer first.</p><div><button class="btn solid rep" data-nav="customers">Add a customer</button></div></div>` : `
     <div class="panel"><h2>1. Customer</h2>
-      <div class="field"><label class="eyebrow" for="oCust">Who is this order for?</label><select id="oCust"><option value="">Choose a customer…</option>${list.filter((c) => c.active).map((c) => `<option value="${c.id}"${pick === c.id ? " selected" : ""}>${esc(c.name)}${c.company ? " · " + esc(c.company) : ""}${c.email ? " — " + esc(c.email) : c.phone ? " — " + esc(c.phone) : ""}</option>`).join("")}</select></div>
+      <div class="field"><label class="eyebrow" for="oCust">Who is this order for?</label><select id="oCust"><option value="">Choose a customer…</option>${list.filter((c) => c.active).map((c) => `<option value="${c.id}"${c.approved === false ? " disabled" : ""}${pick === c.id ? " selected" : ""}>${esc(c.name)}${c.approved === false ? " (waiting for approval)" : ""}${c.company ? " · " + esc(c.company) : ""}${c.email ? " — " + esc(c.email) : c.phone ? " — " + esc(c.phone) : ""}</option>`).join("")}</select></div>
       <p class="muted" id="oAddr"></p></div>
     <div class="panel"><h2>2. Products</h2>
       <div class="filters" style="align-items:center;flex-wrap:wrap;gap:.5rem 1rem"><input id="oq" type="search" placeholder="Filter products" style="flex:1 1 12rem"><span class="muted">In-stock products only</span></div>

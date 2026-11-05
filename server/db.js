@@ -240,7 +240,11 @@ alter table customers add column if not exists company text not null default '';
 alter table customers add column if not exists invite_sent_at timestamptz;          -- the last welcome / PIN invite email
 alter table customers add column if not exists invite_count int not null default 0;
 alter table users add column if not exists sess_version int not null default 0;        -- bumped when a password is reset/changed or the login is turned off: every session on both apps ends
-alter table customers add column if not exists stripe_customer_id text;              -- Stripe's record for this login: saved cards live there, shown only to this signed-in customer
+alter table customers add column if not exists stripe_customer_id text;
+alter table customers add column if not exists approved boolean not null default true;   -- a customer a rep adds waits here (false) until the owner approves them and sets their pricing
+alter table customers add column if not exists approved_at timestamptz;
+alter table customers add column if not exists approved_by text not null default '';
+alter table customers add column if not exists created_by text not null default '';              -- Stripe's record for this login: saved cards live there, shown only to this signed-in customer
 alter table customer_sessions add column if not exists seen timestamptz not null default now();
 alter table sessions add column if not exists seen timestamptz not null default now();
 alter table orders add column if not exists price_markup numeric(6,2);
