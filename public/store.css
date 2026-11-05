@@ -133,7 +133,7 @@ main > .wrap { display: grid; gap: 1.25rem; padding-block: 1.5rem 3.5rem; }
 @media (min-width: 640px) { .pgrid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (min-width: 900px) { .pgrid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (min-width: 1180px) {
-  .prices#products { width: min(1560px, 100vw - 2 * var(--gutter)); margin-inline: calc(50% - min(1560px, 100vw - 2 * var(--gutter)) / 2); }
+  :root { --measure: 1560px; } /* on wide screens the whole page (header, hero, perks, products, footer) shares one width */
   .pgrid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .9rem; }
 }
 .pcard { display: grid; grid-template-rows: auto 1fr; overflow: hidden; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); transition: border-color .15s, box-shadow .15s; }
