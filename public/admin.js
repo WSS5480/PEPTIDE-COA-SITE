@@ -61,7 +61,7 @@ function drawLogin(msg) {
     <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>`}
     ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
     <button class="btn solid wide">Sign in</button><button class="btn wide" type="button" data-install>Download admin app</button>
-    <p class="muted" style="text-align:center;margin:0">Sales reps sign in at the <a href="/rep">rep app</a> (name + PIN there). A PIN is set under Team logins or My account.</p>
+    <p class="muted" style="text-align:center;margin:0">Sales reps sign in at the <a href="/rep">rep app</a> (name + PIN there). A PIN is set under Team or My account.</p>
     <p class="muted" style="text-align:center;margin:.5rem 0 0">Customers: <a href="/?signin=1">sign in at the store</a> with the PIN we gave you.</p></form></div>`;
   document.querySelectorAll("[data-lmode]").forEach((b) => (b.onclick = () => { loginMode = b.dataset.lmode; localStorage.setItem("loginMode", loginMode); drawLogin(); }));
   if (pinMode) fetch("/api/admin/pin-names").then((r) => r.json()).then((j) => { const sel = document.getElementById("ln"); if (!sel) return; sel.innerHTML = `<option value="">Choose your name…</option>` + j.names.map((n) => `<option value="${n.id}"${String(n.id) === localStorage.getItem("loginName") ? " selected" : ""}>${esc(n.name)}</option>`).join(""); if (!j.names.length) sel.innerHTML = `<option value="">No PINs set yet — use email + password</option>`; }).catch(() => {});
@@ -80,10 +80,10 @@ function drawLogin(msg) {
 /* ---------- shell ---------- */
 // [key, label, who]: "all" = owner, staff and sales reps · "team" = owner and staff · "owner" · "ownerrep" = owner and reps. "line" draws the divider:
 // sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
-const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["reps", "Sales reps", "owner"], ["commissions", "Commissions", "ownerrep"], ["ar", "Invoices & AR", "all"], ["analytics", "Analytics", "all"], ["salescost", "Sales & cost", "owner"], ["pnl", "Profit / loss", "owner"], ["line"],
+const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["commissions", "Commissions", "ownerrep"], ["ar", "Invoices & AR", "all"], ["analytics", "Analytics", "all"], ["salescost", "Sales & cost", "owner"], ["pnl", "Profit / loss", "owner"], ["line"],
   ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["promo", "Promo banner", "team"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["university", "🎓 360 University", "team"], ["line2"],
   // below the second line: the things you reach from either app (the portal links here too)
-  ["staff", "Team logins", "owner"], ["setup", "Email & approvals", "owner"], ["geo", "Geofencing", "owner"], ["apps", "Apps & downloads", "all"], ["howto", "How to", "all"], ["account", "My account", "all"]];
+  ["staff", "Team", "owner"], ["setup", "Email & approvals", "owner"], ["geo", "Geofencing", "owner"], ["apps", "Apps & downloads", "all"], ["howto", "How to", "all"], ["account", "My account", "all"]];
 const canSee = (who) => who === "all" || (who === "owner" && isOwner()) || (who === "team" && !isRep()) || (who === "ownerrep" && (isOwner() || isRep()));
 function shell() {
   if (window.PushUI && !document.body.classList.contains("embed")) setTimeout(() => window.PushUI.nudge({ toast, what: me.role === "rep" ? "your customers' orders" : "new orders, card payments, PIN requests and low stock" }), 1500);
@@ -103,7 +103,7 @@ function shell() {
 const NAV_GROUP = { orders: "Rep", neworder: "Rep", customers: "Rep", commissions: "Rep", ar: "Rep",
   fill: "Manager", products: "Manager", inventory: "Manager", reports: "Manager", discounts: "Manager", promo: "Manager", page: "Manager", settings: "Manager", analytics: "Manager", salescost: "Manager", pnl: "Manager", university: "Manager",
   // Admin is the same list, in the same order, in the store and the portal
-  reps: "Admin", staff: "Admin", setup: "Admin", geo: "Admin", apps: "Admin", howto: "Admin", account: "Admin" };
+  staff: "Admin", setup: "Admin", geo: "Admin", apps: "Admin", howto: "Admin", account: "Admin" };
 let navOpen = null;
 async function drawNav() {
   try { stats = await api("/stats"); } catch (e) { return; }
@@ -1086,68 +1086,8 @@ async function customers() {
 }
 
 /* ---------- sales reps ---------- */
-async function reps() {
-  const PLAN_ON = isOwner() ? await api("/commissions/plan").then((j) => j.on).catch(() => false) : false;
-  if (!isOwner()) return dashboard();
-  const $ = (x) => document.getElementById(x);
-  const { reps: list } = await api("/reps");
-  const F = (() => { try { return JSON.parse(localStorage.getItem("repView") || "{}"); } catch (e) { return {}; } })();
-  const st = { q: "", show: F.show || "active", sort: F.sort || "month" }, openSet = new Set();
-  const SORTS = { month: (r) => r.month_cents, sales: (r) => r.sales_cents, owed: (r) => r.commission.earned, customers: (r) => r.customers, orders: (r) => r.orders, name: (r) => r.name.toLowerCase() };
-  pane().innerHTML = `<header><h1>Sales reps</h1><button class="btn solid" id="addRep">Add sales rep</button></header>
-    <p class="muted">Reps sign in at <a href="/rep" target="_blank">/rep</a> (the rep app). They add their own customers and place orders for them; every order from one of their customers earns their commission, whether the rep or the customer placed it. Tap a rep to change their details or plan.</p>
-    <div id="repForm"></div>
-    <div class="filters" style="flex-wrap:wrap;gap:.5rem"><input id="rq" type="search" placeholder="Search reps">
-      <select id="rShow"><option value="active">Active reps</option><option value="off">Turned off</option><option value="">All reps</option></select>
-      <select id="rSort">${[["month", "This month"], ["sales", "Sales (all)"], ["owed", "Owed now"], ["customers", "Customers"], ["orders", "Orders"], ["name", "Name A–Z"]].map(([k, l]) => `<option value="${k}">Sort: ${l}</option>`).join("")}</select></div>
-    <div class="row2" style="justify-content:space-between;align-items:center"><p class="muted" id="rSum" style="margin:0"></p><button class="btn" type="button" id="rAll">Expand all</button></div>
-    <div class="tblwrap" id="rt"></div>`;
-  let shown = [];
-  const draw = () => {
-    shown = list.filter((r) => (!st.show || (st.show === "off" ? !r.active : r.active)) && (!st.q || [r.name, r.email, r.phone].join(" ").toLowerCase().includes(st.q)));
-    const key = SORTS[st.sort] || SORTS.month, asc = st.sort === "name";
-    shown.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * (asc ? 1 : -1); });
-    $("rSum").textContent = shown.length ? `${shown.length} rep${shown.length === 1 ? "" : "s"} · ${shown.reduce((t, r) => t + r.customers, 0)} customers · ${money(shown.reduce((t, r) => t + r.month_cents, 0))} this month · ${money(shown.reduce((t, r) => t + r.commission.earned, 0))} owed` : "";
-    const det = (lab, html) => `<div><div class="eyebrow" style="margin-bottom:.2rem">${lab}</div>${html}</div>`;
-    $("rt").innerHTML = shown.length ? `<table class="tbl ctbl"><thead><tr><th>Rep</th><th class="num">Customers</th><th class="num">This month</th><th class="num">Sales (all)</th><th class="num">Owed now</th></tr></thead><tbody>
-      ${shown.map((r) => { const open = openSet.has(r.id); return `<tr class="csum click" data-rid="${r.id}" aria-expanded="${open}"><td><span class="caret" style="display:inline-block;width:1rem;transition:transform .15s;${open ? "transform:rotate(90deg)" : ""}">▸</span><strong>${esc(r.name)}</strong>${r.active ? "" : ' <span class="pill st-cancelled">off</span>'}</td>
-        <td class="num">${r.customers}</td><td class="num">${money(r.month_cents)}</td><td class="num">${money(r.sales_cents)}</td><td class="num"><strong>${money(r.commission.earned)}</strong></td></tr>
-        <tr class="cdet" data-rid="${r.id}"${open ? "" : " hidden"}><td colspan="5" style="background:var(--ground,#f6f7f9)">
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr));gap:.8rem 1.2rem;padding:.4rem .2rem;align-items:start">
-            ${det("Name", `<input data-k="name" value="${esc(r.name)}" style="width:100%">`)}${det("Email (login)", esc(r.email))}${det("Phone", `<input data-k="phone" value="${esc(r.phone || "")}" style="width:100%">`)}${det("Texts", `<label class="chk" style="margin:0"><input type="checkbox" data-k="smsOn"${r.sms_on ? " checked" : ""}> Text alerts to this cell</label>`)}
-            ${det("Commission", planPick(r, PLAN_ON).replace("justify-content:flex-end", "justify-content:flex-start"))}${det("Orders", r.orders)}${det("Paid out", money(r.commission.paid))}
-            ${det("Status", `<label class="chk"><input type="checkbox" data-k="active"${r.active ? " checked" : ""}> Active</label>`)}${det("New password", `<input data-k="password" type="password" placeholder="Leave blank" autocomplete="new-password" style="width:100%">`)}</div>
-          <div class="row2" style="margin-top:.6rem"><button class="btn solid" data-save>Save</button><button class="btn" data-comm="${r.id}">Commissions</button><button class="btn" data-rcust="${r.id}">Customers</button></div></td></tr>`; }).join("")}</tbody></table>` : `<p class="muted">${list.length ? "No reps match." : "No sales reps yet."}</p>`;
-  };
-  const save = () => { try { localStorage.setItem("repView", JSON.stringify({ show: st.show, sort: st.sort })); } catch (e) {} };
-  $("rShow").value = st.show; $("rSort").value = st.sort;
-  $("rq").oninput = (e) => { st.q = e.target.value.trim().toLowerCase(); draw(); };
-  $("rShow").onchange = (e) => { st.show = e.target.value; save(); draw(); };
-  $("rSort").onchange = (e) => { st.sort = e.target.value; save(); draw(); };
-  $("rAll").onclick = () => { const all = openSet.size < shown.length; openSet.clear(); if (all) shown.forEach((r) => openSet.add(r.id)); $("rAll").textContent = all ? "Collapse all" : "Expand all"; draw(); };
-  draw();
-  $("addRep").onclick = () => {
-    const f = (id, label, type = "text", extra = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}"${extra}></div>`;
-    $("repForm").innerHTML = `<div class="panel"><h2>New sales rep</h2><div class="grid2">${f("nr-n", "Name")}${f("nr-e", "Email (their login)", "email")}${f("nr-p", "Phone", "tel")}${f("nr-r", "Commission %", "text", ' inputmode="decimal" placeholder="e.g. 10"')}${f("nr-pw", "Temporary password (8+ characters)", "password", ' autocomplete="new-password"')}</div>
-      <div class="row2"><button class="btn solid" id="nrSave">Add rep</button><button class="btn" id="nrCancel">Cancel</button></div></div>`;
-    $("nrCancel").onclick = () => { $("repForm").innerHTML = ""; paneDirty = false; };
-    $("nrSave").onclick = async () => {
-      const g = (x) => $(x).value.trim();
-      await api("/reps", { method: "POST", body: { name: g("nr-n"), email: g("nr-e"), phone: g("nr-p"), rate: g("nr-r"), password: $("nr-pw").value } });
-      toast("Rep added. Send them /rep and their temporary password."); paneDirty = false; reps();
-    };
-  };
-  $("rt").addEventListener("change", planToggle);
-  $("rt").onclick = async (e) => {
-    const c = e.target.closest("[data-comm]"); if (c) { commFilter.rep = c.dataset.comm; go("commissions"); return; }
-    const rc = e.target.closest("[data-rcust]"); if (rc) { try { const v = JSON.parse(localStorage.getItem("custView") || "{}"); v.rep = rc.dataset.rcust; localStorage.setItem("custView", JSON.stringify(v)); } catch (er) {} go("customers"); return; }
-    const sm = e.target.closest("tr.csum"); if (sm && !e.target.closest("a, button, input, select")) { const id = +sm.dataset.rid, d = sm.nextElementSibling, open = d.hidden; d.hidden = !open; sm.setAttribute("aria-expanded", open); sm.querySelector(".caret").style.transform = open ? "rotate(90deg)" : ""; if (open) openSet.add(id); else openSet.delete(id); return; }
-    if (!e.target.closest("[data-save]")) return;
-    const tr = e.target.closest("tr.cdet[data-rid]"), body = {};
-    tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body[i.dataset.k === "smsOn" ? "smsOn" : "active"] = i.checked; else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
-    await api("/reps/" + tr.dataset.rid, { method: "PATCH", body }); toast("Saved"); paneDirty = false; reps();
-  };
-}
+// Sales reps live on the Team page now (filtered to reps); kept so #reps links and bookmarks still land somewhere sensible
+async function reps() { teamView.role = "rep"; try { localStorage.setItem("teamView", JSON.stringify(teamView)); } catch (e) {} return staff(); }
 
 /* ---------- commissions ---------- */
 let surgPick = "", commFilter = { rep: "", from: "", to: "", status: "" }, commView = localStorage.getItem("commView") === "tracker" ? "tracker" : "store", /* no Combined view (owner request) */ commMonth = new Date().toISOString().slice(0, 7);
@@ -1306,7 +1246,7 @@ async function commissionsHub() {
     $("surgPick").onchange = (e) => { surgPick = e.target.value; one(); };
     $("cmT").onclick = (e) => { const t = e.target.closest("[data-surg]"); if (!t) return; surgPick = t.dataset.surg; $("surgPick").value = surgPick; one(); $("surgOne").scrollIntoView({ behavior: "smooth", block: "start" }); };
     one();
-    $("cmNote").innerHTML = `Surgical commission for ${esc(monthLabel(commMonth))} = rate × (sales − floor); the floor includes any carried shortfall. Estimates from cases logged in the portal — rates, floors, quotas and draws are set under Team logins → 360 Medical Portal plans.`;
+    $("cmNote").innerHTML = `Surgical commission for ${esc(monthLabel(commMonth))} = rate × (sales − floor); the floor includes any carried shortfall. Estimates from cases logged in the portal — rates, floors, quotas and draws are set under Team → 360 Medical Portal plans.`;
     return;
   }
   // combined
@@ -2499,12 +2439,12 @@ function howto() {
   // ---- getting around (everyone, worded for the role)
   S.push(sec("Getting around", "both", [
     `${b("Two rows of switches")} under the logo. Top row: which app you're in (Peptide store / 360 Medical Portal). Second row: which view (${who === "rep" ? "Store, Rep, Portal — Admin is for admins" : "Admin, Store, Rep, Portal"}). The one you're in is green. They all keep your login — no second sign-in.`,
-    who === "rep" ? `${b("Below the line")} in the menu is the same on every page of both apps: Apps & downloads, How to, My account.` : `${b("Above the line")} in the menu is this app's own work. ${b("Below the line")} is the same on every page of both apps: ${who === "owner" ? "Team logins, Email & approvals, Geofencing, " : ""}Apps & downloads, How to, My account.`,
+    who === "rep" ? `${b("Below the line")} in the menu is the same on every page of both apps: Apps & downloads, How to, My account.` : `${b("Above the line")} in the menu is this app's own work. ${b("Below the line")} is the same on every page of both apps: ${who === "owner" ? "Team, Email & approvals, Geofencing, " : ""}Apps & downloads, How to, My account.`,
     `${b("Panels start collapsed.")} Click a heading to open it; it stays open on this device until you close it. Alt+Shift+C opens or folds everything on a page. The ${b("« »")} button at the top of the menu hides and shows the menu.`,
     `${b("Phones:")} each app installs from Apps & downloads (Add to Home Screen / Install). Everything works the same on a phone, with the menu behind the Menu button.`
   ]));
   S.push(sec("Signing in", "both", [
-    `${b("Email + password")} or ${b("Name + PIN")} (the toggle on the sign-in screen). Your PIN is under My account${who === "owner" ? " (or set by an admin under Team logins)" : ""}. The same login works on the store, the rep app and the portal — the PIN also opens the storefront as the office.`,
+    `${b("Email + password")} or ${b("Name + PIN")} (the toggle on the sign-in screen). Your PIN is under My account${who === "owner" ? " (or set by an admin under Team)" : ""}. The same login works on the store, the rep app and the portal — the PIN also opens the storefront as the office.`,
     who === "rep" ? `On the portal's own sign-in page, pick your name and type the same PIN.` : `${b("Store PIN")} (Site settings → Site PIN) lets anyone in the office into the storefront; customers get their own PINs under Customers. The portal's COO PIN is a back door for the portal only.`
   ]));
   // ---- store side
@@ -2562,7 +2502,7 @@ function howto() {
     `Portal Admin: reps and plans, visits, surgeons, facilities, price book, alert settings, close a month, weekly digest, backup.`
   ]));
   // ---- shared pages
-  if (who === "owner") S.push(sec("Team logins (one list of people)", "both", [
+  if (who === "owner") S.push(sec("Team (one list of people)", "both", [
     `Add a person once: name, email, role (${b("Admin")} = everything; ${b("Manager")} = orders, customers, products, inventory, settings, no costs or logins; ${b("Sales rep")} = their own customers, orders, commission), optional PIN, and which apps they get: ${b("Peptide store")} and/or ${b("360 Medical Portal")}.`,
     `Tick 360 Medical Portal and they appear in the portal automatically (reps get a plan row to fill in). Untick to switch them off there. Reps that exist only in the portal show up here to import in one click.`,
     `Changing someone's role or password signs them out everywhere. Turning a login off ends their access right away.`
@@ -2591,67 +2531,138 @@ function apps() {
     ${card("360 Medical Portal admin", "Reps and plans, visits, surgeons, facilities, approvals.", "COO and managers", tr ? link("/admin/go/tracker?next=/admin", "Open the portal admin", true) + link("/admin/go/tracker?next=/admin/download", "Download page", true) : `<span class="muted">Not linked yet.</span>`)}`;
 }
 /* ---------- staff ---------- */
-let staffPick = null;
+let staffPick = null; // a person to open on arrival (deep links from other screens)
+let teamView = (() => { try { return Object.assign({ q: "", role: "", show: "active", sort: "name" }, JSON.parse(localStorage.getItem("teamView") || "{}")); } catch (e) { return { q: "", role: "", show: "active", sort: "name" }; } })();
+/* Team: every login (admins, managers, sales reps) in one list, one card per person with everything about them — apps, PIN,
+   password, commission plan, their store numbers — and one Add person form. Reps' sales figures come from /reps. */
 async function staff() {
-  const PLAN_ON = isOwner() ? await api("/commissions/plan").then((j) => j.on).catch(() => false) : false;
   if (!isOwner()) return dashboard();
-  const { users } = await api("/users");
+  const PLAN_ON = await api("/commissions/plan").then((j) => j.on).catch(() => false);
+  const [{ users }, repStats] = await Promise.all([api("/users"), api("/reps").then((j) => j.reps).catch(() => [])]);
+  const statsBy = Object.fromEntries(repStats.map((r) => [r.id, r]));
+  users.forEach((u) => { u.st = statsBy[u.id] || null; });
   const ROLE = { owner: "Admin", staff: "Manager", rep: "Sales rep" };
   const roleSel = (cur, id) => `<select ${id ? `id="${id}"` : 'data-k="role" style="min-width:7.5rem"'}>${Object.entries(ROLE).map(([k, l]) => `<option value="${k}"${cur === k ? " selected" : ""}>${l}</option>`).join("")}</select>`;
-  if (!users.some((u) => String(u.id) === String(staffPick))) staffPick = (users.find((u) => u.role === "rep") || users[0] || {}).id;
   const appsOf = (u) => ({ store: !u.apps || u.apps.store !== false, tracker: u.apps && u.apps.tracker !== undefined ? !!u.apps.tracker : u.role === "owner" });
-  const optLabel = (u) => `${u.name}${u.active ? "" : " (off)"}${u.id === me.id ? " · you" : u.signed_in ? " · signed in" : ""}`;
-  const u = users.find((x) => String(x.id) === String(staffPick));
   const F = (label, html, wide) => `<div class="field" style="margin:0${wide ? ";grid-column:1/-1" : ""}"><span class="eyebrow">${label}</span>${html}</div>`;
-  const card = !u ? '<p class="muted">No logins yet.</p>' : (() => { const ap = appsOf(u); return `<div class="panel" data-id="${u.id}" data-role="${u.role}" style="margin-top:.6rem">
-      <div class="row2" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem;margin-bottom:.6rem"><div><strong style="font-size:1.05rem">${esc(u.name)}</strong> <span class="muted">${esc(u.email)}</span>${u.role === "rep" ? ` <span class="muted">· ${u.customers} customer${u.customers === 1 ? "" : "s"}</span>` : ""}</div>
-        <div class="row2" style="gap:.4rem"><button class="btn solid" data-save>Save</button>${u.id === me.id ? "" : '<button class="btn danger" data-del title="Delete this login for good">Delete</button>'}</div></div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,12.5rem),1fr));gap:.7rem 1rem;align-items:end">
+  const det = (lab, html) => `<div><div class="eyebrow" style="margin-bottom:.2rem">${lab}</div>${html}</div>`;
+  const openSet = new Set();
+  if (staffPick && users.some((u) => String(u.id) === String(staffPick))) openSet.add(+staffPick);
+  staffPick = null;
+  const st = teamView, save = () => { try { localStorage.setItem("teamView", JSON.stringify(st)); } catch (e) {} };
+  const SORTS = { name: (u) => u.name.toLowerCase(), month: (u) => -(u.st ? u.st.month_cents : -1), sales: (u) => -(u.st ? u.st.sales_cents : -1), owed: (u) => -(u.st ? u.st.commission.earned : -1), customers: (u) => -(u.st ? u.st.customers : u.customers || 0), role: (u) => ({ owner: 0, staff: 1, rep: 2 }[u.role] || 3) };
+  // the card: everything about one person, edited in place
+  const card = (u) => { const ap = appsOf(u), rep = u.role === "rep", s = u.st; return `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,12.5rem),1fr));gap:.7rem 1rem;align-items:end;padding:.3rem .2rem 0">
         ${F("Name", `<input data-k="name" value="${esc(u.name)}">`)}
+        ${F("Email (their login)", `<span style="display:block;padding:.45rem 0;word-break:break-all">${esc(u.email)}</span>`)}
         ${F("Role", roleSel(u.role))}
         ${F("Cell phone", `<input data-k="phone" type="tel" value="${esc(u.phone || "")}">`)}
-        ${u.role === "rep" ? F("Texts", `<label class="chk"><input type="checkbox" data-k="smsOn"${u.sms_on ? " checked" : ""}> Text their customers' orders to this cell</label>`) : ""}
-        ${F("Commission", planPick(u, PLAN_ON, u.role === "rep").replace("justify-content:flex-end", "justify-content:flex-start") + (u.role === "rep" ? "" : '<span class="muted" data-noplan>— (reps only)</span>'))}
-        ${F("PIN", `<input data-k="pin" inputmode="numeric" placeholder="${u.pin_set ? "Set · type to change" : "4–10 digits"}" title="Name + PIN sign-in for both apps">`)}
+        ${F("Texts", `<label class="chk" data-texts${rep ? "" : " hidden"}><input type="checkbox" data-k="smsOn"${u.sms_on ? " checked" : ""}> Text their customers' orders to this cell</label><span class="muted" data-notexts${rep ? " hidden" : ""}>— (reps only)</span>`)}
+        ${F("Commission", planPick(u, PLAN_ON, rep).replace("justify-content:flex-end", "justify-content:flex-start") + `<span class="muted" data-noplan${rep ? " hidden" : ""}>— (reps only)</span>`)}
+        ${F("PIN", `<input data-k="pin" inputmode="numeric" placeholder="${u.pin_set ? "Set · type to change" : "4–10 digits"}" title="Name + PIN sign-in on both apps">`)}
         ${F("New password", `<input data-k="password" type="password" placeholder="Leave blank to keep" autocomplete="new-password">`)}
         ${F("Apps", `<div class="row2" style="gap:.2rem 1rem;flex-wrap:wrap"><label class="chk"><input type="checkbox" data-app="store"${ap.store ? " checked" : ""}> Peptide store</label><label class="chk"><input type="checkbox" data-app="tracker"${ap.tracker ? " checked" : ""}> 360 Medical Portal</label></div>`)}
         ${F("Status", `<label class="chk"><input type="checkbox" data-k="active"${u.active ? " checked" : ""}${u.id === me.id ? " disabled" : ""}> Active</label>`)}
-      </div></div>`; })();
-  const grp = (role, label) => { const l = users.filter((x) => x.role === role); return l.length ? `<optgroup label="${label} (${l.length})">${l.map((x) => `<option value="${x.id}"${String(x.id) === String(staffPick) ? " selected" : ""}>${esc(optLabel(x))}</option>`).join("")}</optgroup>` : ""; };
-  pane().innerHTML = `<header><h1>Team logins</h1></header>
-    <div id="trackerImport"></div>
-    <details class="muted" style="margin:.2rem 0 .6rem"><summary>How logins work</summary><p>One login for both apps: tick <strong>Peptide store</strong> and/or <strong>360 Medical Portal</strong> per person. A <strong>PIN</strong> lets them sign in by name + PIN on either app (email + password always works too). <strong>Admin</strong> can do everything (prices, costs, settings, logins, deleting orders). <strong>Manager</strong> works orders, customers, products, inventory and settings but can't see costs, change prices or manage logins. <strong>Sales rep</strong> signs in to the admin or the <a href="/rep" target="_blank" rel="noopener">rep app</a> and sees only their own customers, orders and commission. Changing someone's role or password signs them out everywhere.</p></details>
-    <div class="row2" style="align-items:end;gap:.6rem;flex-wrap:wrap"><div class="field" style="margin:0;flex:1 1 18rem;max-width:28rem"><label class="eyebrow" for="staffPick">Person (${users.length})</label><select id="staffPick">${grp("rep", "Sales reps")}${grp("staff", "Managers")}${grp("owner", "Admins")}</select></div><button class="btn" type="button" onclick="const n=document.getElementById('nu-n'),c=n.closest('.folded');if(c){const h=c.querySelector('.fold-h,.fold-head');if(h)h.click();else c.classList.remove('folded')}n.scrollIntoView({behavior:'smooth',block:'center'});n.focus()">+ Add a login</button></div>
-    <div id="ut">${card}</div>
-    <div class="panel"><h2>Add a login</h2><div class="grid2">
+      </div>
+      ${s ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));gap:.6rem 1.2rem;padding:.7rem .2rem 0">${det("Customers", s.customers)}${det("Orders", s.orders)}${det("This month", money(s.month_cents))}${det("Sales (all)", money(s.sales_cents))}${det("Owed now", `<strong>${money(s.commission.earned)}</strong>`)}${det("Paid out", money(s.commission.paid))}</div>` : ""}
+      <div class="row2" style="margin-top:.7rem;gap:.4rem;flex-wrap:wrap"><button class="btn solid" data-save>Save</button>${rep ? `<button class="btn" data-comm="${u.id}">Commissions</button><button class="btn" data-rcust="${u.id}">Customers</button>` : ""}${u.id === me.id ? "" : '<button class="btn danger" data-del title="Delete this login for good">Delete</button>'}</div>`; };
+  pane().innerHTML = `<header><h1>Team</h1><button class="btn solid" id="addP">Add person</button></header>
+    <div id="teamNew"></div><div id="trackerImport"></div>
+    <details class="muted" style="margin:.2rem 0 .6rem"><summary>How logins work</summary><p>One login per person, for both apps: tick <strong>Peptide store</strong> and/or <strong>360 Medical Portal</strong>. Everyone signs in with email + password; a <strong>PIN</strong> also lets them sign in by name + PIN on either app. <strong>Admins</strong> see everything; <strong>Managers</strong> run orders, products and inventory; <strong>Sales reps</strong> use the rep app (their customers, orders and commission) and the portal if ticked. Tap a person to change anything. A rep's commission plan and store numbers are on their card.</p></details>
+    <div class="filters" style="flex-wrap:wrap;gap:.5rem"><input id="tq" type="search" placeholder="Search name, email or phone" value="${esc(st.q)}">
+      <select id="tRole"><option value="">Everyone</option><option value="rep">Sales reps</option><option value="staff">Managers</option><option value="owner">Admins</option></select>
+      <select id="tShow"><option value="active">Active</option><option value="off">Turned off</option><option value="">All</option></select>
+      <select id="tSort">${[["name", "Name A–Z"], ["role", "Role"], ["month", "This month"], ["sales", "Sales (all)"], ["owed", "Owed now"], ["customers", "Customers"]].map(([k, l]) => `<option value="${k}">Sort: ${l}</option>`).join("")}</select></div>
+    <div class="row2" style="justify-content:space-between;align-items:center"><p class="muted" id="tSum" style="margin:0"></p><button class="btn" type="button" id="tAll">Expand all</button></div>
+    <div class="tblwrap" id="tt"></div>
+    ${HUB.linked && HUB.apps && HUB.apps.tracker ? `<div class="panel" id="plansPanel"><h2>360 Medical Portal plans</h2>
+      <p class="muted">Quota, commission plan, pay and territory for each rep with the 360 Medical Portal ticked above. Names, PINs and on/off come from the list above. Team quotas are set here.</p>
+      ${HOSTABLE ? `<iframe class="hubframe" title="Reps and plans" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=reps-card")}" style="width:100%;height:40rem;min-height:24rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<a class="btn solid" href="${switchHref("/admin")}"${FRAMED ? ' target="_top"' : ""} style="display:inline-grid;place-items:center;text-decoration:none">Open the portal's admin</a>`}</div>` : ""}`;
+  let shown = [];
+  const draw = () => {
+    const q = st.q.trim().toLowerCase();
+    shown = users.filter((u) => (!st.role || u.role === st.role) && (!st.show || (st.show === "off" ? !u.active : u.active)) && (!q || [u.name, u.email, u.phone].join(" ").toLowerCase().includes(q)));
+    const key = SORTS[st.sort] || SORTS.name;
+    shown.sort((a, b) => { const x = key(a), y = key(b); return x < y ? -1 : x > y ? 1 : 0; });
+    const reps = shown.filter((u) => u.st);
+    document.getElementById("tSum").textContent = shown.length ? `${shown.length} ${shown.length === 1 ? "person" : "people"}${shown.length !== users.length ? ` of ${users.length}` : ""}${reps.length ? ` · reps: ${reps.reduce((t, u) => t + u.st.customers, 0)} customers · ${money(reps.reduce((t, u) => t + u.st.month_cents, 0))} this month · ${money(reps.reduce((t, u) => t + u.st.commission.earned, 0))} owed` : ""}` : "";
+    document.getElementById("tt").innerHTML = shown.length ? `<table class="tbl ctbl"><thead><tr><th>Person</th><th class="num">Customers</th><th class="num">This month</th><th class="num">Sales (all)</th><th class="num">Owed now</th></tr></thead><tbody>
+      ${shown.map((u) => { const open = openSet.has(u.id), ap = appsOf(u), s = u.st; return `<tr class="csum click" data-uid="${u.id}" aria-expanded="${open}"><td><span class="caret" style="display:inline-block;width:1rem;transition:transform .15s;${open ? "transform:rotate(90deg)" : ""}">▸</span><strong>${esc(u.name)}</strong> <span class="pill${u.role === "owner" ? " st-shipped" : ""}">${ROLE[u.role]}</span>${u.active ? "" : ' <span class="pill st-cancelled">off</span>'}${u.id === me.id ? ' <span class="muted">· you</span>' : u.signed_in ? ' <span class="muted">· signed in</span>' : ""}
+          <div class="muted" style="font-size:.78rem">${esc(u.email)}${ap.store ? " · Store" : ""}${ap.tracker ? " · Portal" : ""}${u.pin_set ? "" : " · no PIN"}</div></td>
+        <td class="num">${s ? s.customers : u.customers || "—"}</td><td class="num">${s ? money(s.month_cents) : "—"}</td><td class="num">${s ? money(s.sales_cents) : "—"}</td><td class="num">${s ? `<strong>${money(s.commission.earned)}</strong>` : "—"}</td></tr>
+        <tr class="cdet" data-uid="${u.id}" data-id="${u.id}" data-role="${u.role}"${open ? "" : " hidden"}><td colspan="5" style="background:var(--ground,#f6f7f9)">${card(u)}</td></tr>`; }).join("")}</tbody></table>` : `<p class="muted">${users.length ? "Nobody matches." : "No logins yet. Use Add person."}</p>`;
+    document.getElementById("tAll").textContent = shown.length && shown.every((u) => openSet.has(u.id)) ? "Collapse all" : "Expand all";
+  };
+  document.getElementById("tRole").value = st.role; document.getElementById("tShow").value = st.show; document.getElementById("tSort").value = st.sort;
+  document.getElementById("tq").oninput = (e) => { st.q = e.target.value; save(); draw(); };
+  document.getElementById("tRole").onchange = (e) => { st.role = e.target.value; save(); draw(); };
+  document.getElementById("tShow").onchange = (e) => { st.show = e.target.value; save(); draw(); };
+  document.getElementById("tSort").onchange = (e) => { st.sort = e.target.value; save(); draw(); };
+  document.getElementById("tAll").onclick = () => { const all = !shown.every((u) => openSet.has(u.id)); openSet.clear(); if (all) shown.forEach((u) => openSet.add(u.id)); draw(); };
+  draw();
+  const tt = document.getElementById("tt");
+  tt.addEventListener("change", (e) => {
+    if (planToggle(e)) return;
+    if (e.target.matches('[data-k="role"]')) { const tr = e.target.closest("tr.cdet"), rep = e.target.value === "rep"; tr.querySelector(".planpick").hidden = !rep; tr.querySelector("[data-noplan]").hidden = rep; tr.querySelector("[data-texts]").hidden = !rep; tr.querySelector("[data-notexts]").hidden = rep; }
+  });
+  tt.onclick = async (e) => {
+    const c = e.target.closest("[data-comm]"); if (c) { commFilter.rep = c.dataset.comm; go("commissions"); return; }
+    const rc = e.target.closest("[data-rcust]"); if (rc) { try { const v = JSON.parse(localStorage.getItem("custView") || "{}"); v.rep = rc.dataset.rcust; localStorage.setItem("custView", JSON.stringify(v)); } catch (er) {} go("customers"); return; }
+    const sm = e.target.closest("tr.csum"); if (sm && !e.target.closest("a, button, input, select")) { const id = +sm.dataset.uid, d = sm.nextElementSibling, open = d.hidden; d.hidden = !open; sm.setAttribute("aria-expanded", open); sm.querySelector(".caret").style.transform = open ? "rotate(90deg)" : ""; if (open) openSet.add(id); else openSet.delete(id); return; }
+    const tr = e.target.closest("tr.cdet"); if (!tr) return;
+    if (e.target.closest("[data-del]")) {
+      const nm = tr.querySelector('[data-k="name"]').value;
+      if (!confirm(`Delete ${nm}'s login for good? Their customers stay (unassigned). A rep with orders on record can't be deleted — untick Active instead.`)) return;
+      try { await api("/users/" + tr.dataset.id, { method: "DELETE" }); toast("Login deleted"); paneDirty = false; staff(); } catch (x) {}
+      return;
+    }
+    if (!e.target.closest("[data-save]")) return;
+    const body = {};
+    tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body[i.dataset.k === "smsOn" ? "smsOn" : "active"] = i.checked; else if (i.dataset.k === "rate") { if (!i.disabled && i.value.trim() !== "") body.rate = i.value.trim(); } else if (i.dataset.k === "pin") { if (i.value.trim()) body.pin = i.value.trim(); } else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
+    body.apps = { store: tr.querySelector('[data-app="store"]').checked, tracker: tr.querySelector('[data-app="tracker"]').checked };
+    if (body.role && body.role !== tr.dataset.role && !confirm(`Change this login to ${ROLE[body.role]}? They'll be signed out.`)) return;
+    try { await api("/users/" + tr.dataset.id, { method: "PATCH", body }); toast("Saved"); paneDirty = false; staffPick = tr.dataset.id; staff(); } catch (x) {}
+  };
+  // Add person: one form; the role decides what shows (commission and courses for reps)
+  document.getElementById("addP").onclick = () => {
+    const box = document.getElementById("teamNew"); if (box.innerHTML) { box.innerHTML = ""; return; }
+    box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Add person</h2><div class="grid2">
       <div class="field"><label class="eyebrow" for="nu-n">Name</label><input id="nu-n"></div>
       <div class="field"><label class="eyebrow" for="nu-e">Email (their login)</label><input id="nu-e" type="email"></div>
       <div class="field"><label class="eyebrow" for="nu-p">Temporary password (8+ characters)</label><input id="nu-p" type="password" autocomplete="new-password"></div>
-      <div class="field"><label class="eyebrow" for="nu-r">Role</label>${roleSel("staff", "nu-r")}</div>
-      <div class="field"><label class="eyebrow" for="nu-ph">Phone (optional)</label><input id="nu-ph"></div>
-      <div class="field" id="nu-rateWrap" hidden><label class="eyebrow" for="nu-plan">Commission</label><div class="row2" style="flex-wrap:nowrap;align-items:center;gap:.3rem"><select id="nu-plan"><option value="tiered">Tiered plan${PLAN_ON ? "" : " (not on yet)"}</option><option value="flat">Flat %</option></select><span id="nu-flat" hidden style="white-space:nowrap"><input id="nu-rate" inputmode="decimal" placeholder="10" style="width:4.5rem">%</span></div></div>
+      <div class="field"><label class="eyebrow" for="nu-r">Role</label>${roleSel("rep", "nu-r")}</div>
+      <div class="field"><label class="eyebrow" for="nu-ph">Cell phone (optional)</label><input id="nu-ph" type="tel"></div>
+      <div class="field" id="nu-rateWrap"><label class="eyebrow" for="nu-plan">Commission</label><div class="row2" style="flex-wrap:nowrap;align-items:center;gap:.3rem"><select id="nu-plan"><option value="tiered">Tiered plan${PLAN_ON ? "" : " (not on yet)"}</option><option value="flat">Flat %</option></select><span id="nu-flat" hidden style="white-space:nowrap"><input id="nu-rate" inputmode="decimal" placeholder="10" style="width:4.5rem;text-align:right">%</span></div></div>
       <div class="field"><label class="eyebrow" for="nu-pin">PIN (optional, 4–10 digits)</label><input id="nu-pin" inputmode="numeric" placeholder="Name + PIN sign-in"></div>
       <div class="field"><span class="eyebrow">Apps</span><label class="chk"><input type="checkbox" id="nu-store" checked> Peptide store</label><label class="chk"><input type="checkbox" id="nu-tracker"> 360 Medical Portal</label></div>
-      <div class="field" id="nu-uniWrap" style="grid-column:1/-1" hidden><span class="eyebrow">🎓 360 University courses (reps)</span><div id="nu-uni" class="row2" style="flex-wrap:wrap;gap:.2rem 1rem"><span class="muted">Loading courses…</span></div><span class="muted" style="font-size:.78rem">Ticked by the apps above; change them as you like. Tests: 2 tries to pass, then the course locks and you're told.</span></div></div>
-      <div class="row2"><button class="btn solid" id="nuAdd">Add login</button><span class="muted">Send them the email and temporary password; they can change it under My account.</span></div></div>
-    ${HUB.linked && HUB.apps && HUB.apps.tracker ? `<div class="panel" id="plansPanel"><h2>360 Medical Portal plans</h2>
-      <p class="muted">Quota, commission plan, pay and territory for each rep with the 360 Medical Portal ticked above. Names, PINs and on/off come from the logins table; add or remove reps up there. Team quotas are set here.</p>
-      ${HOSTABLE ? `<iframe class="hubframe" title="Reps and plans" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=reps-card")}" style="width:100%;height:40rem;min-height:24rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<a class="btn solid" href="${switchHref("/admin")}"${FRAMED ? ' target="_top"' : ""}>Open reps and plans in the portal ↗</a><p class="muted" style="margin-top:.4rem">This browser doesn't show the portal inside the page.</p>`}</div>` : ""}`;
-  // 360 University: the courses a new rep gets, ticked from the apps they're given (portal → surgical / wound / all; peptide store → peptide)
-  const uniTick = () => { const box = document.getElementById("nu-uni"); if (!box) return; const isRep = document.getElementById("nu-r").value === "rep"; document.getElementById("nu-uniWrap").hidden = !isRep;
-    const tr = document.getElementById("nu-tracker").checked, st = document.getElementById("nu-store").checked;
-    box.querySelectorAll("input").forEach((i) => { const a = i.dataset.aud; i.checked = (tr && /^(surgical|wound|all)$/.test(a)) || (st && a === "peptide"); }); };
-  api("/uni").then((u) => { const box = document.getElementById("nu-uni"); if (!box) return; box.innerHTML = u.courses.filter((c) => c.active).map((c) => `<label class="chk"><input type="checkbox" value="${c.id}" data-aud="${esc(c.audience)}"> ${esc(c.icon)} ${esc(c.title)}</label>`).join("") || '<span class="muted">No courses yet.</span>'; uniTick(); }).catch(() => { const w = document.getElementById("nu-uniWrap"); if (w) w.hidden = true; });
-  ["nu-store", "nu-tracker"].forEach((k) => document.getElementById(k).addEventListener("change", uniTick));
-  document.getElementById("nu-r").onchange = () => { document.getElementById("nu-rateWrap").hidden = document.getElementById("nu-r").value !== "rep"; uniTick(); };
-  document.getElementById("nu-plan").onchange = (e) => { document.getElementById("nu-flat").hidden = e.target.value !== "flat"; };
+      <div class="field" id="nu-uniWrap" style="grid-column:1/-1"><span class="eyebrow">🎓 360 University courses (reps)</span><div id="nu-uni" class="row2" style="flex-wrap:wrap;gap:.2rem 1rem"><span class="muted">Loading courses…</span></div><span class="muted" style="font-size:.78rem">Ticked by the apps above; change them as you like.</span></div></div>
+      <div class="row2"><button class="btn solid" id="nuAdd">Add person</button><button class="btn" type="button" id="nuCancel">Cancel</button><span class="muted">Send them their email and temporary password; they change it under My account.</span></div></div>`;
+    window.scrollTo(0, 0);
+    const uniTick = () => { const b = document.getElementById("nu-uni"); if (!b) return; const rep = document.getElementById("nu-r").value === "rep"; document.getElementById("nu-uniWrap").hidden = !rep; document.getElementById("nu-rateWrap").hidden = !rep;
+      const tr = document.getElementById("nu-tracker").checked, sto = document.getElementById("nu-store").checked;
+      b.querySelectorAll("input").forEach((i) => { const a = i.dataset.aud; i.checked = (tr && /^(surgical|wound|all)$/.test(a)) || (sto && a === "peptide"); }); };
+    api("/uni").then((u) => { const b = document.getElementById("nu-uni"); if (!b) return; b.innerHTML = u.courses.filter((c) => c.active).map((c) => `<label class="chk"><input type="checkbox" value="${c.id}" data-aud="${esc(c.audience)}"> ${esc(c.icon)} ${esc(c.title)}</label>`).join("") || '<span class="muted">No courses yet.</span>'; uniTick(); }).catch(() => { const w = document.getElementById("nu-uniWrap"); if (w) w.hidden = true; });
+    ["nu-store", "nu-tracker"].forEach((k) => document.getElementById(k).addEventListener("change", uniTick));
+    document.getElementById("nu-r").onchange = uniTick;
+    document.getElementById("nu-plan").onchange = (e) => { document.getElementById("nu-flat").hidden = e.target.value !== "flat"; };
+    document.getElementById("nuCancel").onclick = () => { box.innerHTML = ""; paneDirty = false; };
+    document.getElementById("nuAdd").onclick = async () => {
+      const g = (x) => document.getElementById(x).value;
+      try {
+        const r = await api("/users", { method: "POST", body: { name: g("nu-n"), email: g("nu-e"), password: g("nu-p"), role: g("nu-r"), phone: g("nu-ph"), rate: g("nu-rate"), plan: g("nu-plan"), pin: g("nu-pin"), apps: { store: document.getElementById("nu-store").checked, tracker: document.getElementById("nu-tracker").checked }, courses: g("nu-r") === "rep" && document.querySelector("#nu-uni input") ? [...document.querySelectorAll("#nu-uni input:checked")].map((i) => +i.value) : undefined } });
+        toast(`${ROLE[g("nu-r")]} added`); paneDirty = false; staffPick = r.id; teamView.q = ""; teamView.show = st.show === "off" ? "active" : st.show; if (teamView.role && teamView.role !== g("nu-r")) teamView.role = ""; staff();
+      } catch (x) {}
+    };
+  };
+  // reps that exist only in the portal (set up there before Team existed): give them a login, or take them out of the portal
   api("/hub/tracker-reps").then((r) => {
     const box = document.getElementById("trackerImport"); if (!box) return;
     if (!r.ok) { box.innerHTML = `<p class="muted">360 Medical Portal: ${esc(r.error)}</p>`; return; }
     const missing = (r.reps || []).filter((t) => !users.some((u) => u.name.trim().toLowerCase() === String(t.rep).trim().toLowerCase()));
     if (!missing.length) return;
-    box.innerHTML = `<details class="panel" style="border-color:var(--blue)"><summary><strong>In the portal only (${missing.length})</strong> <span class="muted">· reps without a login yet</span></summary>
-      <p class="muted">These reps were set up in the portal before Team logins existed. <strong>Add</strong> gives them one login for both apps (360 Medical Portal ticked, same PIN they use today; the email is only for email + password sign-in — change it if they have a real one). <strong>Remove</strong> takes them out of the portal's rep list; their logged cases stay.</p>
+    box.innerHTML = `<details class="panel" style="border-color:var(--blue)" open><summary><strong>In the portal only (${missing.length})</strong> <span class="muted">· reps without a login yet</span></summary>
+      <p class="muted">These reps were set up in the portal before Team existed. <strong>Add</strong> gives them one login for both apps (360 Medical Portal ticked, same PIN they use today; the email is only for email + password sign-in — change it if they have a real one). <strong>Remove</strong> takes them out of the portal's rep list; their logged cases stay.</p>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr));gap:.6rem">
       ${missing.map((t, i) => `<div style="border:1px solid var(--line);border-radius:10px;padding:.6rem .7rem"><strong>${esc(t.rep)}</strong>${t.active === false ? ' <span class="muted">(off)</span>' : ""}<label class="eyebrow" style="display:block;margin-top:.3rem">Email for their login</label><input data-imp="${i}" type="email" style="width:100%" value="${esc(String(t.rep).toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, ""))}@360medical.net">
         <div class="row2" style="gap:.4rem;margin-top:.4rem"><button class="btn solid" type="button" data-impadd="${i}">Add login</button><button class="btn danger" type="button" data-imprm="${i}" title="Remove from the portal's rep list (their cases stay)">Remove</button></div></div>`).join("")}</div>
@@ -2661,32 +2672,12 @@ async function staff() {
       try { await api("/users", { method: "POST", body: { name: missing[i].rep, email, password: "temp-" + Math.random().toString(36).slice(2, 10) + "A1", role: "rep", rate: "0", pin: missing[i].pin || "", apps: { store: false, tracker: true } } }); return true; } catch (e) { return false; }
     };
     box.onclick = async (e) => {
-      const a = e.target.closest("[data-impadd]"), r = e.target.closest("[data-imprm]");
+      const a = e.target.closest("[data-impadd]"), rm = e.target.closest("[data-imprm]");
       if (a) { if (await addOne(+a.dataset.impadd)) { toast("Login added"); staff(); } return; }
-      if (r) { const t = missing[+r.dataset.imprm]; if (!confirm(`Remove ${t.rep} from the portal's rep list? Their logged cases stay.`)) return; try { await api("/hub/tracker-reps/" + encodeURIComponent(t.rep), { method: "DELETE" }); toast("Removed from the portal"); staff(); } catch (e) {} return; }
+      if (rm) { const t = missing[+rm.dataset.imprm]; if (!confirm(`Remove ${t.rep} from the portal's rep list? Their logged cases stay.`)) return; try { await api("/hub/tracker-reps/" + encodeURIComponent(t.rep), { method: "DELETE" }); toast("Removed from the portal"); staff(); } catch (er) {} return; }
       if (e.target.id === "impReps") { let n = 0; for (let i = 0; i < missing.length; i++) if (await addOne(i)) n++; toast(`Added ${n} login${n === 1 ? "" : "s"}`); staff(); }
     };
   }).catch(() => {});
-  document.getElementById("staffPick").onchange = (e) => { staffPick = e.target.value; staff(); };
-  document.getElementById("ut").onchange = (e) => { if (planToggle(e)) return; if (e.target.matches('[data-k="role"]')) { const tr = e.target.closest("[data-id]"), pp = tr.querySelector(".planpick"), np = tr.querySelector("[data-noplan]"); pp.hidden = e.target.value !== "rep"; if (np) np.hidden = e.target.value === "rep"; } };
-  document.getElementById("ut").onclick = async (e) => {
-    if (e.target.closest("[data-del]")) {
-      const tr = e.target.closest("[data-id]"), nm = tr.querySelector('[data-k="name"]').value;
-      if (!confirm(`Delete ${nm}'s login for good? Their customers stay (unassigned). A rep with orders on record can't be deleted — untick Active instead.`)) return;
-      await api("/users/" + tr.dataset.id, { method: "DELETE" }); toast("Login deleted"); staffPick = null; staff(); return;
-    }
-    if (!e.target.closest("[data-save]")) return;
-    const tr = e.target.closest("[data-id]"), body = {};
-    tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body[i.dataset.k === "smsOn" ? "smsOn" : "active"] = i.checked; else if (i.dataset.k === "rate") { if (!i.disabled && i.value.trim() !== "") body.rate = i.value.trim(); } else if (i.dataset.k === "pin") { if (i.value.trim()) body.pin = i.value.trim(); } else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
-    body.apps = { store: tr.querySelector('[data-app="store"]').checked, tracker: tr.querySelector('[data-app="tracker"]').checked };
-    if (body.role && body.role !== tr.dataset.role && !confirm(`Change this login to ${ROLE[body.role]}? They'll be signed out.`)) return;
-    await api("/users/" + tr.dataset.id, { method: "PATCH", body }); toast("Saved"); staff();
-  };
-  document.getElementById("nuAdd").onclick = async () => {
-    const g = (x) => document.getElementById(x).value;
-    const r = await api("/users", { method: "POST", body: { name: g("nu-n"), email: g("nu-e"), password: g("nu-p"), role: g("nu-r"), phone: g("nu-ph"), rate: g("nu-rate"), plan: g("nu-plan"), pin: g("nu-pin"), apps: { store: document.getElementById("nu-store").checked, tracker: document.getElementById("nu-tracker").checked }, courses: g("nu-r") === "rep" && document.querySelector("#nu-uni input") ? [...document.querySelectorAll("#nu-uni input:checked")].map((i) => +i.value) : undefined } });
-    toast(`${ROLE[g("nu-r")]} login added`); staff();
-  };
 }
 
 /* ---------- account ---------- */
@@ -2732,7 +2723,7 @@ async function smsPanel(s) {
     </div>
     <div class="row2" style="align-items:center"><button class="btn solid" type="button" id="smsSave">Save text settings</button></div>
     <h2 style="font-size:1.05rem;margin-top:.8rem">Sales reps getting texts (${on.length})</h2>
-    <p class="muted">Each rep turns texts on in the rep app under Account (or you can under Sales reps / Team logins). They need a cell number. 360 Medical Portal texts (approvals, invoices, visits, Monday digest) are set up separately in the portal under Admin → Text alerts, using the same Twilio account.</p>
+    <p class="muted">Each rep turns texts on in the rep app under Account (or you can under Team). They need a cell number. 360 Medical Portal texts (approvals, invoices, visits, Monday digest) are set up separately in the portal under Admin → Text alerts, using the same Twilio account.</p>
     ${d.people.length ? `<div style="display:grid;gap:.3rem">${d.people.map((p) => `<div class="row2" style="justify-content:space-between;flex-wrap:wrap;gap:.2rem .6rem;border-bottom:1px solid var(--line);padding:.25rem 0"><span><strong>${esc(p.name)}</strong> <span class="muted">${esc(p.role === "staff" ? "manager" : p.role === "owner" ? "admin" : "rep")}</span></span><span class="muted">${p.phone ? esc(p.phone) + (p.valid ? "" : ' <span class="err" style="display:inline;padding:0 .3rem">not a cell number</span>') : "no number"} · ${p.on ? '<span class="pill st-shipped">texts on</span>' : "texts off"}</span></div>`).join("")}</div>` : ""}
     <h2 style="font-size:1.05rem;margin-top:.8rem">Send a test text</h2>
     <div class="row2" style="align-items:end;flex-wrap:wrap"><div class="field" style="margin:0;max-width:14rem"><label class="eyebrow" for="smsTestTo">Cell number</label><input id="smsTestTo" type="tel" placeholder="956-555-1234"></div><button class="btn" type="button" id="smsTest"${d.info.ready ? "" : " disabled"}>Send test</button></div>
@@ -2804,7 +2795,7 @@ if (window.AppRefresh) window.AppRefresh.init({
   if (new URLSearchParams(location.search).get("embed") === "1") document.body.classList.add("embed");
   if (/^#(staff|setup|apps|account|settings|commissions|reps|geo|howto|salescost|pnl|analytics|university)$/.test(location.hash)) { view = location.hash.slice(1); history.replaceState(null, "", location.pathname); }
   const sso = new URLSearchParams(location.search).get("sso");
-  if (sso) { const name = new URLSearchParams(location.search).get("name"); history.replaceState(null, "", location.pathname); window.__ssoMsg = sso === "expired" ? "That link from the portal expired — go back and tap it again." : `There's no store login for ${name || "that portal sign-in"} yet. Sign in here, or an admin can add one under Team logins (same email).`; }
+  if (sso) { const name = new URLSearchParams(location.search).get("name"); history.replaceState(null, "", location.pathname); window.__ssoMsg = sso === "expired" ? "That link from the portal expired — go back and tap it again." : `There's no store login for ${name || "that portal sign-in"} yet. Sign in here, or an admin can add one under Team (same email).`; }
   const res = await fetch("/api/admin/me");
   if (res.ok) { me = (await res.json()).user; HUB = await api("/hub").catch(() => HUB); shell(); } else drawLogin();
 })();
