@@ -50,7 +50,9 @@ body { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center
     if (!r.ok) return gone(j.error);
     info = j;
     $("h").textContent = "Reset your sign-in";
-    $("p").textContent = `Hi ${(j.name || "").trim().split(/\s+/)[0] || "there"} — choose a new password for ${j.email}. It works on the store${j.apps && j.apps.tracker ? " and the 360 Medical Portal" : ""}.`;
+    const ap = j.apps || { store: true }, here = j.role === "rep" ? "the rep app" : "the store admin";
+    $("p").textContent = `Hi ${(j.name || "").trim().split(/\s+/)[0] || "there"} — choose a new password for ${j.email}. It works on ${ap.store && ap.tracker ? `${here} and the 360 Medical Portal` : ap.tracker ? "the 360 Medical Portal" : here}.`;
+    $("toApp").href = j.role === "rep" ? "/rep" : "/admin";
     if (j.pinSet) $("rules").textContent = "The PIN signs you in by name on both apps. Leave it blank to keep the one you have."; else { $("pinLabel").textContent = "PIN (optional)"; $("rules").textContent = "A PIN lets you sign in by name on both apps without typing a password."; }
     $("f").hidden = false; $("pw").focus();
   }).catch(() => gone("We couldn't check your link. Make sure you're online and try again."));

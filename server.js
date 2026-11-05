@@ -980,6 +980,22 @@ async function teamByPin(pin) {
   for (const u of rows) if (appsOf(u).store && (await bcrypt.compare(pin, u.pin_hash))) return u;
   return null;
 }
+// one PIN per person across the store: a team PIN may not be a customer's PIN, another team member's, or the site PIN.
+// Returns the reason it's taken, or null. Used by Team (add, card), My account, the reset page and the portal's PIN hand-over.
+async function pinTaken(pin, selfId) {
+  const st = await pinState();
+  const { rows: [c] } = await q("select 1 from customers where access_pin_key = $1", [customerPinKey(st, pin)]);
+  if (c) return "That PIN is already used by a customer. Pick another.";
+  const t = await teamByPin(pin);
+  if (t && t.id !== selfId) return "That PIN is already used by someone else here. Pick another.";
+  if (st.hash && (await bcrypt.compare(pin, st.hash))) return "That PIN is the store's own sign-in PIN. Pick another.";
+  return null;
+}
+// a password reset / change or a switch-off ends every session the person has — on the store, and on the portal, which checks this number
+async function endSessions(userId, keepToken) {
+  await q("update users set sess_version = sess_version + 1 where id = $1", [userId]);
+  if (keepToken) await q("delete from sessions where user_id = $1 and token <> $2", [userId, keepToken]); else await q("delete from sessions where user_id = $1", [userId]);
+}
 async function teamSignIn(res, u) {
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '14 days')", [token, u.id]);
@@ -1245,7 +1261,8 @@ async function staffResetUser(k) {
 }
 async function sendStaffReset(u, s) {
   const st = await pinState(), link = staffResetLink(st, u, Date.now() + 60 * 60 * 1000), brand = s.brand || "360 Peptides", first = greetName(u.name);
-  const app = u.role === "rep" ? "the rep app and the 360 Medical Portal" : "the store admin and the 360 Medical Portal";
+  const ap = appsOf(u), here = u.role === "rep" ? "the rep app" : "the store admin";
+  const app = ap.store && ap.tracker ? `${here} and the 360 Medical Portal` : ap.tracker ? "the 360 Medical Portal" : here;
   return mail.send({ to: u.email, subject: "Reset your sign-in", replyTo: isEmail(s.orderEmail || "") ? s.orderEmail : undefined,
     text: [`Hi ${first},`, "", `Someone asked to reset the sign-in for ${u.email} (${app}). If that was you, set a new password here — the link works for 1 hour:`, link, "", "If it wasn't you, ignore this email; nothing changes.", "", `— ${brand}`].join("\n"),
     html: emailHtml(s, { eyebrow: "Sign-in help", kicker: "Password reset", title: "Reset your sign-in", preheader: "A link to set a new password (good for 1 hour)",
@@ -1278,14 +1295,9 @@ app.post("/api/staff/reset", jsonOnly, limit("staffresetset", 10, 15 * 60 * 1000
   const pass = String(req.body?.password || ""), pin = String(req.body?.pin || "").replace(/\D/g, "");
   if (pass.length < 8) return bad(res, "Use a password of at least 8 characters.");
   if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits.");
-  if (pin) { // the same rules as Team: nobody else may have it
-    const st = await pinState();
-    const { rows: [c] } = await q("select 1 from customers where access_pin_key = $1", [customerPinKey(st, pin)]);
-    const t = await teamByPin(pin);
-    if (c || (t && t.id !== u.id) || (st.hash && (await bcrypt.compare(pin, st.hash)))) return bad(res, "That PIN is already used by someone else here. Pick another.");
-  }
+  if (pin) { const why = await pinTaken(pin, u.id); if (why) return bad(res, why); } // the same rule as Team: nobody else may have it
   await q(`update users set pass_hash = $1${pin ? ", pin_hash = $3, pin_version = pin_version + 1" : ""} where id = $2`, pin ? [await bcrypt.hash(pass, 11), u.id, await bcrypt.hash(pin, 11)] : [await bcrypt.hash(pass, 11), u.id]);
-  await q("delete from sessions where user_id = $1", [u.id]); // every old session ends; this one starts fresh
+  await endSessions(u.id); // every old session ends, on both apps; this one starts fresh
   if (appsOf(u).store) await teamSignIn(res, u);
   pokeTracker();
   console.log(`Staff reset done for ${u.email}${pin ? " (password + PIN)" : " (password)"}`);
@@ -1294,6 +1306,7 @@ app.post("/api/staff/reset", jsonOnly, limit("staffresetset", 10, 15 * 60 * 1000
 app.post("/api/admin/my-pin", wrap(auth), wrap(async (req, res) => {
   const pin = String(req.body?.pin || "").replace(/\D/g, "");
   if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits.");
+  if (pin) { const why = await pinTaken(pin, req.user.id); if (why) return bad(res, why); }
   await q("update users set pin_hash = $1, pin_version = pin_version + 1 where id = $2", [pin ? await bcrypt.hash(pin, 11) : null, req.user.id]);
   res.json({ ok: true, pinSet: !!pin });
 }));
@@ -1341,8 +1354,8 @@ app.post("/api/admin/password", wrap(auth), wrap(async (req, res) => {
   const { rows: [u] } = await q("select pass_hash from users where id = $1", [req.user.id]);
   if (!(await bcrypt.compare(String(current || ""), u.pass_hash))) return bad(res, "Current password is wrong.");
   await q("update users set pass_hash = $1 where id = $2", [await bcrypt.hash(String(next), 11), req.user.id]);
-  await q("delete from sessions where user_id = $1 and token <> $2", [req.user.id, parseCookies(req.headers.cookie).sid]);
-  res.json({ ok: true });
+  await endSessions(req.user.id, parseCookies(req.headers.cookie).sid); // every other session ends, on both apps
+  pokeTracker(); res.json({ ok: true });
 }));
 
 const admin = express.Router();
@@ -2454,11 +2467,11 @@ admin.patch("/reps/:id", owner, wrap(async (req, res) => {
   if (b.phone !== undefined) await q("update users set phone = $1 where id = $2", [str(b.phone, 40), id]);
   if (b.smsOn !== undefined) { if (b.smsOn && !sms.norm((await q("select phone from users where id = $1", [id])).rows[0]?.phone)) return bad(res, "Add a cell number first to turn texts on."); await q("update users set sms_on = $1 where id = $2", [!!b.smsOn, id]); pokeTracker(); }
   if (b.rate !== undefined) { const r = rateOf(b.rate); if (r === null) return bad(res, "Enter the commission as a percent."); await q("update users set commission_rate = $1 where id = $2", [r, id]); }
-  if (b.active !== undefined) { await q("update users set active = $1 where id = $2", [!!b.active, id]); if (!b.active) await q("delete from sessions where user_id = $1", [id]); }
+  if (b.active !== undefined) { await q("update users set active = $1 where id = $2", [!!b.active, id]); if (!b.active) await endSessions(id); }
   if (b.password) {
     if (String(b.password).length < 8) return bad(res, "Password needs at least 8 characters.");
     await q("update users set pass_hash = $1 where id = $2", [await bcrypt.hash(String(b.password), 11), id]);
-    await q("delete from sessions where user_id = $1", [id]);
+    await endSessions(id); // on both apps
   }
   res.json({ ok: true });
 }));
@@ -2957,6 +2970,7 @@ admin.post("/users", owner, wrap(async (req, res) => {
     const apps = JSON.stringify({ store: !(b.apps && b.apps.store === false), tracker: !!(b.apps && b.apps.tracker) });
     const pin = String(b.pin || "").replace(/\D/g, "");
     if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits.");
+    if (pin) { const why = await pinTaken(pin, null); if (why) return bad(res, why); }
     const { rows: [u] } = await q("insert into users(email,name,role,pass_hash,phone,commission_rate,apps,pin_hash,comm_tiered) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id", [email, str(b.name, 80), role, await bcrypt.hash(pass, 11), str(b.phone, 40), rate, apps, pin ? await bcrypt.hash(pin, 11) : null, tiered]);
     if (role === "rep") { try { if (Array.isArray(b.courses)) await UNI.setAssignments(u.id, b.courses, req.user.name || req.user.email); else await UNI.autoAssign(u.id, JSON.parse(apps), req.user.name || req.user.email); } catch (e) { console.error("University assign failed:", e.message); } }
     pokeTracker(); res.json({ ok: true, id: u.id });
@@ -2983,18 +2997,18 @@ admin.patch("/users/:id", owner, wrap(async (req, res) => {
     await q("update users set role = $1, commission_rate = $2 where id = $3", [b.role, b.role === "rep" ? (u.commission_rate ?? 0) : 0, id]);
     await q("delete from sessions where user_id = $1", [id]);
   }
-  if (b.active !== undefined) { await q("update users set active = $1 where id = $2", [!!b.active, id]); if (!b.active) await q("delete from sessions where user_id = $1", [id]); }
+  if (b.active !== undefined) { await q("update users set active = $1 where id = $2", [!!b.active, id]); if (!b.active) await endSessions(id); }
   if (b.name !== undefined) await q("update users set name = $1 where id = $2", [str(b.name, 80), id]);
   if (b.phone !== undefined) await q("update users set phone = $1 where id = $2", [str(b.phone, 40), id]);
   if (b.smsOn !== undefined) { if (b.smsOn && !sms.norm((await q("select phone from users where id = $1", [id])).rows[0]?.phone)) return bad(res, "Add a cell number first to turn texts on."); await q("update users set sms_on = $1 where id = $2", [!!b.smsOn, id]); }
   if (b.apps && typeof b.apps === "object") await q("update users set apps = $1 where id = $2", [JSON.stringify({ store: b.apps.store !== false, tracker: !!b.apps.tracker }), id]);
-  if (b.pin !== undefined) { const pin = String(b.pin || "").replace(/\D/g, ""); if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits."); if (pin || b.pin === "") await q("update users set pin_hash = $1, pin_version = pin_version + 1 where id = $2", [pin ? await bcrypt.hash(pin, 11) : null, id]); }
+  if (b.pin !== undefined) { const pin = String(b.pin || "").replace(/\D/g, ""); if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits."); if (pin) { const why = await pinTaken(pin, id); if (why) return bad(res, why); } if (pin || b.pin === "") await q("update users set pin_hash = $1, pin_version = pin_version + 1 where id = $2", [pin ? await bcrypt.hash(pin, 11) : null, id]); }
   if (b.plan === "tiered" || b.plan === "flat") await q("update users set comm_tiered = $1 where id = $2", [b.plan === "tiered", id]);
   if (b.rate !== undefined && b.rate !== "" && (b.role === "rep" || u.role === "rep")) { const r = rateOf(b.rate); if (r === null) return bad(res, "Enter the commission as a percent."); await q("update users set commission_rate = $1 where id = $2", [r, id]); }
   if (b.password) {
     if (String(b.password).length < 8) return bad(res, "Password needs at least 8 characters");
     await q("update users set pass_hash = $1 where id = $2", [await bcrypt.hash(String(b.password), 11), id]);
-    await q("delete from sessions where user_id = $1", [id]);
+    await endSessions(id); // on both apps
   }
   pokeTracker(); res.json({ ok: true });
 }));
@@ -3016,7 +3030,7 @@ function hubVerify(token) {
 }
 // calls from the portal carry Authorization: Hub <signed {exp}>
 const hubAuth = (req, res, next) => { const t = /^Hub (.+)$/.exec(req.headers.authorization || ""); if (!HUB_SECRET || !t || !(hubVerify(t[1]) || {}).svc) return bad(res, "Hub signature missing or wrong", 401); next(); };
-const hubUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, phone: u.phone || "", sms_on: !!u.sms_on, pin_set: u.pin_set !== undefined ? !!u.pin_set : u.pin_hash !== undefined ? !!u.pin_hash : undefined, commission_rate: u.commission_rate, active: u.active, apps: appsOf(u), pin_version: u.pin_version || 0 });
+const hubUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, phone: u.phone || "", sms_on: !!u.sms_on, pin_set: u.pin_set !== undefined ? !!u.pin_set : u.pin_hash !== undefined ? !!u.pin_hash : undefined, commission_rate: u.commission_rate, active: u.active, apps: appsOf(u), sv: u.sess_version === undefined ? undefined : Number(u.sess_version) || 0, pin_version: u.pin_version || 0 });
 // the people the portal should know: everyone with the 360 Medical Portal box ticked
 // the portal retiring its own rep PINs: that PIN becomes the login's store PIN when the login has none (never overwrites one)
 // the portal's "Forgot?" lands here through the apps' link (the portal never sees passwords)
@@ -3037,15 +3051,15 @@ app.post("/api/hub/set-pin", hubAuth, wrap(async (req, res) => {
   if (!u) return bad(res, "No such login", 404);
   if (pin.length < 4 || pin.length > 10) return bad(res, "A PIN is 4 to 10 digits.");
   if (u.pin_hash) return res.json({ ok: true, kept: true, same: await bcrypt.compare(pin, u.pin_hash) }); // the login has a PIN already: say whether it is this one
-  const { rows: [other] } = await q("select 1 from customers where access_pin_key = $1", [customerPinKey(await pinState(), pin)]);
-  if (other || (await teamByPin(pin))) return res.json({ ok: false, clash: true, error: "That PIN is already used by someone else on the store" });
+  if (await pinTaken(pin, u.id)) return res.json({ ok: false, clash: true, error: "That PIN is already used by someone else on the store" });
   await q("update users set pin_hash = $1, pin_version = pin_version + 1 where id = $2", [await bcrypt.hash(pin, 11), id]);
   console.log(`PIN for ${u.name} carried over from the portal`);
   res.json({ ok: true, set: true });
 }));
 app.get("/api/hub/people", hubAuth, wrap(async (req, res) => {
-  const { rows } = await q("select id, email, name, role, phone, sms_on, commission_rate, active, apps, pin_version, (pin_hash is not null) pin_set from users order by name");
-  res.json({ people: rows.filter((u) => appsOf(u).tracker).map(hubUser), at: new Date().toISOString() });
+  const { rows } = await q("select id, email, name, role, phone, sms_on, commission_rate, active, apps, pin_version, sess_version, (pin_hash is not null) pin_set from users order by name");
+  // `others`: logins without the portal ticked — the portal refuses those emails by every door (password, Face ID) instead of falling back to an old portal-only account
+  res.json({ people: rows.filter((u) => appsOf(u).tracker).map(hubUser), others: rows.filter((u) => !appsOf(u).tracker).map((u) => ({ email: u.email, active: u.active })), at: new Date().toISOString() });
 }));
 // a portal rep signing in by name + PIN on the portal's own page: checked against the hub PIN
 app.post("/api/hub/check-pin", hubAuth, wrap(async (req, res) => {
@@ -3092,13 +3106,13 @@ async function trackerGet(pathname, query = {}) {
 // single sign-on: a signed-in person is handed to the portal with a 2-minute token; the portal makes its own session from it
 app.get(["/go/tracker", "/admin/go/tracker", "/rep/go/tracker"], wrap(async (req, res) => {
   const token = parseCookies(req.headers.cookie).sid;
-  const { rows: [u] } = token ? await q("select id, email, name, role, commission_rate, apps from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]) : { rows: [] };
+  const { rows: [u] } = token ? await q("select id, email, name, role, commission_rate, apps, sess_version from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]) : { rows: [] };
   if (!u) return res.redirect((req.path.startsWith("/rep") ? "/rep" : "/admin") + "?next=" + encodeURIComponent(req.originalUrl));
   req.user = u;
   if (!HUB_SECRET || !TRACKER_URL) return res.status(500).send("The portal isn't linked yet (HUB_SECRET / TRACKER_URL).");
   const next = /^\/(?![\/\\])[A-Za-z0-9/_#?=&%.-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : "/";
   if (!appsOf(u).tracker) return res.status(403).send("This login doesn't have the portal turned on. An admin can tick it under Team.");
-  const t = hubSign({ exp: Date.now() + 120000, sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate });
+  const t = hubSign({ exp: Date.now() + 120000, sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate, sv: Number(u.sess_version) || 0 });
   res.redirect(`${TRACKER_URL}${next.startsWith("/admin") ? "/admin/sso" : "/sso"}?t=${encodeURIComponent(t)}&next=${encodeURIComponent(next)}`);
 }));
 // the other direction: a portal login lands here with a signed token and gets a store session (matched by email)
@@ -3124,13 +3138,13 @@ app.get(["/sso", "/admin/sso", "/rep/sso"], wrap(async (req, res) => { // in-sco
 // the switch, kept inside this app's own address: a full-window frame of the portal (signed in through the frame)
 app.get(["/admin/tracker", "/rep/tracker"], wrap(async (req, res) => {
   const token = parseCookies(req.headers.cookie).sid;
-  const { rows: [u] } = token ? await q("select id, email, name, role, commission_rate, apps from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]) : { rows: [] };
+  const { rows: [u] } = token ? await q("select id, email, name, role, commission_rate, apps, sess_version from sessions s join users u on u.id = s.user_id where s.token = $1 and s.expires > now() and u.active", [token]) : { rows: [] };
   const isRep = req.path.startsWith("/rep");
   if (!u) return res.redirect(isRep ? "/rep" : "/admin");
   if (!HUB_SECRET || !TRACKER_URL) return res.redirect(isRep ? "/rep" : "/admin");
   if (!appsOf(u).tracker) return res.status(403).type("text").send("This login doesn't have the 360 Medical Portal turned on. An admin can tick it under Team.");
   const next = /^\/(?![\/\\])[A-Za-z0-9/_#-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : (u.role === "rep" ? "/" : "/admin");
-  const t = hubSign({ sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate, exp: Date.now() + 120000 });
+  const t = hubSign({ sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate, sv: Number(u.sess_version) || 0, exp: Date.now() + 120000 });
   const src = `${TRACKER_URL}${next.startsWith("/admin") ? "/admin/sso" : "/sso"}?t=${encodeURIComponent(t)}&next=${encodeURIComponent(next)}&framed=1`;
   res.type("html").send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>360 Medical · 360 Medical Portal</title>
 <link rel="manifest" href="${isRep ? "/rep.webmanifest" : "/admin.webmanifest"}"><meta name="theme-color" content="#0f1b33">
@@ -3187,7 +3201,7 @@ admin.put("/hub/plan/:id", owner, wrap(async (req, res) => {
   const { rows: [u] } = await q("select id, name, apps, role from users where id = $1", [intOrNull(req.params.id)]);
   if (!u) return bad(res, "Login not found", 404);
   if (!appsOf(u).tracker) return bad(res, "Tick 360 Medical Portal on this login and save first.");
-  try { pokeTracker(); res.json({ ok: true, ...(await trackerSend("/api/hub/plan", "PUT", { hub: u.id, rep: u.name, plan: req.body?.plan || {} })) }); } catch (e) { bad(res, e.message); }
+  try { res.json({ ok: true, ...(await trackerSend("/api/hub/plan", "PUT", { hub: u.id, rep: u.name, plan: req.body?.plan || {} })) }); } catch (e) { bad(res, e.message); }
 }));
 admin.put("/hub/team-plans", owner, wrap(async (req, res) => {
   try { res.json({ ok: true, ...(await trackerSend("/api/hub/team-plans", "PUT", { rows: Array.isArray(req.body?.rows) ? req.body.rows : [] })) }); } catch (e) { bad(res, e.message); }

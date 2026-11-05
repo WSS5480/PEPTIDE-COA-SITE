@@ -51,6 +51,7 @@ function drawLogin(msg) {
     <p class="muted" style="text-align:center">Office staff? <a href="/admin">Sign in to admin</a></p></form></div>`;
   document.querySelectorAll("[data-lmode]").forEach((b) => (b.onclick = () => { loginMode = b.dataset.lmode; localStorage.setItem("loginMode", loginMode); drawLogin(); }));
   document.getElementById("forgot").onclick = () => { const bx = document.getElementById("forgotBox"); bx.hidden = !bx.hidden; if (!bx.hidden) { const le = document.getElementById("le"); if (le && le.value) document.getElementById("fe").value = le.value; document.getElementById("fe").focus(); } };
+  document.getElementById("fe").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); document.getElementById("forgotGo").click(); } };
   document.getElementById("forgotGo").onclick = async () => {
     const em = document.getElementById("fe").value.trim(), m = document.getElementById("forgotMsg"), b = document.getElementById("forgotGo");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { m.textContent = "Enter the email you sign in with."; return; }
