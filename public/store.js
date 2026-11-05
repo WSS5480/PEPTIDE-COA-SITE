@@ -502,7 +502,7 @@ const FRAMED = (() => { try { return window.top !== window; } catch (e) { return
 async function loadAccount() {
   try { const j = await (await fetch("/api/account", { credentials: "same-origin" })).json(); ME = j.customer; MY_ORDERS = j.orders || []; HOUSE = !ME && !!j.house; STAFF = j.staff || null; } catch (e) { ME = null; HOUSE = false; STAFF = null; }
   staffBar();
-  $("acctLabel").textContent = ME ? (ME.name || "Account").split(" ")[0] : HOUSE ? "Office" : "Sign in";
+  $("acctLabel").textContent = ME ? (ME.name || "Account").split(" ")[0] : HOUSE ? (STAFF && STAFF.name ? STAFF.name.split(" ")[0] : "Office") : "Sign in"; // a team member who typed their own PIN is named, not "Office"
   whoBar();
 }
 // an admin / manager / rep looking at the store: a way back to where they came from (their app, or the portal)
@@ -572,8 +572,8 @@ function acctView(mode) {
     return;
   }
   if (!ME && HOUSE) {
-    b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Office sign-in</h2>${close}</div>
-      <p class="dist">You're signed in with the store PIN. Store prices are showing and the cart is open. At checkout you pick <strong>who the order is for</strong> — a customer on file (it goes on their account and their rep is credited) or a walk-in (no account, no rep). Orders show who placed them. Customers with their own PIN see their own pricing instead.</p>
+    b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">${STAFF && STAFF.name ? esc(STAFF.name) : "Office sign-in"}</h2>${close}</div>
+      <p class="dist">${STAFF && STAFF.name ? `You're signed in as <strong>${esc(STAFF.name)}</strong> (${STAFF.role === "owner" ? "admin" : STAFF.role === "rep" ? "sales rep" : "manager"}) with your team PIN.` : "You're signed in with the store PIN."} Store prices are showing and the cart is open. At checkout you pick <strong>who the order is for</strong> — a customer on file (it goes on their account and their rep is credited) or a walk-in (no account, no rep). Orders show who placed them. Customers with their own PIN see their own pricing instead.</p>
       <div class="row2" style="margin:.4rem 0"><a class="btn solid" href="/admin" style="display:inline-grid;place-items:center;text-decoration:none">Open Admin</a><a class="btn" href="/rep" style="display:inline-grid;place-items:center;text-decoration:none">Rep app</a></div>
       <p class="dist">Admin and the rep app ask for your email and password (team logins). <button class="linkbtn" type="button" id="acOut">Sign out</button></p>
       <form id="acForm" class="stack" style="margin-top:.6rem;padding-top:.6rem;border-top:1px solid var(--line)"><div class="field"><label class="eyebrow" for="acPin">Sign in as a customer with their PIN (to see their pricing or order for them)</label><input id="acPin" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Customer's PIN"></div>
