@@ -243,10 +243,34 @@ function openCheckout() {
   $("coSubmit").textContent = submitLabel();
   $("cEmailLabel").textContent = ME ? "Email (optional)" : "Email";
   drawFulfillment();
+  drawWho();
   const saved = ME ? { name: ME.name, email: ME.email, phone: ME.phone, ...(ME.address || {}) } : (store.get("buyer") || {});
   [["cName", "name"], ["cEmail", "email"], ["cPhone", "phone"], ["a1", "line1"], ["a2", "line2"], ["aCity", "city"], ["aState", "state"], ["aZip", "zip"]].forEach(([id, k]) => { if (saved[k] && !$(id).value) $(id).value = saved[k]; });
   if (CODE) applyCode(); else drawTotals();
   openD($("checkout"));
+}
+/* ---------- the office ordering: who is it for? ---------- */
+let HOUSE_CUSTS = null; // the customer list for the picker (office / team sign-in only)
+async function drawWho() {
+  let box = $("coWho");
+  if (ME || !(HOUSE || STAFF)) { if (box) box.remove(); return; }
+  if (!box) { box = document.createElement("div"); box.id = "coWho"; box.className = "okbox"; box.style.cssText = "gap:.4rem;margin-bottom:.6rem"; $("coIntro").insertAdjacentElement("afterend", box); }
+  box.innerHTML = `<span class="eyebrow">Who is this order for?</span><select id="coCust" style="width:100%"><option value="0">Walk-in — no customer account</option></select><span class="dist" id="coWhoNote">Loading customers…</span>`;
+  try { if (!HOUSE_CUSTS) HOUSE_CUSTS = (await (await fetch("/api/house/customers", { credentials: "same-origin" })).json()).customers || []; } catch (e) { HOUSE_CUSTS = []; }
+  const sel = $("coCust"); if (!sel) return;
+  sel.innerHTML = `<option value="0">Walk-in — no customer account</option>` + HOUSE_CUSTS.map((c) => `<option value="${c.id}">${esc(c.name)}${c.company ? ` (${esc(c.company)})` : ""}${c.email ? ` — ${esc(c.email)}` : ""}${c.rep ? ` · rep ${esc(c.rep)}` : ""}</option>`).join("");
+  const note = () => {
+    const c = HOUSE_CUSTS.find((x) => String(x.id) === sel.value);
+    if (c) $("coWhoNote").innerHTML = `Goes on <strong>${esc(c.name)}</strong>'s account${c.rep ? ` · credited to ${esc(c.rep)}` : " · no sales rep"}. Their details are filled in below — change the shipping address if this one ships elsewhere.`;
+    else { const em = $("cEmail").value.trim().toLowerCase(), m = em && HOUSE_CUSTS.find((x) => x.email.toLowerCase() === em); $("coWhoNote").innerHTML = m ? `<strong>${esc(em)}</strong> is on <strong>${esc(m.name)}</strong>'s account — pick them above to put the order there. As a walk-in it stays off every account.` : "Not linked to any customer account and no rep is credited. Type the buyer's details below."; }
+  };
+  sel.onchange = () => {
+    const c = HOUSE_CUSTS.find((x) => String(x.id) === sel.value);
+    if (c) { const a = c.address || {}; [["cName", c.name], ["cEmail", c.email], ["cPhone", c.phone], ["a1", a.line1], ["a2", a.line2], ["aCity", a.city], ["aState", a.state], ["aZip", a.zip]].forEach(([id, v]) => { $(id).value = v || ""; }); }
+    note();
+  };
+  $("cEmail").addEventListener("input", () => { if (sel.value === "0") note(); });
+  note();
 }
 async function submitOrder(e) {
   e.preventDefault();
@@ -262,6 +286,7 @@ async function submitOrder(e) {
     name: v("cName"), email: v("cEmail"), phone: v("cPhone"), smsOk: !!(S.smsCustomer && $("cSms") && $("cSms").checked),
     address: { line1: v("a1"), line2: v("a2"), city: v("aCity"), state: v("aState"), zip: v("aZip"), country: "US" },
     fulfillment: f ? f.key : "ship", discountCode: CODE ? CODE.code : "", pay: S.cardPayments ? "card" : "request", inpage: INPAGE(),
+    ...($("coCust") && !ME ? { customerId: Number($("coCust").value) || 0 } : {}),
     note: v("cNote"), website: $("website").value, confirmAge: true, confirmResearch: true, items: cart
   };
   $("coSubmit").disabled = true; $("coSubmit").textContent = INPAGE() ? "One moment…" : S.cardPayments ? "Opening the payment page…" : "Sending…";
@@ -548,7 +573,7 @@ function acctView(mode) {
   }
   if (!ME && HOUSE) {
     b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Office sign-in</h2>${close}</div>
-      <p class="dist">You're signed in with the store PIN. Store prices are showing and the cart is open; checkout asks for the customer's name and email, like a walk-in order. Customers with their own PIN see their own pricing instead.</p>
+      <p class="dist">You're signed in with the store PIN. Store prices are showing and the cart is open. At checkout you pick <strong>who the order is for</strong> — a customer on file (it goes on their account and their rep is credited) or a walk-in (no account, no rep). Orders show who placed them. Customers with their own PIN see their own pricing instead.</p>
       <div class="row2" style="margin:.4rem 0"><a class="btn solid" href="/admin" style="display:inline-grid;place-items:center;text-decoration:none">Open Admin</a><a class="btn" href="/rep" style="display:inline-grid;place-items:center;text-decoration:none">Rep app</a></div>
       <p class="dist">Admin and the rep app ask for your email and password (team logins). <button class="linkbtn" type="button" id="acOut">Sign out</button></p>
       <form id="acForm" class="stack" style="margin-top:.6rem;padding-top:.6rem;border-top:1px solid var(--line)"><div class="field"><label class="eyebrow" for="acPin">Sign in as a customer with their PIN (to see their pricing or order for them)</label><input id="acPin" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Customer's PIN"></div>

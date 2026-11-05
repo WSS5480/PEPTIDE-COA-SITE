@@ -331,16 +331,25 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
   if (!address.line1 || !address.city || !address.state || !address.zip) return bad(res, "Enter a full shipping address.");
   const items = Array.isArray(b.items) ? b.items.slice(0, 50) : [];
   if (!items.length) return bad(res, "Your cart is empty.");
-  // the order belongs to the signed-in customer, or to a customer with the same email; their sales rep gets the commission
+  // the order belongs to the signed-in customer, or to a customer with the same email; their sales rep gets the commission.
+  // The office (store PIN) or a team member says who it's for: a picked customer, or "walk-in" — then it is linked to nobody, even
+  // if the email typed is on a customer's account (no order lands on an account by accident)
   let cust = await customerFrom(req); const me = cust; // `me` stays the signed-in customer (or null): saved cards follow the login, never an email match
+  const staff = await staffFrom(req), office = !!(house || staff);
   const markup = cust && cust.markup !== null ? Number(cust.markup) : null; // only a signed-in customer gets their own prices (that's what they saw)
-  if (!cust) cust = (await q("select id, rep_id from customers where lower(email) = $1 and active", [email])).rows[0] || null;
+  if (!cust && office && b.customerId !== undefined) {
+    const pick = intOrNull(b.customerId);
+    if (pick) { cust = (await q("select id, rep_id from customers where id = $1 and active", [pick])).rows[0] || null; if (!cust) return bad(res, "That customer is no longer on file. Pick again."); }
+    else cust = null; // walk-in
+  } else if (!cust) cust = (await q("select id, rep_id from customers where lower(email) = $1 and active", [email])).rows[0] || null;
   else cust.rep_id = (await q("select rep_id from customers where id = $1", [cust.id])).rows[0]?.rep_id ?? null;
+  const placedBy = staff ? `${staff.role === "owner" ? "Owner" : staff.role === "rep" ? "Rep" : "Staff"}: ${staff.name}` : house ? "Office" : "Customer";
+  const forWhom = office && cust ? ` for customer #${cust.id}` : office ? " (walk-in, no customer account)" : "";
   const payCard = b.pay === "card";
   if (payCard && !(s.cardPayments && stripe)) return bad(res, "Card payments aren't available right now. Please submit the order as a request instead.");
   try {
     const r = await createOrder({ name, email, phone, address, items, fulfillment: b.fulfillment, payMethod: payCard ? "card" : "request", discountCode: b.discountCode, markup, guestUp: !signedIn && !house && s.guestPricesOn ? Math.max(0, Number(s.guestMarkup) || 0) : 0, note: b.note, customerId: cust ? cust.id : null, repId: cust ? cust.rep_id : null,
-      placedBy: "Customer", event: `Order placed; customer confirmed research use and age${payCard ? "; paying by card" : ""}`, settings: s });
+      placedBy, event: `Order placed${office ? ` by ${placedBy}${forWhom}` : ""}; ${office ? "research use and age confirmed" : "customer confirmed research use and age"}${payCard ? "; paying by card" : ""}`, settings: s });
     if (b.smsOk && sms.norm(phone)) await q("update orders set sms_ok = true where id = $1", [r.id]);
     if (payCard) {
       // in the store's own checkout (card form on the page) when the publishable key is set and the store asked for it;
@@ -1151,6 +1160,13 @@ async function staffFrom(req) {
   if (!u) return null;
   return { name: u.name, role: u.role, app: u.role === "rep" ? "/rep" : "/admin", tracker: appsOf(u).tracker && HUB_SECRET && TRACKER_URL ? TRACKER_URL + (u.role === "rep" ? "/" : "/admin") : "" };
 }
+// the Office checkout: who the order is for. Only the store PIN or a team sign-in may see the customer list.
+app.get("/api/house/customers", wrap(async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!(await houseFrom(req)) && !(await staffFrom(req))) return bad(res, "Sign in with the store PIN first.", 401);
+  const { rows } = await q("select c.id, c.name, c.company, c.email, c.phone, c.address, u.name rep_name from customers c left join users u on u.id = c.rep_id where c.active order by lower(c.name)");
+  res.json({ customers: rows.map((c) => ({ id: c.id, name: c.name, company: c.company || "", email: c.email || "", phone: c.phone || "", address: c.address || {}, rep: c.rep_name || "" })) });
+}));
 app.get("/api/account", wrap(async (req, res) => {
   const c = await customerFrom(req);
   res.set("Cache-Control", "no-store");
