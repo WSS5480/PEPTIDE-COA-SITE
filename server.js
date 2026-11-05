@@ -1996,6 +1996,16 @@ admin.get("/customers", wrap(async (req, res) => {
     group by c.id order by c.created_at desc limit 3000`, isRep(req) ? [term, req.user.id] : [term]);
   res.json({ customers: rows });
 }));
+// a customer a rep added: the office approves and sets pricing before any order can be placed for them — tell the office
+async function notifyNewCustomer(id, name, company, email, phone, by) {
+  const s = await getSettings();
+  console.log(`Customer "${name}" added by rep ${by} — waiting for approval`);
+  if (s.pushOn !== false && s.pushOrderOffice !== false) pushOffice({ title: `New customer to approve · ${name}`, body: `Added by ${by}${company ? ` · ${company}` : ""} — set their pricing to approve`, url: "/admin#customers", tag: `custok-${id}` }, s).catch(() => {});
+  if (s.orderEmailOn && isEmail(s.orderEmail || "")) {
+    const text = [`${by} added a customer: ${name}${company ? ` (${company})` : ""}`, email ? `Email: ${email}` : "", phone ? `Phone: ${phone}` : "", "", "No orders can be placed for them until you approve them and set their pricing.", BASE_URL ? `Customers in admin: ${BASE_URL}/admin#customers` : ""].filter((x) => x !== "").join("\n");
+    await mail.send({ to: s.orderEmail, subject: `Customer to approve · ${name}`, text, html: emailHtml(s, { eyebrow: "Store admin", kicker: "New customer", title: name, badge: { text: "Waiting for approval", tone: "info" }, intro: `${by} added ${name}${company ? ` from ${company}` : ""} as a customer. No orders can be placed for them until you approve them and set their pricing (store prices, or cost plus a markup).`, button: BASE_URL ? { text: "Open Customers", url: `${BASE_URL}/admin#customers` } : null, footer: `Sent to the store's order email. Turn these off under Email & approvals.` }) }, s).catch((e) => console.error("Customer-approval email failed:", e.message));
+  }
+}
 admin.post("/customers", (req, res, next) => (isRep(req) ? next() : owner(req, res, next)), wrap(async (req, res) => {
   const b = req.body || {}, email = str(b.email, 160).toLowerCase();
   if (!str(b.name, 120)) return bad(res, "Enter the customer's name.");
@@ -2008,15 +2018,7 @@ admin.post("/customers", (req, res, next) => (isRep(req) ? next() : owner(req, r
   const { rows: [c] } = await q("insert into customers(email, name, company, phone, address, pass_hash, rep_id, markup, approved, approved_at, approved_by, created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id",
     [email || null, str(b.name, 120), str(b.company, 120), str(b.phone, 40), JSON.stringify(cleanAddress(b.address)), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), repId, b.markup === "" || b.markup === null || b.markup === undefined ? null : markupOf(b.markup), !pending, pending ? null : new Date(), pending ? "" : by, by]);
   if (email) await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
-  if (pending) { // the office approves and sets pricing before any order can be placed for them
-    const s = await getSettings(), name = str(b.name, 120), company = str(b.company, 120);
-    console.log(`Customer "${name}" added by rep ${by} — waiting for approval`);
-    if (s.pushOn !== false && s.pushOrderOffice !== false) pushOffice({ title: `New customer to approve · ${name}`, body: `Added by ${by}${company ? ` · ${company}` : ""} — set their pricing to approve`, url: "/admin#customers", tag: `custok-${c.id}` }, s).catch(() => {});
-    if (s.orderEmailOn && isEmail(s.orderEmail || "")) {
-      const text = [`${by} added a customer: ${name}${company ? ` (${company})` : ""}`, email ? `Email: ${email}` : "", b.phone ? `Phone: ${str(b.phone, 40)}` : "", "", "No orders can be placed for them until you approve them and set their pricing.", BASE_URL ? `Customers in admin: ${BASE_URL}/admin#customers` : ""].filter((x) => x !== "").join("\n");
-      mail.send({ to: s.orderEmail, subject: `Customer to approve · ${name}`, text, html: emailHtml(s, { eyebrow: "Store admin", kicker: "New customer", title: name, badge: { text: "Waiting for approval", tone: "info" }, intro: `${by} added ${name}${company ? ` from ${company}` : ""} as a customer. No orders can be placed for them until you approve them and set their pricing (store prices, or cost plus a markup).`, button: BASE_URL ? { text: "Open Customers", url: `${BASE_URL}/admin#customers` } : null, footer: `Sent to the store's order email. Turn these off under Email & approvals.` }) }, s).catch((e) => console.error("Customer-approval email failed:", e.message));
-    }
-  }
+  if (pending) await notifyNewCustomer(c.id, str(b.name, 120), str(b.company, 120), email, str(b.phone, 40), by);
   let pin = null;
   if (!isRep(req) && b.givePin) { try { pin = await assignCustomerPin(c.id, b.pin); } catch (e) { return res.json({ ok: true, id: c.id, pinError: e.message }); } } // the customer is saved either way; the PIN can be given from their row
   res.json({ ok: true, id: c.id, pin, pending });
@@ -3309,10 +3311,12 @@ rep.post("/customers", wrap(async (req, res) => {
   const addr = cleanAddress(b.address);
   if (!addr.line1 || !addr.city || !addr.state || !addr.zip) return bad(res, "Enter the customer's full shipping address.");
   if (email) { const { rows: [ex] } = await q("select id, rep_id from customers where lower(email) = $1", [email]); if (ex) return bad(res, ex.rep_id === req.repId ? "That customer is already on your list." : "A customer with that email already exists. Ask the office to assign them to you."); }
-  const { rows: [c] } = await q("insert into customers(email, name, company, phone, address, pass_hash, rep_id) values ($1,$2,$3,$4,$5,$6,$7) returning id",
-    [email || null, str(b.name, 120), str(b.company, 120), str(b.phone, 40), JSON.stringify(addr), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), req.repId]);
+  const pending = req.user.role === "rep", by = req.user.name || req.user.email; // an admin "viewing as" a rep is the approver, so theirs start approved
+  const { rows: [c] } = await q("insert into customers(email, name, company, phone, address, pass_hash, rep_id, approved, approved_at, approved_by, created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id",
+    [email || null, str(b.name, 120), str(b.company, 120), str(b.phone, 40), JSON.stringify(addr), await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10), req.repId, !pending, pending ? null : new Date(), pending ? "" : by, by]);
   if (email) await q("update orders set customer_id = $1 where customer_id is null and lower(email) = $2", [c.id, email]);
-  res.json({ ok: true, id: c.id });
+  if (pending) await notifyNewCustomer(c.id, str(b.name, 120), str(b.company, 120), email, str(b.phone, 40), by);
+  res.json({ ok: true, id: c.id, pending });
 }));
 rep.patch("/customers/:id", wrap(async (req, res) => {
   const b = req.body || {}, id = intOrNull(req.params.id);
