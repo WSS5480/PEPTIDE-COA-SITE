@@ -61,9 +61,20 @@ function drawLogin(msg) {
     <div class="field"><label class="eyebrow" for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>`}
     ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
     <button class="btn solid wide">Sign in</button><button class="btn wide" type="button" data-install>Download admin app</button>
+    <p class="muted" style="text-align:center;margin:0"><button class="linkbtn" type="button" id="forgot">Forgot your password or PIN?</button></p>
+    <div id="forgotBox" hidden style="display:grid;gap:.5rem"><div class="field"><label class="eyebrow" for="fe">Email you sign in with</label><input id="fe" type="email" autocomplete="username"></div><button class="btn wide" type="button" id="forgotGo">Email me a reset link</button><p class="muted" id="forgotMsg" style="text-align:center;margin:0"></p></div>
     <p class="muted" style="text-align:center;margin:0">Sales reps sign in at the <a href="/rep">rep app</a> (name + PIN there). A PIN is set under Team or My account.</p>
     <p class="muted" style="text-align:center;margin:.5rem 0 0">Customers: <a href="/?signin=1">sign in at the store</a> with the PIN we gave you.</p></form></div>`;
   document.querySelectorAll("[data-lmode]").forEach((b) => (b.onclick = () => { loginMode = b.dataset.lmode; localStorage.setItem("loginMode", loginMode); drawLogin(); }));
+  document.getElementById("forgot").onclick = () => { const bx = document.getElementById("forgotBox"); bx.hidden = !bx.hidden; if (!bx.hidden) { const le = document.getElementById("le"); if (le && le.value) document.getElementById("fe").value = le.value; document.getElementById("fe").focus(); } };
+  document.getElementById("forgotGo").onclick = async () => {
+    const em = document.getElementById("fe").value.trim(), m = document.getElementById("forgotMsg"), b = document.getElementById("forgotGo");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { m.textContent = "Enter the email you sign in with."; return; }
+    b.disabled = true; m.textContent = "Sending…";
+    try { const r = await fetch("/api/staff/reset-request", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: em }) }); const j = await r.json().catch(() => ({})); m.textContent = r.ok ? `If ${em} has a login, a reset link is on its way (good for 1 hour). Check spam if it's not there in a few minutes.` : (j.error || "That didn't work. Try again."); }
+    catch (x) { m.textContent = "Couldn't reach the store. Check your connection and try again."; }
+    b.disabled = false;
+  };
   if (pinMode) fetch("/api/admin/pin-names").then((r) => r.json()).then((j) => { const sel = document.getElementById("ln"); if (!sel) return; sel.innerHTML = `<option value="">Choose your name…</option>` + j.names.map((n) => `<option value="${n.id}"${String(n.id) === localStorage.getItem("loginName") ? " selected" : ""}>${esc(n.name)}</option>`).join(""); if (!j.names.length) sel.innerHTML = `<option value="">No PINs set yet — use email + password</option>`; }).catch(() => {});
   document.getElementById("lf").onsubmit = async (e) => {
     e.preventDefault();
@@ -2690,7 +2701,7 @@ async function staff() {
   // Add person: one form; the role decides what shows (commission and courses for reps)
   document.getElementById("addP").onclick = () => {
     const box = document.getElementById("teamNew"); if (box.innerHTML) { box.innerHTML = ""; return; }
-    box.innerHTML = `<div class="panel" style="border-color:var(--blue)"><h2>Add person</h2><div class="grid2">
+    box.innerHTML = `<div class="panel" data-fold-open style="border-color:var(--blue)"><h2>Add person</h2><div class="grid2">
       <div class="field"><label class="eyebrow" for="nu-n">Name</label><input id="nu-n"></div>
       <div class="field"><label class="eyebrow" for="nu-e">Email (their login)</label><input id="nu-e" type="email"></div>
       <div class="field"><label class="eyebrow" for="nu-p">Temporary password (8+ characters)</label><input id="nu-p" type="password" autocomplete="new-password"></div>

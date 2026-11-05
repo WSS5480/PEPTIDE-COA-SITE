@@ -129,7 +129,7 @@ const owner = (req, res, next) => (req.user.role === "owner" ? next() : bad(res,
 /* ---------- site PIN ---------- */
 // When the owner turns the PIN on, nothing on the store (pages, products, lab reports, orders)
 // is served until the visitor enters it. The admin, its login and the files it needs stay open.
-const PIN_OPEN = [/^\/api\/hub\//, /^\/invoice\/[A-Za-z0-9-]+$/, /^\/sso$/, /^\/(admin|rep)\/(sso|portal|go\/tracker)$/, /^\/go\/tracker$/, /^\/api\/rep-list$/, /^\/xlsx\.full\.min\.js$/, /^\/collapse\.js$/, /^\/uni-(render|admin|rep)\.js$/, /^\/push\.js$/, /^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/set-pin$/, /^\/api\/pin-link$/, /^\/api\/account\/pin-reset$/, /^\/api\/stripe\//, /^\/pay\//,
+const PIN_OPEN = [/^\/api\/hub\//, /^\/invoice\/[A-Za-z0-9-]+$/, /^\/sso$/, /^\/(admin|rep)\/(sso|portal|go\/tracker)$/, /^\/go\/tracker$/, /^\/api\/rep-list$/, /^\/xlsx\.full\.min\.js$/, /^\/collapse\.js$/, /^\/uni-(render|admin|rep)\.js$/, /^\/push\.js$/, /^\/admin(\.html|\.js|\.webmanifest)?$/, /^\/api\/admin\//, /^\/rep(\.html|\.js|\.webmanifest)?$/, /^\/api\/rep\//, /^\/rep-(icon-\d+|apple-touch-icon)\.png$/, /^\/pin(\.html)?$/, /^\/api\/pin$/, /^\/set-pin$/, /^\/api\/pin-link$/, /^\/api\/account\/pin-reset$/, /^\/staff\/reset$/, /^\/api\/staff\//, /^\/api\/stripe\//, /^\/pay\//,
   /^\/store\.css$/, /^\/install\.js$/, /^\/refresh\.js$/, /^\/sw\.js$/, /^\/manifest\.webmanifest$/, /^\/vial\.js$/, /^\/vial-logo$/, /^\/site-logo$/, /^\/vial-photo$/, /^\/vial-photo\.jpg$/, /^\/brand-(logo|mark|vial-logo)\.png$/, /^\/robots\.txt$/, /^\/(admin-)?(icon-\d+|apple-touch-icon)\.png$/, /^\/favicon\.ico$/];
 let pinCache = { at: 0, on: false, hash: "", secret: "", customerPins: 0 };
 async function pinState() {
@@ -1162,7 +1162,7 @@ app.post("/api/admin/login", limit("login", 10, 15 * 60 * 1000), wrap(async (req
   const email = str(req.body?.email, 160).toLowerCase(), pass = String(req.body?.password || "");
   const { rows: [u] } = await q("select * from users where lower(email) = $1 and active", [email]);
   if (!u || !(await bcrypt.compare(pass, u.pass_hash))) return bad(res, "Email or password is wrong.", 401);
-  if (!appsOf(u).store) return bad(res, "This login doesn't have the peptide store turned on. An admin can tick it under Team logins.", 403);
+  if (!appsOf(u).store) return bad(res, "This login doesn't have the peptide store turned on. An admin can tick it under Team.", 403);
   const token = crypto.randomBytes(32).toString("hex");
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '14 days')", [token, u.id]);
   res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=${14 * 86400}`);
@@ -1180,6 +1180,65 @@ app.post("/api/admin/login-pin", limit("loginpin", 10, 15 * 60 * 1000), wrap(asy
   await q("insert into sessions(token, user_id, expires) values ($1, $2, now() + interval '14 days')", [token, u.id]);
   res.set("Set-Cookie", `sid=${token}; Path=/; HttpOnly; ${SID_ATTRS()}; Max-Age=${14 * 86400}`);
   res.json({ ok: true, user: { id: u.id, name: u.name, email: u.email, role: u.role, commission_rate: u.commission_rate } });
+}));
+/* ---------- staff "Forgot?" — one reset for both apps ----------
+   A signed, one-hour link emailed to the login's address lets them set a new password (and a PIN if they like). The link is tied to the
+   password they had, so it dies once used. The store's sign-in, the rep app's and the portal's "Forgot?" all come here. */
+const staffResetLink = (st, u, exp) => `${BASE_URL}/staff/reset?k=${u.id}.${exp}.${hmac(st.secret, `staffreset:${u.id}:${exp}:${u.pass_hash}`)}`;
+async function staffResetUser(k) {
+  const m = /^(\d{1,9})\.(\d{10,16})\.([0-9a-f]{64})$/.exec(String(k || ""));
+  if (!m || +m[2] < Date.now()) return null;
+  const { rows: [u] } = await q("select * from users where id = $1 and active", [+m[1]]);
+  if (!u || !sameStr(m[3], hmac((await pinState()).secret, `staffreset:${u.id}:${m[2]}:${u.pass_hash}`))) return null;
+  return u;
+}
+async function sendStaffReset(u, s) {
+  const st = await pinState(), link = staffResetLink(st, u, Date.now() + 60 * 60 * 1000), brand = s.brand || "360 Peptides", first = greetName(u.name);
+  const app = u.role === "rep" ? "the rep app and the 360 Medical Portal" : "the store admin and the 360 Medical Portal";
+  return mail.send({ to: u.email, subject: "Reset your sign-in", replyTo: isEmail(s.orderEmail || "") ? s.orderEmail : undefined,
+    text: [`Hi ${first},`, "", `Someone asked to reset the sign-in for ${u.email} (${app}). If that was you, set a new password here — the link works for 1 hour:`, link, "", "If it wasn't you, ignore this email; nothing changes.", "", `— ${brand}`].join("\n"),
+    html: emailHtml(s, { eyebrow: "Sign-in help", kicker: "Password reset", title: "Reset your sign-in", preheader: "A link to set a new password (good for 1 hour)",
+      intro: `Hi ${first}, someone asked to reset the sign-in for ${u.email} — your login for ${app}. If that was you, set a new password with the button below. The link works for 1 hour. You can set a new PIN on the same page.`,
+      button: { text: "Set a new password", url: link }, after: `<span style="color:${INK2};font-size:13px">If it wasn't you, ignore this email — nothing changes.</span>`, footer: `${escHtml(brand)} · Team sign-in` }) }, s);
+}
+// the store's and the rep app's "Forgot?": same reply whether or not the email has a login, sent back before the email goes
+app.post("/api/staff/reset-request", jsonOnly, limit("staffreset", 5, 60 * 60 * 1000), wrap(async (req, res) => {
+  const email = str(req.body?.email, 160).toLowerCase();
+  if (!isEmail(email)) return bad(res, "Enter the email you sign in with.");
+  res.json({ ok: true });
+  try {
+    const { rows: [u] } = await q("select * from users where lower(email) = $1 and active", [email]);
+    if (!u) return;
+    const s = await getSettings();
+    if (!mail.info(s).ready || !BASE_URL) return console.error(`Staff reset for ${email}: email isn't set up (Site settings → Email)${BASE_URL ? "" : " / BASE_URL"}`);
+    const r = await sendStaffReset(u, s); console.log(`Staff reset email to ${email}: ${r.ok ? "sent" : "FAILED — " + r.error}`);
+  } catch (e) { console.error("Staff reset failed:", e.message); }
+}));
+const RESET_GONE = "This link has expired or was already used. Use \"Forgot?\" on the sign-in screen to get a new one.";
+app.get("/api/staff/reset", limit("staffresetchk", 30, 15 * 60 * 1000), wrap(async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const u = await staffResetUser(req.query.k);
+  if (!u) return bad(res, RESET_GONE, 410);
+  res.json({ ok: true, name: u.name, email: u.email, role: u.role, pinSet: !!u.pin_hash, apps: appsOf(u), brand: (await getSettings()).brand || "360 Peptides" });
+}));
+app.post("/api/staff/reset", jsonOnly, limit("staffresetset", 10, 15 * 60 * 1000), wrap(async (req, res) => {
+  const u = await staffResetUser(req.body?.k);
+  if (!u) return bad(res, RESET_GONE, 410);
+  const pass = String(req.body?.password || ""), pin = String(req.body?.pin || "").replace(/\D/g, "");
+  if (pass.length < 8) return bad(res, "Use a password of at least 8 characters.");
+  if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits.");
+  if (pin) { // the same rules as Team: nobody else may have it
+    const st = await pinState();
+    const { rows: [c] } = await q("select 1 from customers where access_pin_key = $1", [customerPinKey(st, pin)]);
+    const t = await teamByPin(pin);
+    if (c || (t && t.id !== u.id) || (st.hash && (await bcrypt.compare(pin, st.hash)))) return bad(res, "That PIN is already used by someone else here. Pick another.");
+  }
+  await q(`update users set pass_hash = $1${pin ? ", pin_hash = $3, pin_version = pin_version + 1" : ""} where id = $2`, pin ? [await bcrypt.hash(pass, 11), u.id, await bcrypt.hash(pin, 11)] : [await bcrypt.hash(pass, 11), u.id]);
+  await q("delete from sessions where user_id = $1", [u.id]); // every old session ends; this one starts fresh
+  if (appsOf(u).store) await teamSignIn(res, u);
+  pokeTracker();
+  console.log(`Staff reset done for ${u.email}${pin ? " (password + PIN)" : " (password)"}`);
+  res.json({ ok: true, to: appsOf(u).store ? (u.role === "rep" ? "/rep" : "/admin") : (TRACKER_URL ? TRACKER_URL + "/login" : "/admin"), pinSet: !!pin });
 }));
 app.post("/api/admin/my-pin", wrap(auth), wrap(async (req, res) => {
   const pin = String(req.body?.pin || "").replace(/\D/g, "");
@@ -2909,6 +2968,18 @@ const hubAuth = (req, res, next) => { const t = /^Hub (.+)$/.exec(req.headers.au
 const hubUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, phone: u.phone || "", sms_on: !!u.sms_on, pin_set: u.pin_set !== undefined ? !!u.pin_set : u.pin_hash !== undefined ? !!u.pin_hash : undefined, commission_rate: u.commission_rate, active: u.active, apps: appsOf(u), pin_version: u.pin_version || 0 });
 // the people the portal should know: everyone with the 360 Medical Portal box ticked
 // the portal retiring its own rep PINs: that PIN becomes the login's store PIN when the login has none (never overwrites one)
+// the portal's "Forgot?" lands here through the apps' link (the portal never sees passwords)
+app.post("/api/hub/reset-request", hubAuth, wrap(async (req, res) => {
+  const email = str(req.body?.email, 160).toLowerCase();
+  res.json({ ok: true });
+  try {
+    const { rows: [u] } = email ? await q("select * from users where lower(email) = $1 and active", [email]) : { rows: [] };
+    if (!u) return;
+    const s = await getSettings();
+    if (!mail.info(s).ready || !BASE_URL) return console.error(`Staff reset (portal) for ${email}: email isn't set up`);
+    const r = await sendStaffReset(u, s); console.log(`Staff reset email (asked from the portal) to ${email}: ${r.ok ? "sent" : "FAILED — " + r.error}`);
+  } catch (e) { console.error("Staff reset failed:", e.message); }
+}));
 app.post("/api/hub/set-pin", hubAuth, wrap(async (req, res) => {
   const id = intOrNull(req.body?.id), pin = String(req.body?.pin || "").replace(/\D/g, "");
   const { rows: [u] } = await q("select id, name, pin_hash from users where id = $1 and active", [id]);
@@ -2964,7 +3035,7 @@ app.get(["/go/tracker", "/admin/go/tracker", "/rep/go/tracker"], wrap(async (req
   req.user = u;
   if (!HUB_SECRET || !TRACKER_URL) return res.status(500).send("The portal isn't linked yet (HUB_SECRET / TRACKER_URL).");
   const next = /^\/(?![\/\\])[A-Za-z0-9/_#?=&%.-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : "/";
-  if (!appsOf(u).tracker) return res.status(403).send("This login doesn't have the portal turned on. An admin can tick it under Team logins.");
+  if (!appsOf(u).tracker) return res.status(403).send("This login doesn't have the portal turned on. An admin can tick it under Team.");
   const t = hubSign({ exp: Date.now() + 120000, sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate });
   res.redirect(`${TRACKER_URL}${next.startsWith("/admin") ? "/admin/sso" : "/sso"}?t=${encodeURIComponent(t)}&next=${encodeURIComponent(next)}`);
 }));
@@ -2995,7 +3066,7 @@ app.get(["/admin/tracker", "/rep/tracker"], wrap(async (req, res) => {
   const isRep = req.path.startsWith("/rep");
   if (!u) return res.redirect(isRep ? "/rep" : "/admin");
   if (!HUB_SECRET || !TRACKER_URL) return res.redirect(isRep ? "/rep" : "/admin");
-  if (!appsOf(u).tracker) return res.status(403).type("text").send("This login doesn't have the 360 Medical Portal turned on. An admin can tick it under Team logins.");
+  if (!appsOf(u).tracker) return res.status(403).type("text").send("This login doesn't have the 360 Medical Portal turned on. An admin can tick it under Team.");
   const next = /^\/(?![\/\\])[A-Za-z0-9/_#-]*$/.test(String(req.query.next || "")) ? String(req.query.next) : (u.role === "rep" ? "/" : "/admin");
   const t = hubSign({ sso: true, email: u.email, name: u.name, role: u.role, apps: appsOf(u), id: u.id, commission_rate: u.commission_rate, exp: Date.now() + 120000 });
   const src = `${TRACKER_URL}${next.startsWith("/admin") ? "/admin/sso" : "/sso"}?t=${encodeURIComponent(t)}&next=${encodeURIComponent(next)}&framed=1`;
@@ -3198,7 +3269,7 @@ function stampedPage(file) {
   if (!pageCache.has(file)) pageCache.set(file, require("fs").readFileSync(path.join(__dirname, "public", file), "utf8").replace(/((?:src|href)=")(\/[\w./-]+\.(?:js|css))(?:\?v=[^"]*)?"/g, (m, a, f) => `${a}${f}?v=${STAMP}"`));
   return pageCache.get(file);
 }
-const PAGES = { "/": "index.html", "/index.html": "index.html", "/lab-reports": "index.html", "/admin": "admin.html", "/admin.html": "admin.html", "/rep": "rep.html", "/rep.html": "rep.html", "/policy": "policy.html", "/policy.html": "policy.html", "/set-pin": "set-pin.html" };
+const PAGES = { "/": "index.html", "/index.html": "index.html", "/lab-reports": "index.html", "/admin": "admin.html", "/admin.html": "admin.html", "/rep": "rep.html", "/rep.html": "rep.html", "/policy": "policy.html", "/policy.html": "policy.html", "/set-pin": "set-pin.html", "/staff/reset": "staff-reset.html" };
 app.get(Object.keys(PAGES), (req, res) => res.set("Cache-Control", "no-cache").type("html").send(stampedPage(PAGES[req.path])));
 // the service worker's cache is named after the build too, so an old shell is dropped the moment a new version is live
 app.get("/sw.js", (req, res) => res.set("Cache-Control", "no-cache").type("application/javascript").send(require("fs").readFileSync(path.join(__dirname, "public", "sw.js"), "utf8").replace(/const CACHE = "[^"]*";/, `const CACHE = "store-${STAMP}";`)));

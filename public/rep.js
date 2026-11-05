@@ -46,8 +46,19 @@ function drawLogin(msg) {
     ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
     <button class="btn solid wide rep">Sign in</button>
     <button class="btn wide" type="button" data-install>Download rep app</button>
+    <p class="muted" style="text-align:center;margin:0"><button class="linkbtn" type="button" id="forgot">Forgot your password or PIN?</button></p>
+    <div id="forgotBox" hidden style="display:grid;gap:.5rem"><div class="field"><label class="eyebrow" for="fe">Email you sign in with</label><input id="fe" type="email" autocomplete="username"></div><button class="btn wide" type="button" id="forgotGo">Email me a reset link</button><p class="muted" id="forgotMsg" style="text-align:center;margin:0"></p></div>
     <p class="muted" style="text-align:center">Office staff? <a href="/admin">Sign in to admin</a></p></form></div>`;
   document.querySelectorAll("[data-lmode]").forEach((b) => (b.onclick = () => { loginMode = b.dataset.lmode; localStorage.setItem("loginMode", loginMode); drawLogin(); }));
+  document.getElementById("forgot").onclick = () => { const bx = document.getElementById("forgotBox"); bx.hidden = !bx.hidden; if (!bx.hidden) { const le = document.getElementById("le"); if (le && le.value) document.getElementById("fe").value = le.value; document.getElementById("fe").focus(); } };
+  document.getElementById("forgotGo").onclick = async () => {
+    const em = document.getElementById("fe").value.trim(), m = document.getElementById("forgotMsg"), b = document.getElementById("forgotGo");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { m.textContent = "Enter the email you sign in with."; return; }
+    b.disabled = true; m.textContent = "Sending…";
+    try { const r = await fetch("/api/staff/reset-request", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: em }) }); const j = await r.json().catch(() => ({})); m.textContent = r.ok ? `If ${em} has a login, a reset link is on its way (good for 1 hour). Check spam if it's not there in a few minutes.` : (j.error || "That didn't work. Try again."); }
+    catch (x) { m.textContent = "Couldn't reach the store. Check your connection and try again."; }
+    b.disabled = false;
+  };
   if (pinMode) fetch("/api/admin/pin-names?reps=1").then((r) => r.json()).then((j) => { const sel = $("ln"); if (!sel) return; sel.innerHTML = `<option value="">Choose your name…</option>` + j.names.map((n) => `<option value="${n.id}"${String(n.id) === localStorage.getItem("loginName") ? " selected" : ""}>${esc(n.name)}</option>`).join(""); if (!j.names.length) sel.innerHTML = `<option value="">No PINs set yet — use email + password</option>`; }).catch(() => {});
   $("lf").onsubmit = async (e) => {
     e.preventDefault();
