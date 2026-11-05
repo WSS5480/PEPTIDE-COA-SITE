@@ -83,7 +83,8 @@ async function loadRepList() {
 function shell() {
   if (window.PushUI && !document.body.classList.contains("embed") && !uniOnly()) setTimeout(() => window.PushUI.nudge({ toast, btn: "btn solid rep", what: "your customers' orders (placed, paid, shipped, delivered)" }), 1500);
   app.innerHTML = `<div class="rtop"><div style="display:flex;align-items:center;gap:.6rem"><span class="logopill"><img src="/site-logo?v=2" alt="360 Peptides"></span><div class="logo"><span id="rbrand">Sales rep</span><small>${esc(me.name || me.email)} <span id="rver"></span></small></div></div>
-      <div class="tools"><span class="seg appswitch views"><a href="/admin" title="The admin with this login">Admin</a><a href="/?from=rep" title="The store as a customer sees it (with a way back here)">Store</a><span class="on" title="You are in the rep app">Rep</span>${HUB.linked && HUB.apps && HUB.apps.tracker ? `<a href="${FRAMED ? HUB.trackerUrl + "/" : (HOSTABLE ? "/rep/tracker?next=/" : "/rep/go/tracker?next=/")}"${FRAMED ? ' target="_top"' : ""} title="The portal with this login">Portal</a>` : ""}</span>${me.role !== "rep" ? `<label class="asrep" title="You're an admin: the app shows what this rep sees">Viewing as <select id="repAs">${REP_LIST.map((r) => `<option value="${r.id}"${String(r.id) === String(REP_AS) ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select></label>` : ""}<button type="button" data-refresh title="Refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button><button type="button" id="lo">Sign out</button></div></div>
+      <div class="tools"><span class="seg appswitch views"><a href="/admin" title="The admin with this login">Admin</a><a href="/?from=rep" title="The store as a customer sees it (with a way back here)">Store</a><span class="on" title="You are in the rep app">Rep</span>${HUB.linked && HUB.apps && HUB.apps.tracker ? `<a href="${FRAMED ? HUB.trackerUrl + "/" : (HOSTABLE ? "/rep/tracker?next=/" : "/rep/go/tracker?next=/")}"${FRAMED ? ' target="_top"' : ""} title="The portal with this login">Portal</a>` : ""}</span>${me.role !== "rep" ? `<label class="asrep" title="You're an admin: the app shows what this rep sees">Viewing as <select id="repAs">${REP_LIST.map((r) => `<option value="${r.id}"${String(r.id) === String(REP_AS) ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select></label>` : ""}<button type="button" data-refresh title="Refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button><button type="button" id="lo">Sign out</button></div>
+    <div class="rpick"><label class="sr" for="rsel">Page</label><select id="rsel" aria-label="Page"></select></div></div>
     <nav class="rnav" id="rnav"></nav><main class="rpane" id="pane"></main>`;
   $("lo").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };
   if ($("repAs")) $("repAs").onchange = () => { REP_AS = $("repAs").value; localStorage.setItem("repAs", REP_AS); go(view); };
@@ -92,7 +93,10 @@ function shell() {
 }
 const uniOnly = () => !!(me && me.role === "rep" && me.apps && me.apps.store === false); // case-tracker-only reps come here just for 360 University
 const navItems = () => (uniOnly() ? NAV.filter(([k]) => k === "university" || k === "account") : NAV);
-function drawNav() { $("rnav").innerHTML = navItems().map(([k, l]) => `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${l}</button>`).join(""); }
+function drawNav() {
+  $("rnav").innerHTML = navItems().map(([k, l]) => `<button type="button" data-nav="${k}" class="${view === k ? "on" : ""}">${l}</button>`).join("");
+  const sel = $("rsel"); if (sel) { sel.innerHTML = navItems().map(([k, l]) => `<option value="${k}"${view === k ? " selected" : ""}>${l}</option>`).join(""); sel.onchange = () => go(sel.value); }
+}
 const pane = () => $("pane");
 function go(v, opts = {}) {
   if (paneDirty && !opts.silent && !confirm("Leave this page? What you typed hasn't been saved.")) return;
@@ -349,7 +353,9 @@ async function account() {
       <div class="field"><span class="eyebrow">&nbsp;</span><label class="chk"><input type="checkbox" id="mySmsOn"> Text me alerts</label></div></div>
       <div><button class="btn solid rep" id="mySmsSave">Save text alerts</button></div></div>
     <div class="panel"><h2>Rep app on your phone</h2><p class="muted">Install it for one-tap access.</p><div><button class="btn" type="button" data-install>Download rep app</button></div></div>
+    <div><button class="btn wide" type="button" id="acctOut">Sign out</button></div>
     <p class="muted" id="buildLine" style="text-align:center;font-size:.75rem"></p>`;
+  $("acctOut").onclick = async () => { await fetch("/api/admin/logout", { method: "POST" }); me = null; drawLogin(); };
   fetch("/api/build").then((r) => r.json()).then((b) => { $("buildLine").textContent = `Rep app v${b.version} · updated ${when(b.updated)}`; }).catch(() => {});
   if (window.PushUI) window.PushUI.mount($("pushBox"), { toast, btn: "btn solid rep", what: "your customers' orders (placed, paid, shipped, delivered)" });
   fetch("/api/admin/my-sms").then((r) => r.json()).then((j) => { $("mySmsPh").value = j.phone || ""; $("mySmsOn").checked = !!j.on; if (!j.ready) $("mySmsNote").insertAdjacentHTML("beforeend", " <strong>Texting isn't switched on for the company yet</strong>, so nothing is sent until it is."); }).catch(() => {});
