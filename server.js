@@ -1967,22 +1967,37 @@ function productFields(b) {
     ...(b.cost !== undefined ? { cost_cents: centsOrNull(String(b.cost).replace(/[$,\s]/g, "")) } : {}) // our cost per vial, for markups
   };
 }
+// a product saved without a description gets the standard one (the library, or written for a peptide the library doesn't know)
 admin.post("/products", owner, wrap(async (req, res) => {
   const f = productFields(req.body || {}); if (!f.name) return bad(res, "Name is required");
+  let described = ""; if (!f.description) { f.description = await describeProduct(f.name, f.strength); described = f.description ? "filled" : ""; }
+  // a new size of a peptide already on the store goes in that peptide's category (unless one was picked)
+  if (f.category === "Research peptide") { const { rows: [sib] } = await q("select category from products where lower(name) = lower($1) and category <> 'Research peptide' order by id limit 1", [f.name]); if (sib) f.category = sib.category; }
   const cols = Object.keys(f);
   const { rows: [p] } = await q(`insert into products(${cols}) values (${cols.map((_, i) => "$" + (i + 1))}) returning id`, Object.values(f));
-  res.json({ ok: true, id: p.id });
+  res.json({ ok: true, id: p.id, described, description: f.description });
+}));
+// what the standard description for a name + size would be (the Write description button); nothing is saved
+admin.post("/products/describe", owner, wrap(async (req, res) => {
+  const name = str(req.body?.name, 120), strength = str(req.body?.strength, 40);
+  if (!name) return bad(res, "Type the product's name first.");
+  const lib = descriptionFor(name, strength);
+  if (lib) return res.json({ ok: true, text: lib, source: "library" });
+  if (!descAi()) return res.json({ ok: true, text: "", source: "", why: "That peptide isn't in the description library, and the writer isn't set up: add ANTHROPIC_API_KEY on the host (Render → Environment) and it can write one." });
+  try { const text = await writeDescription(name, strength); res.json({ ok: true, text, source: text ? "ai" : "", why: text ? "" : "The writer doesn't recognise that as a peptide or research compound. Check the spelling, or write the lines yourself." }); }
+  catch (e) { bad(res, `The description writer didn't answer: ${e.message}`); }
 }));
 admin.patch("/products/:id", owner, wrap(async (req, res) => {
   const f = productFields(req.body || {}); if (!f.name) return bad(res, "Name is required");
   const pid = intOrNull(req.params.id);
+  let described = ""; if (!f.description) { f.description = await describeProduct(f.name, f.strength); described = f.description ? "filled" : ""; }
   const { rows: [before] } = await q("select stock from products where id = $1", [pid]);
   if (before && f.stock !== null && f.stock !== before.stock) {
     await moveStock(pool, pid, 0, { setTo: f.stock, reason: "Edited in Products", who: req.user.name || req.user.email });
   }
   const cols = Object.keys(f);
   await q(`update products set ${cols.map((c, i) => `${c} = $${i + 1}`)} where id = $${cols.length + 1}`, [...Object.values(f), intOrNull(req.params.id)]);
-  res.json({ ok: true });
+  res.json({ ok: true, described, description: f.description });
 }));
 // The internal cost sheet (seed/catalog-q4-2026-costs.json): preview how its rows line up with the products, then apply.
 const COST_SHEET = "q4-2026-costs";
@@ -2052,11 +2067,45 @@ admin.post("/costs/add-missing", owner, wrap(async (req, res) => {
 // First line: what's in the vial ({size} = the product's size); then "- " lines = the benefit bullets shown on the store.
 const DESCRIPTIONS = (() => { try { return Object.fromEntries(Object.entries(JSON.parse(require("fs").readFileSync(path.join(__dirname, "seed", "descriptions.json"), "utf8"))).filter(([k]) => !k.startsWith("_")).map(([k, v]) => [k.split("|").map(normName).join("|"), v])); } catch (e) { console.error("seed/descriptions.json: " + e.message); return {}; } })();
 const descriptionFor = (name, strength) => (DESCRIPTIONS[normName(name) + "|" + normName(strength)] || DESCRIPTIONS[normName(name)] || "").replace(/\{size\}/g, String(strength || "").trim());
+// A peptide the library doesn't know: Claude writes the description in the house format (ANTHROPIC_API_KEY on the host;
+// DESC_MODEL, default claude-sonnet-5-5). The answer is checked line by line, so the store only ever shows the standard shape.
+const DESC_MODEL = process.env.DESC_MODEL || process.env.READ_MODEL || "claude-sonnet-5-5";
+const descAi = () => !!process.env.ANTHROPIC_API_KEY;
+const descCache = new Map(); // name|size → text written this run (a paid call each; the same product isn't asked twice)
+async function writeDescription(name, strength) {
+  const key = process.env.ANTHROPIC_API_KEY; if (!key) return "";
+  const ck = normName(name) + "|" + normName(strength);
+  if (descCache.has(ck)) return descCache.get(ck);
+  const examples = Object.entries(DESCRIPTIONS).filter(([k]) => !k.includes("|")).slice(0, 12).map(([, v]) => v.replace(/\{size\}/g, "10 mg")).join("\n\n");
+  const system = "You write product card text for a research-peptide store (research use only). Answer with the text only: no title, no quotes, no extra lines.";
+  const prompt = `Write the card text for the product "${name}" (vial size ${strength || "unknown"}) in exactly this shape:\n` +
+    "Line 1: what is in the vial — the peptide name(s) with the amount, e.g. \"BPC-157 10 mg\"; for a blend list each peptide with its mg joined by \" + \" (use the known make-up of that blend; if the split isn't known, list the peptides without amounts).\n" +
+    "Then exactly 4 lines, each starting with \"- \": one research focus or benefit each, 2 to 3 words, at most 22 characters, title-case first word only, no periods, no medical or treatment claims, no disease names, written like these examples:\n\n" + examples +
+    "\n\nIf the name is not a peptide or research compound you know, answer with just the word UNKNOWN.";
+  const r = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" }, signal: AbortSignal.timeout(45000),
+    body: JSON.stringify({ model: DESC_MODEL, max_tokens: 300, system, messages: [{ role: "user", content: prompt }] }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((j.error && j.error.message) || `the description writer answered ${r.status}`);
+  const text = (j.content || []).map((c) => c.text || "").join("").trim();
+  if (/^unknown\b/i.test(text)) { descCache.set(ck, ""); return ""; }
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  // line 1: the one that names the product or an amount (the model sometimes adds a preamble like "Here you go:")
+  const plain = lines.filter((l) => !/^[-•*]/.test(l)).map((l) => l.replace(/^["'“”]+|["'“”]+$/g, "").trim()).filter((l) => l && !/:$/.test(l));
+  const first = (plain.find((l) => normName(l).includes(normName(name).slice(0, 6)) || /\d+\s*(mg|mcg|iu|ml)\b/i.test(l)) || plain[0] || "").slice(0, 120);
+  const bullets = lines.filter((l) => /^[-•*]\s*/.test(l)).map((l) => l.replace(/^[-•*]\s*/, "").replace(/[.。]+$/, "").trim()).filter((b) => b && b.length <= 26).slice(0, 4);
+  const out = first && bullets.length === 4 ? [first, ...bullets.map((b) => "- " + b)].join("\n") : "";
+  descCache.set(ck, out);
+  return out;
+}
+// the library first, then Claude; "" when neither knows the product
+async function describeProduct(name, strength) { return descriptionFor(name, strength) || (await writeDescription(name, strength).catch((e) => { console.error(`Description for ${name} ${strength}: ${e.message}`); return ""; })); }
 async function fillDescriptions(who) {
   const { rows } = await q("select id, name, strength from products where coalesce(description, '') = ''");
   const done = [], missing = [];
+  let written = 0;
   for (const p of rows) {
-    const d = descriptionFor(p.name, p.strength);
+    let d = descriptionFor(p.name, p.strength);
+    if (!d && descAi() && written < 15) { written++; d = await writeDescription(p.name, p.strength).catch((e) => { console.error(`Description for ${p.name}: ${e.message}`); return ""; }); } // a paid call each: a few per run
     if (!d) { missing.push(`${p.name} ${p.strength}`.trim()); continue; }
     await q("update products set description = $1 where id = $2", [d, p.id]); done.push(`${p.name} ${p.strength}`.trim());
   }

@@ -1346,7 +1346,7 @@ async function products() {
         ${fl("Store note", inp("storeNote", p?.store_note ?? "", "e.g. Sold out — 2 weeks", ' maxlength="80" style="width:100%" title="Shown on the store under the product (optional)"'))}
         ${fl("Max per order", inp("maxPerOrder", p?.max_per_order ?? "", "—", ' inputmode="numeric" style="width:100%"'))}${fl("Sort order", inp("sort", p?.sort ?? 0, "", ' inputmode="numeric" style="width:100%"'))}
         ${fl("On the store", `<span class="chk"><input type="checkbox" data-k="active"${!p || p.active ? " checked" : ""}${ro()}> Active</span>`)}
-        ${fl("Description · line 1 what's in the vial, then one - benefit per line", `<textarea data-k="description" rows="4" placeholder="Line 1: what's in the vial. Then one benefit per line starting with -" style="width:100%;font:inherit;font-size:.85rem;line-height:1.3;resize:vertical"${ro()}>${esc(p?.description || "")}</textarea>`, true)}
+        ${fl(`Description · line 1 what's in the vial, then one - benefit per line${isOwner() ? ` <button class="btn" type="button" data-describe style="margin-left:.5rem;padding:.1rem .55rem;font-size:.72rem;text-transform:none;letter-spacing:0" title="Fill the standard description for this peptide (the library, or written for one the library doesn't know). Edit it after, then Save.">Write description</button>` : ""}`, `<textarea data-k="description" rows="4" placeholder="Leave blank and Save: the standard description for this peptide is filled in. Or write it: line 1 what's in the vial, then one benefit per line starting with -" style="width:100%;font:inherit;font-size:.85rem;line-height:1.3;resize:vertical"${ro()}>${esc(p?.description || "")}</textarea>`, true)}
         <div data-rep style="grid-column:1/-1">${p ? `<span class="eyebrow">Lab report</span> ${repPills(p)}` : ""}</div></div>
       <div class="row2" style="margin-top:.6rem;flex-wrap:wrap" data-docs>${p ? `<button class="btn" type="button" data-manage="${p.id}" title="COA and documents for this peptide">${p.doc_count ? `${p.doc_count} doc${p.doc_count === 1 ? "" : "s"} · ` : ""}Pictures &amp; documents</button>` : '<span class="muted">Save first to add pictures and documents.</span>'}
         ${isOwner() ? `<button class="btn solid" data-save>Save</button><button class="btn danger" data-del>${p ? "Delete" : "Remove"}</button>` : ""}</div></div>
@@ -1417,6 +1417,7 @@ async function products() {
     const id = tr.dataset.id, body = bodyOf(tr);
     const r = await api(id ? "/products/" + id : "/products", { method: id ? "PATCH" : "POST", body });
     if (!id && r.id) tr.dataset.id = r.id;
+    if (r.described && r.description) { const ta = tr.querySelector('[data-k="description"]'); if (ta) ta.value = r.description; body.description = r.description; toast("Description filled in — edit it any time"); }
     tr.dataset.orig = JSON.stringify(body);
   };
   const saveAll = async () => {
@@ -1518,6 +1519,20 @@ async function products() {
     if (mg) { const p = list.find((x) => String(x.id) === mg.dataset.manage); if (p) manageProduct(p, repFor(p)); return; }
     const tr = e.target.closest("tr"); if (!tr) return;
     const id = tr.dataset.id;
+    const wb = e.target.closest("[data-describe]");
+    if (wb) {
+      const name = tr.querySelector('[data-k="name"]').value.trim(), strength = tr.querySelector('[data-k="strength"]').value.trim(), ta = tr.querySelector('[data-k="description"]');
+      if (!name) return toast("Type the product's name first");
+      if (ta.value.trim() && !confirm("Replace the description that's there with the standard one?")) return;
+      wb.disabled = true; wb.textContent = "Writing…";
+      try {
+        const r = await api("/products/describe", { method: "POST", body: { name, strength } });
+        if (r.text) { ta.value = r.text; ta.dispatchEvent(new Event("input", { bubbles: true })); toast(r.source === "ai" ? "Written — check it, then Save" : "Filled from the library — Save to keep it"); }
+        else alert(r.why || "No description available for that name.");
+      } catch (x) { /* api() showed the reason */ }
+      finally { wb.disabled = false; wb.textContent = "Write description"; }
+      return;
+    }
     if (e.target.closest("[data-del]")) {
       if (!id) { tr.remove(); return refresh(); }
       if (!confirm("Delete this product? Past orders keep their line items.")) return;
