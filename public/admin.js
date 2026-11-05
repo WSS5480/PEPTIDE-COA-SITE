@@ -1322,8 +1322,8 @@ let pFilter = "all"; const openP = new Set();
 async function products() {
   const [{ products: list }, { reports: reps }] = await Promise.all([api("/products"), api("/reports")]);
   const repFor = (p) => reps.filter((r) => r.active && reportMatches(p, r));
-  const COLS = [["name", "Name"], ["strength", "Size"], ["description", "Description (line 1: peptides + mg · then - benefits)"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["cost", "Cost $"], ["price", "Price $"], ["stock", "Stock"], ["storeNote", "Store note"], ["maxPerOrder", "Max/order"], ["sort", "Sort"], ["active", "Active"], ["report", "Lab report"], ["docs", "Docs"]];
-  const NUM = new Set(["cost", "price", "stock", "maxPerOrder", "sort"]);
+  const COLS = [["name", "Name"], ["strength", "Size"], ["description", "Description (line 1: peptides + mg · then - benefits)"], ["category", "Category"], ["manufacturer", "Manufacturer"], ["cost", "Cost $"], ["price", "Price $"], ["stock", "Stock"], ["storeNote", "Store note"], ["maxPerOrder", "Max/order"], ["active", "Active"], ["report", "Lab report"], ["docs", "Docs"]];
+  const NUM = new Set(["cost", "price", "stock", "maxPerOrder"]);
   const inp = (k, v, ph = "", extra = "") => `<input data-k="${k}" value="${esc(v)}" placeholder="${ph}"${extra}${ro()}>`;
   // one product per row: the summary line (name, cost, price, stock) stays visible; tap it for every other field. All inputs live in the
   // same <tr>, so sorting, the markup tool, the dirty count and Save all changes work as before.
@@ -1344,7 +1344,7 @@ async function products() {
         ${fl("Name", inp("name", p?.name, "Name", ' style="width:100%"'))}${fl("Size", inp("strength", p?.strength, "10 mg", ' style="width:100%"'))}
         ${fl("Category", inp("category", p?.category ?? "Research peptide", "Category", ' list="catlist" style="width:100%"'))}${fl("Manufacturer", inp("manufacturer", p?.manufacturer, "", ' list="mfrlist" style="width:100%"'))}
         ${fl("Store note", inp("storeNote", p?.store_note ?? "", "e.g. Sold out — 2 weeks", ' maxlength="80" style="width:100%" title="Shown on the store under the product (optional)"'))}
-        ${fl("Max per order", inp("maxPerOrder", p?.max_per_order ?? "", "—", ' inputmode="numeric" style="width:100%"'))}${fl("Sort order", inp("sort", p?.sort ?? 0, "", ' inputmode="numeric" style="width:100%"'))}
+        ${fl("Max per order", inp("maxPerOrder", p?.max_per_order ?? "", "—", ' inputmode="numeric" style="width:100%"'))}
         ${fl("On the store", `<span class="chk"><input type="checkbox" data-k="active"${!p || p.active ? " checked" : ""}${ro()}> Active</span>`)}
         ${fl(`Description · line 1 what's in the vial, then one - benefit per line${isOwner() ? ` <button class="btn" type="button" data-describe style="margin-left:.5rem;padding:.1rem .55rem;font-size:.72rem;text-transform:none;letter-spacing:0" title="Fill the standard description for this peptide (the library, or written for one the library doesn't know). Edit it after, then Save.">Write description</button>` : ""}`, `<textarea data-k="description" rows="4" placeholder="Leave blank and Save: the standard description for this peptide is filled in. Or write it: line 1 what's in the vial, then one benefit per line starting with -" style="width:100%;font:inherit;font-size:.85rem;line-height:1.3;resize:vertical"${ro()}>${esc(p?.description || "")}</textarea>`, true)}
         <div data-rep style="grid-column:1/-1">${p ? `<span class="eyebrow">Lab report</span> ${repPills(p)}` : ""}</div></div>
@@ -1600,7 +1600,8 @@ async function inventory() {
     <div class="row2" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem"><p class="muted" id="invSum" style="margin:0"></p><div class="row2" style="gap:.5rem"><select id="invSort">${[["name", "Name A–Z"], ["avail", "Available, lowest first"], ["sold", "Sold 30 days"], ["weeks", "Weeks left, fewest first"], ...(own ? [["value", "Value"]] : []), ["expiry", "Next expiry"]].map(([k, l]) => `<option value="${k}"${invSort === k ? " selected" : ""}>Sort: ${l}</option>`).join("")}</select><button class="btn" type="button" id="invAll">Expand all</button></div></div>
     <div class="tblwrap"><table class="tbl ctbl" id="invT"><thead><tr><th>Name</th><th>Size</th><th class="num">Available</th><th class="num">On shelf</th><th class="num">Sold 30d</th><th>Status</th></tr></thead><tbody id="invB"></tbody></table></div>`;
   const openInv = new Set(); let shownInv = [];
-  const ISORT = { name: (p) => label(p).toLowerCase(), avail: (p) => (p.stock === null ? 1e9 : p.stock), sold: (p) => -(p.sold_30d || 0), weeks: (p) => (weeksLeft(p) === null ? 1e9 : weeksLeft(p)), value: (p) => -((p.cost_cents || 0) * Math.max(0, (p.stock || 0) + (p.committed || 0))), expiry: (p) => p.next_expiry || "9999" };
+  const nameKey = (p) => `${String(p.name || "").toLowerCase()}\u0000${String(1e6 + (parseFloat(p.strength) || 0)).padStart(12, "0")}`; // peptide A–Z, then 10 mg before 40 mg before 1000 mg
+  const ISORT = { name: nameKey, avail: (p) => (p.stock === null ? 1e9 : p.stock), sold: (p) => -(p.sold_30d || 0), weeks: (p) => (weeksLeft(p) === null ? 1e9 : weeksLeft(p)), value: (p) => -((p.cost_cents || 0) * Math.max(0, (p.stock || 0) + (p.committed || 0))), expiry: (p) => p.next_expiry || "9999" };
   const draw = () => {
     const term = (document.getElementById("invQ").value || "").toLowerCase();
     const list = items.filter((p) => (invFilter === "all" || (invFilter === "expiring" ? soon(p.next_expiry) : status(p) === invFilter))

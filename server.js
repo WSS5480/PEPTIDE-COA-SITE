@@ -10,6 +10,11 @@ const usd = (c) => ((c || 0) < 0 ? "-$" : "$") + (Math.abs(c || 0) / 100).toLoca
 const webpush = require("web-push");
 
 /* ---------- Stripe: card payments, on once STRIPE_SECRET_KEY is set on the host ---------- */
+// Every product list (store, rep app, admin, inventory, count sheets) in one order: peptide name A–Z, then the size as a
+// number (10 mg before 40 mg before 1000 mg), then manufacturer. The first number in the size is the sort key, so "10 mg / 10 mg" sorts as 10.
+const SIZE_NUM = (col) => `coalesce(nullif(substring(${col} from '^\\s*([0-9]+(?:\\.[0-9]+)?)'), '')::numeric, 0)`;
+const CATALOG_ORDER = `lower(name), ${SIZE_NUM("strength")}, strength, manufacturer, id`;
+const CATALOG_ORDER_P = `lower(p.name), ${SIZE_NUM("p.strength")}, p.strength, p.manufacturer, p.id`;
 const STRIPE_KEY = String(process.env.STRIPE_SECRET_KEY || "").trim();
 const stripe = STRIPE_KEY ? require("stripe")(STRIPE_KEY) : null;
 // With the publishable key too, the card form shows inside the store's own checkout (Stripe's Payment Element);
@@ -248,7 +253,7 @@ app.get("/api/version", wrap(async (req, res) => {
 app.get("/api/store", wrap(async (req, res) => {
   const s = await getSettings();
   const [{ rows: products }, { rows: reports }, cust, house] = await Promise.all([
-    q("select id,name,strength,manufacturer,category,description,price_cents,cost_cents,stock,max_per_order,store_note,vial_label,media_v,(image is not null) has_image,(logo is not null) has_logo from products where active order by sort, name, strength, manufacturer, id"),
+    q(`select id,name,strength,manufacturer,category,description,price_cents,cost_cents,stock,max_per_order,store_note,vial_label,media_v,(image is not null) has_image,(logo is not null) has_logo from products where active order by ${CATALOG_ORDER}`),
     q(`select ${REPORT_COLS} from reports where active order by product, tested desc nulls last`),
     customerFrom(req), houseFrom(req)
   ]);
@@ -1766,7 +1771,7 @@ admin.post("/orders/:id/note", wrap(async (req, res) => {
 // the product list priced for one customer (their markup, if any); our cost never leaves the server
 admin.get("/catalog", wrap(async (req, res) => {
   const [{ rows: products }, s] = await Promise.all([
-    q("select id, name, strength, manufacturer, category, price_cents, cost_cents, stock, max_per_order from products where active order by sort, name, strength, manufacturer, id"),
+    q(`select id, name, strength, manufacturer, category, price_cents, cost_cents, stock, max_per_order from products where active order by ${CATALOG_ORDER}`),
     getSettings()
   ]);
   let markup = null, customer = null;
@@ -1956,7 +1961,7 @@ admin.patch("/customers/:id", (req, res, next) => (isRep(req) ? next() : owner(r
 admin.get("/products", wrap(async (req, res) => {
   const { rows } = await q(`select p.id, p.name, p.strength, p.manufacturer, p.category, p.description, p.price_cents, p.stock, p.max_per_order,
       p.active, p.sort, p.created_at, p.reorder_point, p.store_note, p.cost_cents, p.vial_label, p.media_v, (p.image is not null) has_image, (p.logo is not null) has_logo,
-      (select count(*)::int from documents d where d.product_id = p.id) doc_count from products p order by sort, name, strength, manufacturer, id`);
+      (select count(*)::int from documents d where d.product_id = p.id) doc_count from products p order by ${CATALOG_ORDER}`);
   res.json({ products: rows });
 }));
 function productFields(b) {
@@ -2454,7 +2459,7 @@ admin.get("/inventory", wrap(async (req, res) => {
       (select max(at) from stock_moves m where m.product_id = p.id and m.change > 0 and m.reason = 'Received') last_received,
       (select min(expires) from stock_moves m where m.product_id = p.id and m.reason = 'Received' and m.expires >= current_date) next_expiry,
       coalesce((select sum(-m.change) from stock_moves m where m.product_id = p.id and m.reason = 'Order' and m.at > now() - interval '30 days'), 0)::int sold_30d
-    from products p order by p.sort, p.name, p.strength, p.manufacturer, p.id`);
+    from products p order by ${CATALOG_ORDER_P}`);
   res.json({ items: rows, role: req.user.role });
 }));
 admin.get("/inventory/:id/moves", wrap(async (req, res) => {
@@ -2533,7 +2538,7 @@ admin.get("/inventory/count-sheet", wrap(async (req, res) => {
   const { rows } = await q(`select p.id, p.name, p.strength, p.manufacturer, p.active, p.stock, p.cost_cents,
       coalesce((select sum(i.qty) from order_items i join orders o on o.id = i.order_id where i.product_id = p.id and o.status in ${OPEN_ORDER}), 0)::int committed,
       (select max(c.at) from stock_count_lines l join stock_counts c on c.id = l.count_id where l.product_id = p.id) last_counted
-    from products p where p.active or p.stock is not null order by p.sort, p.name, p.strength, p.manufacturer, p.id`);
+    from products p where p.active or p.stock is not null order by ${CATALOG_ORDER_P}`);
   const showCost = req.user.role === "owner";
   res.json({ items: rows.map((p) => ({ ...p, cost_cents: showCost ? p.cost_cents : null, on_shelf: p.stock === null ? null : p.stock + p.committed })), lastCount: await lastCount(), dueDays: COUNT_DUE_DAYS, showCost });
 }));
@@ -3101,7 +3106,7 @@ rep.patch("/customers/:id", wrap(async (req, res) => {
 }));
 rep.get("/catalog", wrap(async (req, res) => { // reps order from what's on the shelf: counted and in stock
   const [{ rows: products }, s] = await Promise.all([
-    q("select id, name, strength, manufacturer, category, price_cents, cost_cents, stock, max_per_order from products where active and stock is not null and stock > 0 order by sort, name, strength, manufacturer, id"),
+    q(`select id, name, strength, manufacturer, category, price_cents, cost_cents, stock, max_per_order from products where active and stock is not null and stock > 0 order by ${CATALOG_ORDER}`),
     getSettings()
   ]);
   // priced for one of the rep's customers when asked (their markup); our cost never leaves the server
