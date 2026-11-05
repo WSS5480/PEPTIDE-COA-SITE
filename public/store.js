@@ -529,6 +529,19 @@ if (new URLSearchParams(location.search).get("signin") === "1") { history.replac
 // once it's closed or the phone switches away, the server signs the customer out within about a minute
 setInterval(() => { if ((ME) && Number(S.custIdleMin) === 0 && !document.hidden) loadAccount(true).then(() => { if (!ME && !HOUSE) load(); }); }, 30000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && (ME || HOUSE)) loadAccount(true).then(() => { if (!ME && !HOUSE) load(); }); });
+// the PIN box: a PIN that two team logins still share asks which one is signing in (the choice re-sends the same PIN with that login's id)
+async function pinSignIn(pin, id) {
+  const r = await fetch("/api/account/pin", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify(id ? { pin, id } : { pin }) });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 409 && j.ambiguous) {
+    const box = $("acErr"); box.hidden = false;
+    box.innerHTML = `<div>${esc(j.error)}</div><div class="row2" style="margin-top:.5rem;gap:.4rem;flex-wrap:wrap">${j.choices.map((c) => `<button class="btn" type="button" data-pinas="${c.id}">${esc(c.name)}</button>`).join("")}</div><div class="dist" style="margin-top:.4rem">One PIN per person: ask the admin to give one of these logins a new PIN under Team.</div>`;
+    box.querySelectorAll("[data-pinas]").forEach((b) => { b.onclick = async () => { try { if (!(await pinSignIn(pin, +b.dataset.pinas))) return; await loadAccount(); await load(); toast("Signed in"); acctView(); } catch (x) { box.textContent = x.message; } }; });
+    return false;
+  }
+  if (!r.ok) throw new Error(j.error || "That didn't work.");
+  return true;
+}
 async function post(url, body, method = "POST") {
   const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "That didn't work."); return j;
@@ -579,7 +592,7 @@ function acctView(mode) {
       <form id="acForm" class="stack" style="margin-top:.6rem;padding-top:.6rem;border-top:1px solid var(--line)"><div class="field"><label class="eyebrow" for="acPin">Sign in as a customer with their PIN (to see their pricing or order for them)</label><input id="acPin" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Customer's PIN"></div>
       <div class="err" id="acErr" hidden></div><button class="btn wide" type="submit">Switch to that customer</button></form>`;
     $("acOut").onclick = async () => { await post("/api/account/logout", {}); await loadAccount(); await load(); toast("Signed out"); closeD($("acct")); };
-    $("acForm").onsubmit = async (e) => { e.preventDefault(); try { await post("/api/account/pin", { pin: $("acPin").value }); await loadAccount(); await load(); toast(ME ? "Signed in as " + (ME.name || "customer") : "Signed in"); acctView(); } catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; } };
+    $("acForm").onsubmit = async (e) => { e.preventDefault(); try { if (!(await pinSignIn($("acPin").value))) return; await loadAccount(); await load(); toast(ME ? "Signed in as " + (ME.name || "customer") : "Signed in"); acctView(); } catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; } };
     return;
   }
   if (!ME) {
@@ -592,7 +605,7 @@ function acctView(mode) {
       <p class="dist">No PIN yet? <button class="linkbtn" type="button" data-acct="request">Request one</button> — accounts are set up by us, not online. You can still order as a guest.</p>
       <p class="dist" style="margin-top:.6rem">Staff: the store PIN signs the office in here; <a href="/admin">Admin</a> and the <a href="/rep">rep app</a> use your email and password.</p>`;
     $("acPin").focus();
-    $("acForm").onsubmit = async (e) => { e.preventDefault(); try { await post("/api/account/pin", { pin: $("acPin").value }); await loadAccount(); await load(); toast("Signed in"); acctView(); } catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; } };
+    $("acForm").onsubmit = async (e) => { e.preventDefault(); try { if (!(await pinSignIn($("acPin").value))) return; await loadAccount(); await load(); toast("Signed in"); acctView(); } catch (x) { $("acErr").textContent = x.message; $("acErr").hidden = false; } };
     return;
   }
   const a = ME.address || {};

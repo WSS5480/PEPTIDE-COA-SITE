@@ -985,20 +985,22 @@ app.post("/api/pin-request", jsonOnly, limit("pinreq", 5, 60 * 60 * 1000), wrap(
   res.json({ ok: true, id: r.id });
 }));
 // a team PIN (Team logins / My account) at the storefront: signs that person in as the office AND into the admin / rep app
-async function teamByPin(pin) {
-  if (!pin || pin.length < 4) return null;
-  const { rows } = await q("select * from users where active and pin_hash is not null");
-  for (const u of rows) if (appsOf(u).store && (await bcrypt.compare(pin, u.pin_hash))) return u;
-  return null;
+async function teamByPin(pin) { return (await teamAllByPin(pin))[0] || null; }
+async function teamAllByPin(pin, storeOnly = true) {
+  if (!pin || pin.length < 4) return [];
+  const { rows } = await q("select * from users where active and pin_hash is not null order by role, name");
+  const out = [];
+  for (const u of rows) if ((!storeOnly || appsOf(u).store) && (await bcrypt.compare(pin, u.pin_hash))) out.push(u);
+  return out;
 }
 // one PIN per person across the store: a team PIN may not be a customer's PIN, another team member's, or the site PIN.
 // Returns the reason it's taken, or null. Used by Team (add, card), My account, the reset page and the portal's PIN hand-over.
-async function pinTaken(pin, selfId) {
+async function pinTaken(pin, selfId, byOwner = false) {
   const st = await pinState();
-  const { rows: [c] } = await q("select 1 from customers where access_pin_key = $1", [customerPinKey(st, pin)]);
-  if (c) return "That PIN is already used by a customer. Pick another.";
-  const t = await teamByPin(pin);
-  if (t && t.id !== selfId) return "That PIN is already used by someone else here. Pick another.";
+  const { rows: [c] } = await q("select name, email from customers where access_pin_key = $1", [customerPinKey(st, pin)]);
+  if (c) return byOwner ? `That PIN already belongs to the customer ${c.name || c.email}. Pick another.` : "That PIN is already used by a customer. Pick another.";
+  const others = (await teamAllByPin(pin, false)).filter((t) => t.id !== selfId);
+  if (others.length) return byOwner ? `That PIN is already used by ${others.map((t) => t.name).join(" and ")}. One PIN per person — pick another, or change theirs under Team.` : "That PIN is already used by someone else here. Pick another.";
   if (st.hash && (await bcrypt.compare(pin, st.hash))) return "That PIN is the store's own sign-in PIN. Pick another.";
   return null;
 }
@@ -1026,8 +1028,14 @@ app.post("/api/account/pin", jsonOnly, limit("cpin", 10, 15 * 60 * 1000), wrap(a
   }
   const { rows: [c] } = await q("select id, pin_version from customers where access_pin_key = $1 and active", [customerPinKey(st, pin)]);
   if (!c) {
-    const u = await teamByPin(pin); // a team member's own PIN: the office, signed into the admin / rep app as well
-    if (!u) return bad(res, "That PIN isn't right. Contact us if you need a new one.", 401);
+    const all = await teamAllByPin(pin); // a team member's own PIN: the office, signed into the admin / rep app as well
+    if (!all.length) return bad(res, "That PIN isn't right. Contact us if you need a new one.", 401);
+    let u = all[0];
+    if (all.length > 1) { // two logins still share this PIN (from before the one-PIN rule): ask which one, never guess
+      console.error(`Team PIN shared by ${all.map((x) => x.name).join(", ")} — set a new PIN for one of them under Team`);
+      const want = intOrNull(req.body?.id); u = want ? all.find((x) => x.id === want) : null;
+      if (!u) return res.status(409).json({ error: "More than one login uses this PIN. Which one is you?", ambiguous: true, choices: all.map((x) => ({ id: x.id, name: x.name, role: x.role })) });
+    }
     await endCustomerSession(req, res); await teamSignIn(res, u); res.append("Set-Cookie", HOUSE_COOKIE(houseTok(st), 30 * 86400));
     if (st.hash) res.append("Set-Cookie", `spin=${pinToken(st)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${SECURE ? "; Secure" : ""}`);
     return res.json({ ok: true, house: true, team: { name: u.name, role: u.role } });
@@ -2974,6 +2982,15 @@ admin.put("/settings", owner, wrap(async (req, res) => {
 }));
 
 /* ---------- admin: site PIN ---------- */
+// owner tool for the Team page: which logins / customer / the site use a PIN (two logins sharing one must be sorted out)
+admin.post("/pin-who", owner, limit("pinwho", 20, 15 * 60 * 1000), wrap(async (req, res) => {
+  const pin = String(req.body?.pin || "").replace(/\D/g, "");
+  if (pin.length < 4) return bad(res, "Type the PIN to check (4 or more digits).");
+  const st = await pinState();
+  const team = (await teamAllByPin(pin, false)).map((u) => ({ id: u.id, name: u.name, role: u.role, active: u.active, store: appsOf(u).store, portal: appsOf(u).tracker }));
+  const { rows: [c] } = await q("select id, name, email from customers where access_pin_key = $1", [customerPinKey(st, pin)]);
+  res.json({ team, customer: c ? { id: c.id, name: c.name || c.email } : null, site: !!(st.hash && (await bcrypt.compare(pin, st.hash))) });
+}));
 admin.get("/pin", owner, wrap(async (req, res) => { pinCache.at = 0; const st = await pinState(); res.json({ on: st.on, set: !!st.hash, customerPins: st.customerPins }); }));
 admin.put("/pin", owner, wrap(async (req, res) => {
   const b = req.body || {};
@@ -3013,7 +3030,7 @@ admin.post("/users", owner, wrap(async (req, res) => {
     const apps = JSON.stringify({ store: !(b.apps && b.apps.store === false), tracker: !!(b.apps && b.apps.tracker) });
     const pin = String(b.pin || "").replace(/\D/g, "");
     if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits.");
-    if (pin) { const why = await pinTaken(pin, null); if (why) return bad(res, why); }
+    if (pin) { const why = await pinTaken(pin, null, true); if (why) return bad(res, why); }
     const { rows: [u] } = await q("insert into users(email,name,role,pass_hash,phone,commission_rate,apps,pin_hash,comm_tiered) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id", [email, str(b.name, 80), role, await bcrypt.hash(pass, 11), str(b.phone, 40), rate, apps, pin ? await bcrypt.hash(pin, 11) : null, tiered]);
     if (role === "rep") { try { if (Array.isArray(b.courses)) await UNI.setAssignments(u.id, b.courses, req.user.name || req.user.email); else await UNI.autoAssign(u.id, JSON.parse(apps), req.user.name || req.user.email); } catch (e) { console.error("University assign failed:", e.message); } }
     pokeTracker(); res.json({ ok: true, id: u.id });
@@ -3045,7 +3062,7 @@ admin.patch("/users/:id", owner, wrap(async (req, res) => {
   if (b.phone !== undefined) await q("update users set phone = $1 where id = $2", [str(b.phone, 40), id]);
   if (b.smsOn !== undefined) { if (b.smsOn && !sms.norm((await q("select phone from users where id = $1", [id])).rows[0]?.phone)) return bad(res, "Add a cell number first to turn texts on."); await q("update users set sms_on = $1 where id = $2", [!!b.smsOn, id]); }
   if (b.apps && typeof b.apps === "object") await q("update users set apps = $1 where id = $2", [JSON.stringify({ store: b.apps.store !== false, tracker: !!b.apps.tracker }), id]);
-  if (b.pin !== undefined) { const pin = String(b.pin || "").replace(/\D/g, ""); if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits."); if (pin) { const why = await pinTaken(pin, id); if (why) return bad(res, why); } if (pin || b.pin === "") await q("update users set pin_hash = $1, pin_version = pin_version + 1 where id = $2", [pin ? await bcrypt.hash(pin, 11) : null, id]); }
+  if (b.pin !== undefined) { const pin = String(b.pin || "").replace(/\D/g, ""); if (pin && (pin.length < 4 || pin.length > 10)) return bad(res, "A PIN is 4 to 10 digits."); if (pin) { const why = await pinTaken(pin, id, true); if (why) return bad(res, why); } if (pin || b.pin === "") await q("update users set pin_hash = $1, pin_version = pin_version + 1 where id = $2", [pin ? await bcrypt.hash(pin, 11) : null, id]); }
   if (b.plan === "tiered" || b.plan === "flat") await q("update users set comm_tiered = $1 where id = $2", [b.plan === "tiered", id]);
   if (b.rate !== undefined && b.rate !== "" && (b.role === "rep" || u.role === "rep")) { const r = rateOf(b.rate); if (r === null) return bad(res, "Enter the commission as a percent."); await q("update users set commission_rate = $1 where id = $2", [r, id]); }
   if (b.password) {

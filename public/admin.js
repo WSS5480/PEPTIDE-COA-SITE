@@ -2627,7 +2627,8 @@ async function staff() {
       ${planBlock(u)}
       ${s ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));gap:.6rem 1.2rem;padding:.7rem .2rem 0">${det("Customers", s.customers)}${det("Orders", s.orders)}${det("This month", money(s.month_cents))}${det("Sales (all)", money(s.sales_cents))}${det("Owed now", `<strong>${money(s.commission.earned)}</strong>`)}${det("Paid out", money(s.commission.paid))}</div>` : ""}
       <div class="row2" style="margin-top:.7rem;gap:.4rem;flex-wrap:wrap"><button class="btn solid" data-save>Save</button>${rep ? `<button class="btn" data-comm="${u.id}">Commissions</button><button class="btn" data-rcust="${u.id}">Customers</button>` : ""}${u.id === me.id ? "" : '<button class="btn danger" data-del title="Delete this login for good">Delete</button>'}</div>`; };
-  pane().innerHTML = `<header><h1>Team</h1><button class="btn solid" id="addP">Add person</button></header>
+  pane().innerHTML = `<header><h1>Team</h1><div class="row2"><button class="btn" id="pinWho" title="See which logins use a PIN">Check a PIN</button><button class="btn solid" id="addP">Add person</button></div></header>
+    <div id="pinWhoBox"></div>
     <div id="teamNew"></div><div id="trackerImport"></div>
     <details class="muted" style="margin:.2rem 0 .6rem"><summary>How logins work</summary><p>One login per person, for both apps: tick <strong>Peptide store</strong> and/or <strong>360 Medical Portal</strong>. Everyone signs in with email + password; a <strong>PIN</strong> also lets them sign in by name + PIN on either app. <strong>Admins</strong> see everything; <strong>Managers</strong> run orders, products and inventory; <strong>Sales reps</strong> use the rep app (their customers, orders and commission) and the portal if ticked. Tap a person to change anything. A rep's commission plan and store numbers are on their card.</p></details>
     <div class="filters" style="flex-wrap:wrap;gap:.5rem"><input id="tq" type="search" placeholder="Search name, email or phone" value="${esc(st.q)}">
@@ -2716,6 +2717,20 @@ async function staff() {
     } catch (x) {}
   };
   // Add person: one form; the role decides what shows (commission and courses for reps)
+  document.getElementById("pinWho").onclick = () => {
+    const box = document.getElementById("pinWhoBox"); if (box.innerHTML) { box.innerHTML = ""; return; }
+    box.innerHTML = `<div class="panel" data-fold-open><h2>Check a PIN</h2><p class="muted">One PIN per person: type a PIN to see who has it. Two logins sharing one must be sorted out — give one of them a new PIN on their card.</p>
+      <div class="row2" style="align-items:end"><div class="field" style="max-width:12rem"><label class="eyebrow" for="pw-pin">PIN</label><input id="pw-pin" inputmode="numeric" maxlength="10" autocomplete="off"></div><button class="btn solid" type="button" id="pw-go">Who has it?</button></div><p id="pw-out" style="margin:.6rem 0 0"></p></div>`;
+    document.getElementById("pw-go").onclick = async () => {
+      const out = document.getElementById("pw-out"); out.textContent = "Checking…";
+      try {
+        const r = await api("/pin-who", { method: "POST", body: { pin: document.getElementById("pw-pin").value } });
+        const who = [...r.team.map((t) => `${esc(t.name)} (${ROLE[t.role] || t.role}${t.active ? "" : ", off"})`), ...(r.customer ? [`customer ${esc(r.customer.name)}`] : []), ...(r.site ? ["the store's own sign-in PIN"] : [])];
+        out.innerHTML = who.length ? `<strong>${who.length === 1 ? "Used by" : "Shared by " + who.length + ":"}</strong> ${who.join(" · ")}${who.length > 1 ? ` <span class="err" style="display:inline-block;margin-left:.4rem">— sign-ins by this PIN can't tell them apart; change it for all but one.</span>` : ""}` : "Nobody uses that PIN.";
+      } catch (x) { out.textContent = x.message; }
+    };
+    document.getElementById("pw-pin").focus();
+  };
   document.getElementById("addP").onclick = () => {
     const box = document.getElementById("teamNew"); if (box.innerHTML) { box.innerHTML = ""; return; }
     box.innerHTML = `<div class="panel" data-fold-open style="border-color:var(--blue)"><h2>Add person</h2><div class="grid2">
