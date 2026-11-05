@@ -3029,6 +3029,27 @@ admin.get("/hub/preview-url", owner, (req, res) => {
 admin.get("/hub/tracker-reps", owner, wrap(async (req, res) => {
   try { res.json({ ok: true, ...(await trackerGet("/api/hub/reps")) }); } catch (e) { res.json({ ok: false, error: e.message, reps: [] }); }
 }));
+// Each rep's portal plan (quota, metric, counts rule, carry, commission, pay, territory) and the team quota rows, read and saved
+// through the apps' link, so the Team page is the one place for everything about a person.
+async function trackerSend(pathname, method, body) {
+  if (!HUB_SECRET || !TRACKER_URL) throw new Error("The portal isn't linked: set HUB_SECRET and TRACKER_URL on the host.");
+  const r = await fetch(`${TRACKER_URL}${pathname}`, { method, headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify(body || {}), signal: AbortSignal.timeout(12000) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `The portal answered ${r.status}`);
+  return j;
+}
+admin.get("/hub/plans", owner, wrap(async (req, res) => {
+  try { res.json({ ok: true, ...(await trackerGet("/api/hub/plans")) }); } catch (e) { res.json({ ok: false, error: e.message, rows: [], counts: [] }); }
+}));
+admin.put("/hub/plan/:id", owner, wrap(async (req, res) => {
+  const { rows: [u] } = await q("select id, name, apps, role from users where id = $1", [intOrNull(req.params.id)]);
+  if (!u) return bad(res, "Login not found", 404);
+  if (!appsOf(u).tracker) return bad(res, "Tick 360 Medical Portal on this login and save first.");
+  try { pokeTracker(); res.json({ ok: true, ...(await trackerSend("/api/hub/plan", "PUT", { hub: u.id, rep: u.name, plan: req.body?.plan || {} })) }); } catch (e) { bad(res, e.message); }
+}));
+admin.put("/hub/team-plans", owner, wrap(async (req, res) => {
+  try { res.json({ ok: true, ...(await trackerSend("/api/hub/team-plans", "PUT", { rows: Array.isArray(req.body?.rows) ? req.body.rows : [] })) }); } catch (e) { bad(res, e.message); }
+}));
 admin.delete("/hub/tracker-reps/:rep", owner, wrap(async (req, res) => {
   try {
     const r = await fetch(`${TRACKER_URL}/api/hub/rep-remove`, { method: "POST", headers: { Authorization: "Hub " + hubSign({ svc: true, exp: Date.now() + 120000 }), "Content-Type": "application/json" }, body: JSON.stringify({ rep: String(req.params.rep || "") }), signal: AbortSignal.timeout(12000) });

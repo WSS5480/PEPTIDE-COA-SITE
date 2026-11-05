@@ -2538,9 +2538,40 @@ let teamView = (() => { try { return Object.assign({ q: "", role: "", show: "act
 async function staff() {
   if (!isOwner()) return dashboard();
   const PLAN_ON = await api("/commissions/plan").then((j) => j.on).catch(() => false);
-  const [{ users }, repStats] = await Promise.all([api("/users"), api("/reps").then((j) => j.reps).catch(() => [])]);
+  const PORTAL = !!(HUB.linked && HUB.apps && HUB.apps.tracker);
+  const [{ users }, repStats, plans] = await Promise.all([api("/users"), api("/reps").then((j) => j.reps).catch(() => []), PORTAL ? api("/hub/plans").catch((e) => ({ ok: false, error: e.message, rows: [], counts: [] })) : Promise.resolve({ ok: false, rows: [], counts: [] })]);
   const statsBy = Object.fromEntries(repStats.map((r) => [r.id, r]));
-  users.forEach((u) => { u.st = statsBy[u.id] || null; });
+  // each rep's portal plan row: matched by their login id, then by name
+  const planOf = (u) => plans.rows.find((r) => r.role !== "Team" && r.hub === u.id) || plans.rows.find((r) => r.role !== "Team" && String(r.rep).trim().toLowerCase() === u.name.trim().toLowerCase()) || null;
+  users.forEach((u) => { u.st = statsBy[u.id] || null; u.plan = PORTAL && u.role === "rep" ? planOf(u) : null; });
+  const COUNTS = plans.counts && plans.counts.length ? plans.counts : ["All", "New only", "New + Existing", "Legacy only"];
+  const COUNT_LABEL = { "New + Existing": "New + Existing (no legacy)", "New only": "New only", "Legacy only": "Legacy only", "All": "All (legacy too)" };
+  const money0 = (n) => "$" + Number(n || 0).toLocaleString("en-US");
+  // the portal plan block on a rep's card (edited in place, saved with the card)
+  const planBlock = (u) => {
+    if (!PORTAL || u.role !== "rep") return "";
+    if (!appsOf(u).tracker) return `<div class="muted" data-planblock="off" style="padding:.6rem .2rem 0">360 Medical Portal plan: tick <strong>360 Medical Portal</strong> above and Save, then set the quota and commission here.</div>`;
+    if (!plans.ok) return `<div class="muted" data-planblock="down" style="padding:.6rem .2rem 0">360 Medical Portal plan: couldn't reach the portal right now (${esc(plans.error || "no answer")}). Refresh in a minute.</div>`;
+    const r = u.plan || { role: "Sales Rep", territory: u.name, metric: "Revenue", quota: null, counts: "New + Existing", product_filter: "", carry: false, comm_rate: null, comm_floor: null, pay_kind: "", pay_amount: null, sim_quota: null };
+    const P = (label, html) => `<div class="field" style="margin:0"><span class="eyebrow">${label}</span>${html}</div>`;
+    const n = (v) => (v === null || v === undefined ? "" : String(v));
+    return `<div data-planblock="on" style="margin-top:.8rem;padding:.7rem .8rem .2rem;border:1px solid var(--line);border-radius:10px;background:var(--card)">
+      <div class="eyebrow" style="margin-bottom:.5rem">360 Medical Portal plan${u.plan ? "" : ' <span class="pill">new — fill in and Save</span>'}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,10rem),1fr));gap:.6rem .9rem;align-items:end">
+        ${P("Title", `<input data-pk="role" value="${esc(r.role || "Sales Rep")}" placeholder="Sales Rep">`)}
+        ${P("Territory", `<input data-pk="territory" value="${esc(r.territory || u.name)}">`)}
+        ${P("Measured by", `<select data-pk="metric"><option value="Revenue"${r.metric !== "Cases" ? " selected" : ""}>Revenue $</option><option value="Cases"${r.metric === "Cases" ? " selected" : ""}>Cases</option></select>`)}
+        ${P("Monthly quota", `<input data-pk="quota" inputmode="decimal" value="${esc(n(r.quota))}" placeholder="${r.metric === "Cases" ? "cases" : "$"}">`)}
+        ${P("Counts", `<select data-pk="counts">${COUNTS.map((c) => `<option value="${esc(c)}"${(r.counts || "All") === c ? " selected" : ""}>${esc(COUNT_LABEL[c] || c)}</option>`).join("")}</select>`)}
+        ${P("Product filter", `<input data-pk="product_filter" value="${esc(r.product_filter || "")}" placeholder="All products">`)}
+        ${P("Carry shortfall", `<label class="chk"><input type="checkbox" data-pk="carry"${r.carry ? " checked" : ""}> Missed quota rolls into next month</label>`)}
+        ${P("Commission %", `<input data-pk="comm_rate" inputmode="decimal" value="${esc(n(r.comm_rate))}" placeholder="e.g. 10">`)}
+        ${P("Commission floor $", `<input data-pk="comm_floor" inputmode="decimal" value="${esc(n(r.comm_floor))}" placeholder="0" title="Commission is paid on sales above this amount">`)}
+        ${P("Pay", `<select data-pk="pay_kind"><option value=""${!r.pay_kind ? " selected" : ""}>None</option><option value="draw"${r.pay_kind === "draw" ? " selected" : ""}>Draw</option><option value="salary"${r.pay_kind === "salary" ? " selected" : ""}>Base salary</option></select>`)}
+        ${P("Pay $ / month", `<input data-pk="pay_amount" inputmode="decimal" value="${esc(n(r.pay_amount))}" placeholder="$">`)}
+        ${P("SIM / quarter", `<input data-pk="sim_quota" inputmode="decimal" value="${esc(n(r.sim_quota))}" placeholder="—">`)}
+      </div></div>`;
+  };
   const ROLE = { owner: "Admin", staff: "Manager", rep: "Sales rep" };
   const roleSel = (cur, id) => `<select ${id ? `id="${id}"` : 'data-k="role" style="min-width:7.5rem"'}>${Object.entries(ROLE).map(([k, l]) => `<option value="${k}"${cur === k ? " selected" : ""}>${l}</option>`).join("")}</select>`;
   const appsOf = (u) => ({ store: !u.apps || u.apps.store !== false, tracker: u.apps && u.apps.tracker !== undefined ? !!u.apps.tracker : u.role === "owner" });
@@ -2565,6 +2596,7 @@ async function staff() {
         ${F("Apps", `<div class="row2" style="gap:.2rem 1rem;flex-wrap:wrap"><label class="chk"><input type="checkbox" data-app="store"${ap.store ? " checked" : ""}> Peptide store</label><label class="chk"><input type="checkbox" data-app="tracker"${ap.tracker ? " checked" : ""}> 360 Medical Portal</label></div>`)}
         ${F("Status", `<label class="chk"><input type="checkbox" data-k="active"${u.active ? " checked" : ""}${u.id === me.id ? " disabled" : ""}> Active</label>`)}
       </div>
+      ${planBlock(u)}
       ${s ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));gap:.6rem 1.2rem;padding:.7rem .2rem 0">${det("Customers", s.customers)}${det("Orders", s.orders)}${det("This month", money(s.month_cents))}${det("Sales (all)", money(s.sales_cents))}${det("Owed now", `<strong>${money(s.commission.earned)}</strong>`)}${det("Paid out", money(s.commission.paid))}</div>` : ""}
       <div class="row2" style="margin-top:.7rem;gap:.4rem;flex-wrap:wrap"><button class="btn solid" data-save>Save</button>${rep ? `<button class="btn" data-comm="${u.id}">Commissions</button><button class="btn" data-rcust="${u.id}">Customers</button>` : ""}${u.id === me.id ? "" : '<button class="btn danger" data-del title="Delete this login for good">Delete</button>'}</div>`; };
   pane().innerHTML = `<header><h1>Team</h1><button class="btn solid" id="addP">Add person</button></header>
@@ -2576,9 +2608,9 @@ async function staff() {
       <select id="tSort">${[["name", "Name A–Z"], ["role", "Role"], ["month", "This month"], ["sales", "Sales (all)"], ["owed", "Owed now"], ["customers", "Customers"]].map(([k, l]) => `<option value="${k}">Sort: ${l}</option>`).join("")}</select></div>
     <div class="row2" style="justify-content:space-between;align-items:center"><p class="muted" id="tSum" style="margin:0"></p><button class="btn" type="button" id="tAll">Expand all</button></div>
     <div class="tblwrap" id="tt"></div>
-    ${HUB.linked && HUB.apps && HUB.apps.tracker ? `<div class="panel" id="plansPanel"><h2>360 Medical Portal plans</h2>
-      <p class="muted">Quota, commission plan, pay and territory for each rep with the 360 Medical Portal ticked above. Names, PINs and on/off come from the list above. Team quotas are set here.</p>
-      ${HOSTABLE ? `<iframe class="hubframe" title="Reps and plans" src="/admin/go/tracker?next=${encodeURIComponent("/admin?embed=1&card=reps-card")}" style="width:100%;height:40rem;min-height:24rem;border:0;border-radius:14px;background:var(--card)"></iframe>` : `<a class="btn solid" href="${switchHref("/admin")}"${FRAMED ? ' target="_top"' : ""} style="display:inline-grid;place-items:center;text-decoration:none">Open the portal's admin</a>`}</div>` : ""}`;
+    ${PORTAL ? `<div class="panel" id="teamPlans" data-fold-open><h2>360 Medical Portal · team quotas</h2>
+      <p class="muted">Each rep's own quota and commission plan is on their card above. Team quotas (a shared target for a territory or product line) are set here.</p>
+      <div id="tpRows"></div><div class="row2" style="margin-top:.5rem"><button class="btn" type="button" id="tpAddRow">+ Team quota</button><button class="btn solid" type="button" id="tpSaveRows">Save team quotas</button></div></div>` : ""}`;
   let shown = [];
   const draw = () => {
     const q = st.q.trim().toLowerCase();
@@ -2589,7 +2621,7 @@ async function staff() {
     document.getElementById("tSum").textContent = shown.length ? `${shown.length} ${shown.length === 1 ? "person" : "people"}${shown.length !== users.length ? ` of ${users.length}` : ""}${reps.length ? ` · reps: ${reps.reduce((t, u) => t + u.st.customers, 0)} customers · ${money(reps.reduce((t, u) => t + u.st.month_cents, 0))} this month · ${money(reps.reduce((t, u) => t + u.st.commission.earned, 0))} owed` : ""}` : "";
     document.getElementById("tt").innerHTML = shown.length ? `<table class="tbl ctbl"><thead><tr><th>Person</th><th class="num">Customers</th><th class="num">This month</th><th class="num">Sales (all)</th><th class="num">Owed now</th></tr></thead><tbody>
       ${shown.map((u) => { const open = openSet.has(u.id), ap = appsOf(u), s = u.st; return `<tr class="csum click" data-uid="${u.id}" aria-expanded="${open}"><td><span class="caret" style="display:inline-block;width:1rem;transition:transform .15s;${open ? "transform:rotate(90deg)" : ""}">▸</span><strong>${esc(u.name)}</strong> <span class="pill${u.role === "owner" ? " st-shipped" : ""}">${ROLE[u.role]}</span>${u.active ? "" : ' <span class="pill st-cancelled">off</span>'}${u.id === me.id ? ' <span class="muted">· you</span>' : u.signed_in ? ' <span class="muted">· signed in</span>' : ""}
-          <div class="muted" style="font-size:.78rem">${esc(u.email)}${ap.store ? " · Store" : ""}${ap.tracker ? " · Portal" : ""}${u.pin_set ? "" : " · no PIN"}</div></td>
+          <div class="muted" style="font-size:.78rem">${esc(u.email)}${ap.store ? " · Store" : ""}${ap.tracker ? " · Portal" : ""}${u.pin_set ? "" : " · no PIN"}${u.plan && u.plan.quota ? ` · quota ${u.plan.metric === "Cases" ? u.plan.quota + " cases" : money0(u.plan.quota)}/mo` : ""}${u.plan && u.plan.comm_rate ? ` · ${u.plan.comm_rate}%${u.plan.comm_floor ? " over " + money0(u.plan.comm_floor) : ""}` : ""}</div></td>
         <td class="num">${s ? s.customers : u.customers || "—"}</td><td class="num">${s ? money(s.month_cents) : "—"}</td><td class="num">${s ? money(s.sales_cents) : "—"}</td><td class="num">${s ? `<strong>${money(s.commission.earned)}</strong>` : "—"}</td></tr>
         <tr class="cdet" data-uid="${u.id}" data-id="${u.id}" data-role="${u.role}"${open ? "" : " hidden"}><td colspan="5" style="background:var(--ground,#f6f7f9)">${card(u)}</td></tr>`; }).join("")}</tbody></table>` : `<p class="muted">${users.length ? "Nobody matches." : "No logins yet. Use Add person."}</p>`;
     document.getElementById("tAll").textContent = shown.length && shown.every((u) => openSet.has(u.id)) ? "Collapse all" : "Expand all";
@@ -2601,6 +2633,28 @@ async function staff() {
   document.getElementById("tSort").onchange = (e) => { st.sort = e.target.value; save(); draw(); };
   document.getElementById("tAll").onclick = () => { const all = !shown.every((u) => openSet.has(u.id)); openSet.clear(); if (all) shown.forEach((u) => openSet.add(u.id)); draw(); };
   draw();
+  if (PORTAL) {
+    const teamRows = plans.ok ? plans.rows.filter((r) => r.role === "Team").map((r) => ({ ...r })) : [];
+    const drawTeam = () => {
+      const box = document.getElementById("tpRows"); if (!box) return;
+      if (!plans.ok) { box.innerHTML = `<p class="muted">Couldn't reach the portal right now (${esc(plans.error || "no answer")}). Refresh in a minute.</p>`; document.getElementById("tpAddRow").disabled = true; document.getElementById("tpSaveRows").disabled = true; return; }
+      box.innerHTML = teamRows.length ? teamRows.map((r, i) => `<div data-trow="${i}" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,9rem),1fr));gap:.5rem .8rem;align-items:end;padding:.5rem 0;border-top:1px solid var(--line)">
+          <div class="field" style="margin:0"><span class="eyebrow">Name</span><input data-tk="rep" value="${esc(r.rep)}" placeholder="e.g. RGV team"></div>
+          <div class="field" style="margin:0"><span class="eyebrow">Territory</span><input data-tk="territory" value="${esc(r.territory || "")}"></div>
+          <div class="field" style="margin:0"><span class="eyebrow">Measured by</span><select data-tk="metric"><option value="Revenue"${r.metric !== "Cases" ? " selected" : ""}>Revenue $</option><option value="Cases"${r.metric === "Cases" ? " selected" : ""}>Cases</option></select></div>
+          <div class="field" style="margin:0"><span class="eyebrow">Monthly quota</span><input data-tk="quota" inputmode="decimal" value="${esc(r.quota == null ? "" : r.quota)}"></div>
+          <div class="field" style="margin:0"><span class="eyebrow">Counts</span><select data-tk="counts">${COUNTS.map((c) => `<option value="${esc(c)}"${(r.counts || "All") === c ? " selected" : ""}>${esc(COUNT_LABEL[c] || c)}</option>`).join("")}</select></div>
+          <div class="field" style="margin:0"><span class="eyebrow">Product filter</span><input data-tk="product_filter" value="${esc(r.product_filter || "")}" placeholder="All products"></div>
+          <div class="field" style="margin:0"><span class="eyebrow">Carry shortfall</span><label class="chk"><input type="checkbox" data-tk="carry"${r.carry ? " checked" : ""}> Yes</label></div>
+          <div class="field" style="margin:0"><span class="eyebrow">SIM / quarter</span><input data-tk="sim_quota" inputmode="decimal" value="${esc(r.sim_quota == null ? "" : r.sim_quota)}"></div>
+          <div><button class="btn danger" type="button" data-tdelrow="${i}">Remove</button></div></div>`).join("") : `<p class="muted">No team quotas yet.</p>`;
+    };
+    const readTeam = () => [...document.querySelectorAll("#tpRows [data-trow]")].map((d) => { const o = {}; d.querySelectorAll("[data-tk]").forEach((i) => { o[i.dataset.tk] = i.type === "checkbox" ? i.checked : i.value.trim(); }); return o; });
+    drawTeam();
+    document.getElementById("tpAddRow").onclick = () => { teamRows.length = 0; teamRows.push(...readTeam()); teamRows.push({ rep: "", territory: "", metric: "Revenue", quota: null, counts: "All", product_filter: "", carry: false, sim_quota: null }); drawTeam(); const last = document.querySelector('#tpRows [data-trow]:last-child input'); if (last) last.focus(); };
+    document.getElementById("tpRows").onclick = (e) => { const d = e.target.closest("[data-tdelrow]"); if (!d) return; teamRows.length = 0; teamRows.push(...readTeam()); teamRows.splice(+d.dataset.tdelrow, 1); drawTeam(); };
+    document.getElementById("tpSaveRows").onclick = async () => { try { const r = await api("/hub/team-plans", { method: "PUT", body: { rows: readTeam() } }); teamRows.length = 0; teamRows.push(...r.rows); drawTeam(); toast("Team quotas saved"); paneDirty = false; } catch (x) {} };
+  }
   const tt = document.getElementById("tt");
   tt.addEventListener("change", (e) => {
     if (planToggle(e)) return;
@@ -2622,7 +2676,16 @@ async function staff() {
     tr.querySelectorAll("[data-k]").forEach((i) => { if (i.type === "checkbox") body[i.dataset.k === "smsOn" ? "smsOn" : "active"] = i.checked; else if (i.dataset.k === "rate") { if (!i.disabled && i.value.trim() !== "") body.rate = i.value.trim(); } else if (i.dataset.k === "pin") { if (i.value.trim()) body.pin = i.value.trim(); } else if (i.dataset.k !== "password" || i.value) body[i.dataset.k] = i.value; });
     body.apps = { store: tr.querySelector('[data-app="store"]').checked, tracker: tr.querySelector('[data-app="tracker"]').checked };
     if (body.role && body.role !== tr.dataset.role && !confirm(`Change this login to ${ROLE[body.role]}? They'll be signed out.`)) return;
-    try { await api("/users/" + tr.dataset.id, { method: "PATCH", body }); toast("Saved"); paneDirty = false; staffPick = tr.dataset.id; staff(); } catch (x) {}
+    try {
+      await api("/users/" + tr.dataset.id, { method: "PATCH", body });
+      const pb = tr.querySelector('[data-planblock="on"]');
+      if (pb && body.apps.tracker && (body.role || tr.dataset.role) === "rep") {
+        const plan = {}; pb.querySelectorAll("[data-pk]").forEach((i) => { plan[i.dataset.pk] = i.type === "checkbox" ? i.checked : i.value.trim(); });
+        await api("/hub/plan/" + tr.dataset.id, { method: "PUT", body: { plan } });
+        toast("Saved — login and portal plan");
+      } else toast("Saved");
+      paneDirty = false; staffPick = tr.dataset.id; staff();
+    } catch (x) {}
   };
   // Add person: one form; the role decides what shows (commission and courses for reps)
   document.getElementById("addP").onclick = () => {
