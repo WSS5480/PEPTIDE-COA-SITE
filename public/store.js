@@ -203,7 +203,8 @@ function addToCart(id, n = 1) {
 }
 
 /* ---------- checkout ---------- */
-const submitLabel = () => (S.cardPayments ? "Pay with card" : "Submit order request");
+const INPAGE = () => !!(S.cardPayments && S.stripePk); // the card form shows inside this checkout (Stripe's Payment Element)
+const submitLabel = () => (INPAGE() ? "Continue to payment" : S.cardPayments ? "Pay with card" : "Submit order request");
 function drawTotals() {
   const lines = cartLines(), sub = lines.reduce((s, l) => s + l.p.price_cents * l.qty, 0);
   const f = chosenFul(), sc = shipCost(f, sub), off = codeOff(sub);
@@ -236,9 +237,9 @@ async function applyCode() {
 }
 function openCheckout() {
   closeD($("cart"));
-  $("coForm").hidden = false; $("coDone").hidden = true; $("coErr").hidden = true;
+  $("coForm").hidden = false; $("coDone").hidden = true; $("coPay").hidden = true; $("coErr").hidden = true;
   $("cfAgeText").textContent = `I am ${S.minAge} or older.`;
-  $("coIntro").textContent = S.cardPayments ? "You'll pay securely by card on the next screen. We never see your card number." : "No payment is taken here. We review your order, then contact you with the total and how to pay.";
+  $("coIntro").textContent = INPAGE() ? "Next step: pay by card right here, securely through Stripe. We never see your card number." : S.cardPayments ? "You'll pay securely by card on the next screen. We never see your card number." : "No payment is taken here. We review your order, then contact you with the total and how to pay.";
   $("coSubmit").textContent = submitLabel();
   $("cEmailLabel").textContent = ME ? "Email (optional)" : "Email";
   drawFulfillment();
@@ -260,10 +261,10 @@ async function submitOrder(e) {
   const body = {
     name: v("cName"), email: v("cEmail"), phone: v("cPhone"), smsOk: !!(S.smsCustomer && $("cSms") && $("cSms").checked),
     address: { line1: v("a1"), line2: v("a2"), city: v("aCity"), state: v("aState"), zip: v("aZip"), country: "US" },
-    fulfillment: f ? f.key : "ship", discountCode: CODE ? CODE.code : "", pay: S.cardPayments ? "card" : "request",
+    fulfillment: f ? f.key : "ship", discountCode: CODE ? CODE.code : "", pay: S.cardPayments ? "card" : "request", inpage: INPAGE(),
     note: v("cNote"), website: $("website").value, confirmAge: true, confirmResearch: true, items: cart
   };
-  $("coSubmit").disabled = true; $("coSubmit").textContent = S.cardPayments ? "Opening the payment page…" : "Sending…";
+  $("coSubmit").disabled = true; $("coSubmit").textContent = INPAGE() ? "One moment…" : S.cardPayments ? "Opening the payment page…" : "Sending…";
   try {
     const res = await fetch("/api/orders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await res.json();
@@ -271,6 +272,7 @@ async function submitOrder(e) {
     store.set("buyer", { name: body.name, email: body.email, phone: body.phone, ...body.address });
     if (f) store.set("fulfil", f.key);
     cart = []; saveCart(); drawProducts(); CODE = null; $("cCode").value = ""; $("cCodeMsg").textContent = "";
+    if (j.clientSecret) { store.set("pendingPay", { number: j.number, email: body.email }); await showPayment(j, body.email); return; }
     if (j.payUrl) { store.set("pendingPay", { number: j.number, email: body.email }); location.href = j.payUrl; return; }
     $("coForm").hidden = true;
     $("coDone").hidden = false;
@@ -290,9 +292,9 @@ function afterPayment() {
   history.replaceState(null, "", u.pathname + u.hash);
   const pending = store.get("pendingPay") || {};
   const payBtn = num && pending.number === num && pending.email ? `<button class="btn solid" type="button" id="payAgain">Pay now by card</button>` : "";
-  $("coForm").hidden = true; $("coDone").hidden = false;
+  $("coForm").hidden = true; $("coPay").hidden = true; $("coDone").hidden = false;
   $("coDone").innerHTML = `<div class="sectionhead" style="padding:0"><h2>${paid ? "Payment received" : pay === "cancelled" ? "Order saved, not paid" : "Checking your payment"}</h2><button class="btn" type="button" data-close>Close</button></div>
-    ${paid ? `<div class="okbox"><span class="eyebrow">Your order number</span><span class="num">${esc(num)}</span><span>Thank you! Your payment went through and your order is being prepared. A confirmation is on its way to your email.</span></div>`
+    ${paid ? paidBox(num)
       : pay === "cancelled" ? `<div class="okbox"><span class="eyebrow">Order ${esc(num)}</span><span>We saved your order, but no payment was made. You can pay now, or later under "Check an order" with your order number and email.</span>${payBtn ? `<div>${payBtn}</div>` : ""}</div>`
       : pay === "pending" ? `<div class="okbox"><span class="eyebrow">Order ${esc(num)}</span><span>Your payment hasn't been confirmed yet. If you paid, it will show within a few minutes under "Check an order". If not, you can pay there by card.</span></div>`
       : `<div class="err">We couldn't match that payment to an order. Check your order under "Check an order", or contact us.</div>`}`;
@@ -300,10 +302,65 @@ function afterPayment() {
   const b = $("payAgain"); if (b) b.onclick = () => payOrder(num, pending.email, b);
   openD($("checkout"));
 }
+const paidBox = (num) => `<div class="okbox"><span class="eyebrow">Your order number</span><span class="num">${esc(num)}</span><span>Thank you! Your payment went through and your order is being prepared. A confirmation is on its way to your email.</span></div>`;
 async function payOrder(number, email, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = "Opening the payment page…"; }
-  try { const j = await post("/api/orders/pay", { number, email }); store.set("pendingPay", { number, email }); location.href = j.payUrl; }
-  catch (x) { toast(x.message); if (btn) { btn.disabled = false; btn.textContent = "Pay now by card"; } }
+  if (btn) { btn.disabled = true; btn.textContent = INPAGE() ? "One moment…" : "Opening the payment page…"; }
+  try {
+    const j = await post("/api/orders/pay", { number, email, inpage: INPAGE() });
+    store.set("pendingPay", { number, email });
+    if (j.clientSecret) { await showPayment(j, email); return; }
+    location.href = j.payUrl;
+  } catch (x) { toast(x.message); if (btn) { btn.disabled = false; btn.textContent = "Pay now by card"; } }
+}
+/* ---------- card payment inside the checkout (Stripe's Payment Element) ---------- */
+let stripeJs = null;
+function loadStripeJs() {
+  if (window.Stripe) return Promise.resolve();
+  if (!stripeJs) stripeJs = new Promise((ok, no) => { const sc = document.createElement("script"); sc.src = "https://js.stripe.com/v3/"; sc.onload = ok; sc.onerror = () => { stripeJs = null; no(new Error("Couldn't load the payment form. Check your connection and try again.")); }; document.head.appendChild(sc); });
+  return stripeJs;
+}
+// pay: { clientSecret, pi, amountCents, number } from the server. The customer's card details go straight to Stripe (an iframe);
+// on success the store is told and the order shows as paid.
+async function showPayment(pay, email) {
+  const box = $("coPay"), amount = money(pay.amountCents);
+  $("coForm").hidden = true; $("coDone").hidden = true; box.hidden = false;
+  box.innerHTML = `<div class="sectionhead" style="padding:0"><h2>Pay ${esc(amount)}</h2><button class="btn" type="button" data-close>Close</button></div>
+    <div class="okbox" style="gap:.3rem"><span class="eyebrow">Order ${esc(pay.number)}</span><span>Total <strong>${esc(amount)}</strong>${email ? ` · receipt to ${esc(email)}` : ""}</span></div>
+    <div id="payEl"><p class="dist">Loading the secure payment form…</p></div>
+    <div class="err" id="payErr" hidden></div>
+    <button class="btn solid wide" type="button" id="payBtn" disabled>Pay ${esc(amount)}</button>
+    <p class="dist">Secure payment through Stripe — your card number goes to Stripe, never to us. Not ready? <button class="linkbtn" type="button" id="payLater">Pay later</button>: your order is saved, and you can pay under "Check an order" with your order number and email.</p>`;
+  openD($("checkout"));
+  const fail = (m) => { $("payErr").textContent = m; $("payErr").hidden = false; };
+  $("payLater").onclick = () => { closeD($("checkout")); toast(`Order ${pay.number} is saved. Pay any time under "Check an order".`, 6000); };
+  try { await loadStripeJs(); } catch (e) { return fail(e.message); }
+  const st = window.Stripe(S.stripePk);
+  const css = getComputedStyle(document.documentElement), v = (k, d) => (css.getPropertyValue(k) || "").trim() || d;
+  const elements = st.elements({ clientSecret: pay.clientSecret, fonts: [{ cssSrc: "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" }],
+    appearance: { theme: "stripe", variables: { colorPrimary: v("--blue", "#0b4d96"), colorText: v("--ink", "#111827"), colorDanger: "#b91c1c", fontFamily: "Poppins, system-ui, sans-serif", fontSizeBase: "15px", borderRadius: "10px", spacingUnit: "4px" },
+      rules: { ".Input": { padding: "12px", borderColor: v("--line-strong", "#cbd5e1") }, ".Input:focus": { boxShadow: `0 0 0 2px ${v("--blue", "#0b4d96")}` }, ".Tab": { borderRadius: "10px" }, ".Label": { fontWeight: "600", fontSize: "13px" } } } });
+  const el = elements.create("payment", { layout: "tabs" });
+  el.mount("#payEl");
+  el.on("ready", () => { $("payBtn").disabled = false; });
+  el.on("loaderror", (e) => fail((e.error && e.error.message) || "The payment form couldn't load. Try again in a moment."));
+  $("payBtn").onclick = async () => {
+    const btn = $("payBtn"); btn.disabled = true; btn.textContent = "Paying…"; $("payErr").hidden = true;
+    try {
+      const { error, paymentIntent } = await st.confirmPayment({ elements, redirect: "if_required", confirmParams: { return_url: `${location.origin}/pay/done?o=${encodeURIComponent(pay.number)}`, receipt_email: email || undefined } });
+      if (error) { fail(error.message || "The payment didn't go through. Check the card details and try again."); btn.disabled = false; btn.textContent = `Pay ${amount}`; return; }
+      if (paymentIntent && paymentIntent.status === "succeeded") {
+        await post("/api/pay/confirm", { number: pay.number, pi: paymentIntent.id }).catch(() => {}); // the webhook records it too
+        store.set("pendingPay", null);
+        box.hidden = true; $("coDone").hidden = false;
+        $("coDone").innerHTML = `<div class="sectionhead" style="padding:0"><h2>Payment received</h2><button class="btn" type="button" data-close>Close</button></div>${paidBox(pay.number)}`;
+        load(); loadAccount();
+        return;
+      }
+      // a bank payment still processing: the order shows paid once Stripe confirms it
+      box.hidden = true; $("coDone").hidden = false;
+      $("coDone").innerHTML = `<div class="sectionhead" style="padding:0"><h2>Payment started</h2><button class="btn" type="button" data-close>Close</button></div><div class="okbox"><span class="eyebrow">Order ${esc(pay.number)}</span><span>Your payment is being processed. The order shows as paid as soon as it clears — check it any time under "Check an order".</span></div>`;
+    } catch (x) { fail("Couldn't reach the store. Check your connection and try again."); btn.disabled = false; btn.textContent = `Pay ${amount}`; }
+  };
 }
 
 /* ---------- lab report library ---------- */

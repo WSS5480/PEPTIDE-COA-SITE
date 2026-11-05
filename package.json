@@ -1,6 +1,6 @@
 {
   "name": "peptide-store",
-  "version": "2.72.3",
+  "version": "2.73.0",
   "private": true,
   "description": "Distributor storefront with lab reports, order-request cart and admin",
   "main": "server.js",

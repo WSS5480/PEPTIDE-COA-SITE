@@ -12,7 +12,10 @@ const webpush = require("web-push");
 /* ---------- Stripe: card payments, on once STRIPE_SECRET_KEY is set on the host ---------- */
 const STRIPE_KEY = String(process.env.STRIPE_SECRET_KEY || "").trim();
 const stripe = STRIPE_KEY ? require("stripe")(STRIPE_KEY) : null;
-const stripeInfo = () => ({ ready: !!stripe, mode: STRIPE_KEY.startsWith("sk_live") ? "live" : stripe ? "test" : "", webhook: !!process.env.STRIPE_WEBHOOK_SECRET });
+// With the publishable key too, the card form shows inside the store's own checkout (Stripe's Payment Element);
+// without it the customer is sent to Stripe's hosted page instead. Emailed "pay by card" links always use the hosted page.
+const STRIPE_PK = String(process.env.STRIPE_PUBLISHABLE_KEY || "").trim();
+const stripeInfo = () => ({ ready: !!stripe, mode: STRIPE_KEY.startsWith("sk_live") ? "live" : stripe ? "test" : "", webhook: !!process.env.STRIPE_WEBHOOK_SECRET, inpage: !!(stripe && STRIPE_PK) });
 
 const app = express();
 app.set("trust proxy", 1);
@@ -52,7 +55,7 @@ function publicSettings(s) {
   const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy",
     "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote", "pricesRequireLogin", "showSoldOut", "stockDisplay", "stockLowAt", "custIdleMin"];
   // card payments only work once the Stripe key is on the host, so the store is told the effective state
-  const out = { ...Object.fromEntries(keys.map((k) => [k, s[k]])), cardPayments: !!(s.cardPayments && stripe), bannerTone: s.bannerTone || "navy", bannerLink: s.bannerLink || "", bannerSpeed: Math.min(90, Math.max(6, Number(s.bannerSpeed) || 30)), bannerSticky: s.bannerSticky !== false, smsCustomer: s.smsOn !== false && s.smsCustomerOn !== false && sms.ready() };
+  const out = { ...Object.fromEntries(keys.map((k) => [k, s[k]])), cardPayments: !!(s.cardPayments && stripe), stripePk: s.cardPayments && stripe ? STRIPE_PK : "", bannerTone: s.bannerTone || "navy", bannerLink: s.bannerLink || "", bannerSpeed: Math.min(90, Math.max(6, Number(s.bannerSpeed) || 30)), bannerSticky: s.bannerSticky !== false, smsCustomer: s.smsOn !== false && s.smsCustomerOn !== false && sms.ready() };
   // the promo banner stops on its own after its end date (Central time)
   if (s.bannerUntil && new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) > s.bannerUntil) out.announcementOn = false;
   return out;
@@ -335,7 +338,9 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
       placedBy: "Customer", event: `Order placed; customer confirmed research use and age${payCard ? "; paying by card" : ""}`, settings: s });
     if (b.smsOk && sms.norm(phone)) await q("update orders set sms_ok = true where id = $1", [r.id]);
     if (payCard) {
-      // the customer pays on Stripe's page; the order is marked paid when they come back (and by the webhook)
+      // in the store's own checkout (card form on the page) when the publishable key is set and the store asked for it;
+      // otherwise the customer pays on Stripe's page. Either way the order is marked paid on confirmation and by the webhook.
+      if (b.inpage && STRIPE_PK) { const pay = await payIntentFor(r.id, "Customer"); return res.json({ ok: true, ...r, ...pay }); }
       const payUrl = await payLinkFor(r.id, originOf(req), "Customer");
       return res.json({ ok: true, ...r, payUrl });
     }
@@ -444,7 +449,21 @@ app.post("/api/orders/pay", limit("pay", 12, 15 * 60 * 1000), wrap(async (req, r
   const number = str(req.body?.number, 20), email = str(req.body?.email, 160).toLowerCase();
   const { rows: [o] } = await q("select id from orders where number = $1 and lower(email) = $2", [number, email]);
   if (!o) return bad(res, "No order matches that number and email.", 404);
-  try { res.json({ ok: true, payUrl: await payLinkFor(o.id, originOf(req), "Customer") }); } catch (e) { bad(res, e.message); }
+  try {
+    if (req.body?.inpage && STRIPE_PK) return res.json({ ok: true, ...(await payIntentFor(o.id, "Customer")) });
+    res.json({ ok: true, payUrl: await payLinkFor(o.id, originOf(req), "Customer") });
+  } catch (e) { bad(res, e.message); }
+}));
+// The card form inside the store confirmed a payment: check it with Stripe and mark the order paid (the webhook does the same).
+app.post("/api/pay/confirm", limit("payok", 30, 15 * 60 * 1000), wrap(async (req, res) => {
+  const number = str(req.body?.number, 20), piId = str(req.body?.pi, 80);
+  const { rows: [o] } = await q("select * from orders where number = $1 and stripe_pi = $2", [number, piId]);
+  if (!o || !stripe) return bad(res, "That payment doesn't match an order.", 404);
+  if (o.paid_at) return res.json({ ok: true, paid: true });
+  const pi = await stripe.paymentIntents.retrieve(piId).catch(() => null);
+  if (!pi || String(pi.metadata?.orderId || "") !== String(o.id)) return bad(res, "That payment doesn't match an order.", 404);
+  if (pi.status === "succeeded") { await markPaid(o, pi); return res.json({ ok: true, paid: true }); }
+  res.json({ ok: true, paid: false, status: pi.status });
 }));
 
 /* ---------- Stripe card payments ---------- */
@@ -478,10 +497,36 @@ async function payLinkFor(orderId, origin, who) {
   await q("insert into order_events(order_id, who, text) values ($1, $2, $3)", [o.id, who || "Stripe", who === "Customer" ? "Customer went to the card payment page" : "Card payment link created"]);
   return session.url;
 }
-// Records a Stripe payment once (safe to call from the return page and the webhook).
+// The card form inside the store: a PaymentIntent for the order's total (reused while it is still open, so a customer who
+// comes back to an unpaid order doesn't leave half-made payments behind). Returns what the page needs to show the form.
+async function payIntentFor(orderId, who) {
+  if (!stripe) throw new Error("Card payments aren't set up yet.");
+  const { rows: [o] } = await q("select * from orders where id = $1", [orderId]);
+  if (!o) throw new Error("Order not found.");
+  if (o.paid_at) throw new Error("This order is already paid.");
+  if (o.status === "cancelled") throw new Error("This order was cancelled.");
+  const s = await getSettings();
+  let pi = o.stripe_pi ? await stripe.paymentIntents.retrieve(o.stripe_pi).catch(() => null) : null;
+  if (pi && pi.status === "succeeded") { await markPaid(o, pi); throw new Error("This order is already paid."); }
+  if (pi && ["canceled", "requires_capture"].includes(pi.status)) pi = null;
+  if (pi && pi.amount !== o.total_cents) pi = await stripe.paymentIntents.update(pi.id, { amount: o.total_cents }).catch(() => null);
+  if (!pi) {
+    pi = await stripe.paymentIntents.create({
+      amount: o.total_cents, currency: "usd", automatic_payment_methods: { enabled: true },
+      description: `${s.brand} order ${o.number}`, receipt_email: isEmail(o.email || "") ? o.email : undefined,
+      metadata: { orderId: String(o.id), number: o.number }
+    });
+    await q("update orders set stripe_pi = $1, updated_at = now() where id = $2", [pi.id, o.id]);
+    await q("insert into order_events(order_id, who, text) values ($1, $2, $3)", [o.id, who || "Stripe", "Card payment started in the store"]);
+  }
+  return { clientSecret: pi.client_secret, pi: pi.id, amountCents: o.total_cents, number: o.number };
+}
+// Records a Stripe payment once (safe to call from the return page, the in-store confirmation and the webhook).
+// `session` is a Checkout Session (hosted page) or a PaymentIntent (card form in the store).
 async function markPaid(o, session) {
-  const amount = session.amount_total ?? o.total_cents;
-  const pi = typeof session.payment_intent === "string" ? session.payment_intent : (session.payment_intent && session.payment_intent.id) || "";
+  const isPi = session.object === "payment_intent";
+  const amount = (isPi ? session.amount_received || session.amount : session.amount_total) ?? o.total_cents;
+  const pi = isPi ? session.id : typeof session.payment_intent === "string" ? session.payment_intent : (session.payment_intent && session.payment_intent.id) || "";
   const { rowCount } = await q(`update orders set status = case when status in ('new','confirmed') then 'paid' else status end, paid_at = now(), pay_method = 'card',
     stripe_pi = $1, paid_cents = $2, updated_at = now() where id = $3 and paid_at is null`, [pi, amount, o.id]);
   if (!rowCount) return false;
@@ -492,7 +537,18 @@ async function markPaid(o, session) {
 }
 // Stripe sends the customer back here after paying.
 app.get("/pay/done", wrap(async (req, res) => {
-  const number = str(req.query.o, 20), sid = str(req.query.s, 120);
+  const number = str(req.query.o, 20), sid = str(req.query.s, 120), piId = str(req.query.payment_intent, 80);
+  // a bank / wallet payment from the in-store form that had to leave the page comes back with ?payment_intent=…
+  if (piId) {
+    const { rows: [o] } = await q("select * from orders where number = $1 and stripe_pi = $2", [number, piId]);
+    if (!o || !stripe) return res.redirect("/?pay=unknown");
+    if (!o.paid_at) {
+      const pi = await stripe.paymentIntents.retrieve(piId).catch(() => null);
+      if (pi && pi.status === "succeeded") await markPaid(o, pi);
+      else return res.redirect(`/?pay=pending&o=${encodeURIComponent(number)}`);
+    }
+    return res.redirect(`/?paid=${encodeURIComponent(number)}`);
+  }
   const { rows: [o] } = await q("select * from orders where number = $1 and stripe_session = $2", [number, sid]);
   if (!o || !stripe) return res.redirect("/?pay=unknown");
   if (!o.paid_at) {
@@ -514,6 +570,10 @@ async function stripeWebhook(req, res) {
       const { rows: [o] } = await q("select * from orders where stripe_session = $1", [session.id]);
       if (o) await markPaid(o, session);
     }
+  } else if (event.type === "payment_intent.succeeded") { // the card form inside the store
+    const pi = event.data.object;
+    const { rows: [o] } = await q("select * from orders where stripe_pi = $1", [pi.id]);
+    if (o && String(pi.metadata?.orderId || "") === String(o.id)) await markPaid(o, pi);
   }
   res.json({ received: true });
 }
