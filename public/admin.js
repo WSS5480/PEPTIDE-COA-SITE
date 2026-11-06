@@ -93,10 +93,11 @@ function drawLogin(msg) {
 // [key, label, who]: "all" = owner, staff and sales reps · "team" = owner and staff · "owner" · "ownerrep" = owner and reps. "line" draws the divider:
 // sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
 const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["commissions", "Commissions", "ownerrep"], ["ar", "Invoices & AR", "all"], ["analytics", "Analytics", "all"], ["salescost", "Sales & cost", "owner"], ["pnl", "Profit / loss", "owner"], ["line"],
-  ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ["reports", "Lab reports", "team"], ["discounts", "Discount codes", "owner"], ["promo", "Promo banner", "team"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["university", "🎓 360 University", "team"], ["line2"],
+  ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ...(LAB_REPORTS ? [["reports", "Lab reports", "team"]] : []), ["discounts", "Discount codes", "owner"], ["promo", "Promo banner", "team"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["university", "🎓 360 University", "team"], ["line2"],
   // below the second line: the things you reach from either app (the portal links here too)
   ["staff", "Team", "owner"], ["setup", "Email & approvals", "owner"], ["geo", "Geofencing", "owner"], ["apps", "Apps & downloads", "all"], ["howto", "How to", "all"], ["account", "My account", "all"]];
-const canSee = (who) => who === "all" || (who === "owner" && isOwner()) || (who === "team" && !isRep()) || (who === "ownerrep" && (isOwner() || isRep()));
+const LAB_REPORTS = false; // lab-report (COA) tooling in the admin: off (owner request, Nov 2026); the storefront never shows reports
+const canSee = (who) => (who === "all" || (who === "owner" && isOwner()) || (who === "team" && !isRep()) || (who === "ownerrep" && (isOwner() || isRep())));
 function shell() {
   if (window.PushUI && !document.body.classList.contains("embed")) setTimeout(() => window.PushUI.nudge({ toast, what: me.role === "rep" ? "your customers' orders" : "new orders, card payments, PIN requests and low stock" }), 1500);
   app.innerHTML = `<div class="mtop"><strong>360 Peptides Admin</strong><span><button type="button" data-refresh title="Refresh"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button> <button type="button" id="mm">Menu</button></span></div>
@@ -183,7 +184,7 @@ async function dashboard() {
     return;
   }
   Promise.all([api("/reports"), api("/products")]).then(([{ reports: R }, { products: P }]) => {
-    const box = document.getElementById("linkCheck"); if (!box) return;
+    const box = document.getElementById("linkCheck"); if (!box || !LAB_REPORTS) return;
     const lone = R.filter((r) => r.active && !P.some((p) => p.active && reportMatches(p, r)));
     box.innerHTML = lone.length ? `<div class="panel"><strong>${lone.length} lab report${lone.length === 1 ? " isn't" : "s aren't"} attached to a product:</strong><span class="muted">${lone.map((r) => esc(`${r.product} ${r.strength}${r.sample ? " (" + r.sample + ")" : ""}`)).join(", ")}</span><div><button class="btn" data-nav="reports">Open lab reports</button></div></div>` : "";
   }).catch(() => {});
@@ -1332,13 +1333,13 @@ async function products() {
   pane().innerHTML = `<header><h1>Products &amp; prices</h1><div class="row2">${isOwner() ? `<button class="btn" id="descP">Descriptions</button><button class="btn" id="costP">Cost sheet</button><button class="btn" id="impP">Import from file</button><button class="btn" id="addP">Add product</button>${list.length ? `<button class="btn danger" id="clrP">Remove all products</button>` : ""}` : ""}</div></header>
     <div id="descBox"></div><div id="costBox"></div><div id="impBox"></div><div id="manageBox"></div>
     <p class="muted">Tap a product to open all its fields; cost, price and stock edit right on the line. Use Sort by to reorder the list. Cost = what you pay per vial (never shown on the store). Price blank = "Ask for price" (not buyable). Stock blank = not tracked. Max per order blank = no limit. "Sort" sets the order on the store (lower shows first). Untick Active to hide a product. <strong>Description:</strong> the first line is what's in the vial (e.g. "BPC-157 5 mg + TB-500 5 mg in one 10 mg vial") and each line that starts with "-" is a benefit bullet on the store card. A lab report attaches to a product when the peptide name, size and manufacturer match.</p>
-    ${(() => { const n = list.filter((p) => p.active && !repFor(p).length).length; return n ? `<p class="muted"><strong>${n} active product${n === 1 ? " has" : "s have"} no lab report.</strong> Tap the No lab report filter to see them.</p>` : ""; })()}
+    ${(() => { const n = LAB_REPORTS ? list.filter((p) => p.active && !repFor(p).length).length : 0; return n ? `<p class="muted"><strong>${n} active product${n === 1 ? " has" : "s have"} no lab report.</strong> Tap the No lab report filter to see them.</p>` : ""; })()}
     ${markupBar}
     ${saveBar}
     <datalist id="catlist">${cats.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
     <datalist id="mfrlist">${[...new Set(list.map((p) => p.manufacturer).filter(Boolean))].map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
     <div class="filters" style="flex-wrap:wrap;gap:.5rem"><input id="pq" type="search" placeholder="Search name, maker or category">
-      ${[["all", "All"], ["active", "Active"], ["hidden", "Hidden"], ["noprice", "No price"], ["nocost", "No cost"], ["noreport", "No lab report"]].map(([k, l]) => `<button class="chip${pFilter === k ? " on" : ""}" type="button" data-pf="${k}">${l}</button>`).join("")}</div>
+      ${[["all", "All"], ["active", "Active"], ["hidden", "Hidden"], ["noprice", "No price"], ["nocost", "No cost"], ...(LAB_REPORTS ? [["noreport", "No lab report"]] : [])].map(([k, l]) => `<button class="chip${pFilter === k ? " on" : ""}" type="button" data-pf="${k}">${l}</button>`).join("")}</div>
     <div class="row2" style="justify-content:space-between;align-items:center"><p class="muted" id="pSum" style="margin:0"></p><button class="btn" type="button" id="pAll">Expand all</button></div>
     <div class="tblwrap"><table class="tbl ctbl" id="pt" data-noflip><thead><tr><th style="font-weight:600">Sort by ${COLS.filter(([k]) => !["description", "docs"].includes(k)).map(([k, l]) => `<span class="sortable chip" data-sort="${k}" style="cursor:pointer;margin:.15rem .2rem;height:1.8rem;padding:0 .6rem;text-transform:none;letter-spacing:0">${l.replace(" $", "")}<span class="arr"></span></span>`).join("")}</th></tr></thead>
     <tbody id="pb">${list.map(row).join("")}</tbody></table></div>
@@ -1808,12 +1809,12 @@ async function manageProduct(p, reps) {
       </div>
     </div>
     <div class="two">
-      <div class="stack"><h3 class="eyebrow">Lab reports (COA)</h3>
+      ${LAB_REPORTS ? `<div class="stack"><h3 class="eyebrow">Lab reports (COA)</h3>
         ${reps.length ? `<ul class="hist">${reps.map((r) => `<li><strong>${esc(r.sample || `${r.product} ${r.strength}`)}</strong>${r.task ? ` · task #${esc(r.task)}` : ""}${r.tested ? ` · tested ${esc(r.tested)}` : ""}
           <small>${r.image ? `<a href="${esc(r.image)}" target="_blank" rel="noopener">${r.isPdf ? "Open PDF" : "Open image"}</a> · ` : "No file attached · "}<a href="#" data-editrep="${r.id}">Edit</a></small></li>`).join("")}</ul>`
           : `<p class="muted">No lab report attached yet.</p>`}
         ${isOwner() ? `<div><button class="btn solid" type="button" id="mgAddCoa">Add a COA for this peptide</button></div>` : ""}
-        <p class="muted" style="font-size:.8rem">A COA attaches when its peptide name, size and manufacturer match this product.</p></div>
+        <p class="muted" style="font-size:.8rem">A COA attaches when its peptide name, size and manufacturer match this product.</p></div>` : ""}
       <div class="stack"><h3 class="eyebrow">Other documents</h3>
         ${docs.length ? `<ul class="hist" id="docList">${docs.map((d) => `<li data-doc="${d.id}"><div class="row2" style="justify-content:space-between;align-items:center">
             <span><strong>${esc(d.title)}</strong> <span class="pill st-confirmed">${esc(d.kind)}</span>${d.public ? "" : ' <span class="pill st-new">Hidden</span>'}</span>

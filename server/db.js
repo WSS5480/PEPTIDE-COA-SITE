@@ -316,9 +316,9 @@ const DEFAULT_SETTINGS = {
   // Page setup: the feature cards under the home page header
   perksOn: true,
   perks: [
-    { icon: "flask", title: "Independently tested", text: "Products are tested by an outside laboratory." },
-    { icon: "doc", title: "Lab reports online", text: "Open a product's lab report right from its listing." },
-    { icon: "key", title: "Easy to verify", text: "Check a report with the testing lab directly." },
+    { icon: "shield", title: "Authorized source", text: "Every vial comes through our authorized supply." },
+    { icon: "chat", title: "Real support", text: "A professional support team to answer your questions." },
+    { icon: "star", title: "Fast delivery", text: "Fast delivery to your door." },
     { icon: "truck", title: "Tracked shipping", text: "Every order ships with a tracking number." }
   ],
   // Page setup: how the drawn product vial looks
@@ -333,8 +333,8 @@ const DEFAULT_SETTINGS = {
   bannerSticky: true,   // the banner stays pinned at the top while the page scrolls      // seconds for the scrolling text to go once across (lower = faster)   // navy | teal | gold | red
   bannerUntil: "",      // YYYY-MM-DD: the banner stops on its own after this day ("" = runs until halted)
   bannerLink: "",       // optional: tapping the banner goes here
-  heroEyebrow: "Third-party tested",
-  headline: "Research peptides with the lab report on every vial",
+  heroEyebrow: "Authorized distributor",
+  headline: "Research peptides, delivered fast",
   storeOpen: true,
   hidePrices: false,          // visitors who aren't signed in see "Sign in for pricing" instead of prices (the office and signed-in customers see them)
   pricesRequireLogin: true,   // prices (and the cart) show only once a customer signs in with their PIN
@@ -394,7 +394,7 @@ const DEFAULT_SETTINGS = {
   graphSecret: "",         // client secret; never sent to the browser
   priceNote: "Prices in US dollars, per vial.",
   paymentInstructions: "We'll review your order and reach out with the total and payment options. Your order ships once payment is received.",
-  intro: "Many of our products come with an independent lab report. Open one to see the results, then check it on the lab's own site with the key printed on it.",
+  intro: "Research peptides from an authorized distributor, with fast, tracked delivery and a real team to answer your questions.",
   // Short notice in the footer of every page (one paragraph per line).
   footerNotice: [
     "Every product on this site is sold for laboratory research and development only. Statements on this site have not been evaluated by the U.S. Food and Drug Administration, and no product or statement here is intended to diagnose, treat, cure or prevent any disease.",
@@ -589,6 +589,22 @@ async function init() {
       if (m.free_over_cents) await q("update settings set value = $1 where key = 'shippingFreeOverCents'", [JSON.stringify(m.free_over_cents)]);
     }
     await q("insert into settings(key, value) values ('shippingMoved', 'true') on conflict (key) do nothing");
+  }
+  // lab-report / COA wording retired from the storefront (owner request, Nov 2026): saved copy that still carries it moves to the new defaults once
+  const { rows: [done] } = await q("select 1 from settings where key = 'coaCopyRetired'");
+  if (!done) {
+    const cur = await getSettings(), lab = /\b(lab[- ]?report|lab[- ]?tested|laborator|coa\b|third[- ]party tested|verify)/i;
+    if (lab.test(cur.heroEyebrow || "")) await q("update settings set value = $1 where key = 'heroEyebrow'", [JSON.stringify(DEFAULT_SETTINGS.heroEyebrow)]);
+    if (lab.test(cur.headline || "")) await q("update settings set value = $1 where key = 'headline'", [JSON.stringify(DEFAULT_SETTINGS.headline)]);
+    if (lab.test(cur.intro || "")) await q("update settings set value = $1 where key = 'intro'", [JSON.stringify(DEFAULT_SETTINGS.intro)]);
+    if (lab.test(cur.tagline || "")) await q("update settings set value = $1 where key = 'tagline'", [JSON.stringify(DEFAULT_SETTINGS.tagline || "")]);
+    const perks = Array.isArray(cur.perks) ? cur.perks : [];
+    if (perks.some((c) => lab.test(`${c.title} ${c.text}`))) {
+      const kept = perks.filter((c) => !lab.test(`${c.title} ${c.text}`));
+      const add = DEFAULT_SETTINGS.perks.filter((d) => !kept.some((k) => k.title === d.title)).slice(0, Math.max(0, 4 - kept.length));
+      await q("update settings set value = $1 where key = 'perks'", [JSON.stringify(kept.concat(add))]);
+    }
+    await q("insert into settings(key, value) values ('coaCopyRetired', 'true') on conflict (key) do nothing");
   }
   await q("delete from sessions where expires < now()");
   await q("delete from customer_sessions where expires < now()");

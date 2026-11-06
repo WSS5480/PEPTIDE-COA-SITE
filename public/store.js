@@ -1,8 +1,7 @@
 /* Storefront: products, cart, order request, lab report library, order lookup, age gate. */
 (() => {
 const $ = (id) => document.getElementById(id);
-const LAB = location.pathname.replace(/\/+$/, "") === "/lab-reports";
-document.body.classList.add(LAB ? "pg-lab" : "pg-home");
+document.body.classList.add("pg-home");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const norm = (s) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const sizeKey = (s) => norm(s).replace(/mg$/, "");
@@ -18,7 +17,6 @@ const closeD = (d) => { if (d.close) d.close(); else d.removeAttribute("open"); 
 function toast(msg, ms = 1800) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), ms); }
 
 let cat = "";
-let coaOnly = !!store.get("coaOnly");
 // what shoppers see about stock (Site settings): nothing, "Only 3 left", "In stock" / "Low stock", or the count
 function stockText(p) {
   const mode = S.stockDisplay || "none", low = Number(S.stockLowAt) || 5;
@@ -92,7 +90,6 @@ function productArt(p) {
 }
 // A product's lab report matches by name + size, or by its code (e.g. RT30) against the report's Sample line.
 const mfrOk = (p, r) => { const a = norm(p.manufacturer), b = norm(r.manufacturer); return !a || !b || a.includes(b) || b.includes(a); };
-const reportFor = (p) => REPORTS.find((r) => mfrOk(p, r) && norm(r.product) === norm(p.name) && sizeKey(r.strength) === sizeKey(p.strength))
   ;
 // How a product is named on the store: "name" (Retatrutide 30 mg), "code" (RT30) or "both" (Retatrutide 30 mg · RT30)
 const withMfr = (p, t) => (p.manufacturer ? `${t} · ${p.manufacturer}` : t);
@@ -102,8 +99,7 @@ const inCart = (id) => (cart.find((c) => c.id === id) || {}).qty || 0;
 function drawChips() {
   const cats = [...new Set(PRODUCTS.map((p) => p.category || "Research peptide"))].sort();
   $("chips").innerHTML = (cats.length > 1 ? [["", "All"], ...cats.map((c) => [c, c])].map(([v, l]) => `<button class="chip${cat === v ? " on" : ""}" type="button" data-cat="${esc(v)}">${esc(l)}</button>`).join("") : "")
-    + `<label class="chip coachip${coaOnly ? " on" : ""}"><input type="checkbox" data-coaonly${coaOnly ? " checked" : ""}> Only with lab report</label>`;
-  document.querySelectorAll("[data-coaonly]").forEach((b) => { b.checked = coaOnly; });
+    ;
 }
 // A product description: the first line(s) say what's in the vial; lines starting with "- " are the benefit bullets.
 const descHtml = (d, p) => {
@@ -119,10 +115,8 @@ let lastGrid = ""; // the cards as last drawn: a refresh that changes nothing le
 function drawProducts() {
   drawChips();
   const words = norm($("hq").value) ? $("hq").value.toLowerCase().split(/\s+/).map(norm).filter(Boolean) : [];
-  const list = PRODUCTS.filter((p) => (!coaOnly || reportFor(p)) && (!cat || (p.category || "Research peptide") === cat) && words.every((w) => norm([p.name, p.strength, p.manufacturer, p.category, (reportFor(p) || {}).sample].join(" ")).includes(w)));
+  const list = PRODUCTS.filter((p) => (!cat || (p.category || "Research peptide") === cat) && words.every((w) => norm([p.name, p.strength, p.manufacturer, p.category, ].join(" ")).includes(w)));
   const html = list.length ? list.map((p) => {
-    const r = reportFor(p);
-    const purity = r ? ((r.results || []).find(([n]) => isPurity(n)) || [])[1] : "";
     const sold = !!S.showSoldOut && p.stock !== null && p.stock <= 0; // "sold out" only when the office turns it on; otherwise it's a backorder
     const price = HIDDEN ? `<p class="p-price ask">Sign in for pricing</p>` : p.price_cents !== null ? `<p class="p-price">${money(p.price_cents)}</p>` : `<p class="p-price ask">Ask for price</p>`;
     const stock = (p.store_note ? `<span class="stockline note">${esc(p.store_note)}</span>` : "") + (sold ? `<span class="soldout">Sold out</span>` : stockText(p)); // Site settings → what shoppers see about stock
@@ -134,14 +128,14 @@ function drawProducts() {
       <div class="pbody">
         <span class="pcat">${esc(p.category || "Research peptide")}${p.manufacturer ? ` · ${esc(p.manufacturer)}` : ""}</span>
         <h3 class="pname">${esc(p.name)}</h3>
-        <span class="pmeta">${[p.strength, purity ? `${purity} purity` : ""].filter(Boolean).map(esc).join(" · ")}</span>
+        <span class="pmeta">${esc(p.strength || "")}</span>
         ${descHtml(p.description, p)}
         <div class="pbuy">${stock}${price}
         <p class="research">For laboratory research use only.</p>
-        <div class="pact">${buy}${r ? `<a class="btn" href="/lab-reports#${esc(rid(r))}" data-report="${r.id}" data-pid="${p.id}">Lab report</a>` : `<span class="stockline">No report yet</span>`}${docsFor(p).length ? `<button class="btn" type="button" data-docs="${p.id}">Documents (${docsFor(p).length})</button>` : ""}</div></div>
+        <div class="pact">${buy}${docsFor(p).length ? `<button class="btn" type="button" data-docs="${p.id}">Documents (${docsFor(p).length})</button>` : ""}</div></div>
       </div>
     </article>`;
-  }).join("") : `<div class="card empty"><p><strong>No product matches.</strong> ${coaOnly ? "You're showing only products with a lab report. Untick it to see everything." : "Try another name or size."}</p></div>`;
+  }).join("") : `<div class="card empty"><p><strong>No product matches.</strong> ${"Try another name or size."}</p></div>`;
   if (html === lastGrid) return;
   lastGrid = html; $("pgrid").innerHTML = html;
 }
@@ -402,75 +396,12 @@ async function loadCards() {
   } catch (e) { box.innerHTML = `<span class="eyebrow">Saved cards</span><p class="dist">Couldn't load saved cards right now.</p>`; }
 }
 
-/* ---------- lab report library ---------- */
-const rid = (r) => "r-" + r.id;
-const state = { q: "", pick: "", size: "" };
-const openIds = new Set();
-function sheetHTML(r) {
-  const pair = (dt, dd) => (dd ? `<div><dt>${dt}</dt><dd>${dd}</dd></div>` : "");
-  const title = `${r.product} ${r.strength}`.trim();
-  const details = [pair("Lab", esc(r.lab)), pair("Task number", r.task ? `<span class="mono">#${esc(r.task)}</span>` : ""), pair("Size", esc(r.strength)),
-    pair("Sample", esc(r.sample)), pair("Batch", r.batch ? `<span class="mono">${esc(r.batch)}</span>` : "Unknown (not given to the lab)"),
-    pair("Client", esc(r.client)), pair("Manufacturer", esc(r.manufacturer)), pair("Testing ordered", fmtDate(r.ordered)),
-    pair("Sample received", fmtDate(r.received)), pair("Analysis conducted", fmtDate(r.tested)), pair("Tests requested", esc(r.testsRequested))].join("");
-  const doc = !r.image ? `<p class="eyebrow">No document attached yet.</p>`
-    : r.isPdf ? `<a class="doc" href="${esc(r.image)}" target="_blank" rel="noopener" aria-label="Open the PDF report for ${esc(title)}"><span class="page pdfpage"><span>PDF</span></span><span class="eyebrow">Open the report (PDF)</span></a>`
-    : `<button class="doc" type="button" data-doc="${r.id}" aria-label="Open the report for ${esc(title)}"><span class="page"><img src="${esc(r.image)}" loading="lazy" alt="${esc(`${r.lab || "Lab"} test report for ${title}`)}"></span><span class="eyebrow">Open the report</span></button>`;
-  const check = r.key || r.verifyUrl ? `<div class="block"><h3 class="eyebrow">Check it with the lab</h3>
-    ${r.key ? `<p class="keyline"><span>Unique key</span><code class="key">${esc(r.key)}</code><button class="btn" type="button" data-copy="${esc(r.key)}">Copy key</button></p>` : ""}
-    ${r.verifyUrl ? `<p><a href="${esc(r.verifyUrl)}" target="_blank" rel="noopener">Open this report on the lab's own site</a></p>` : ""}</div>` : "";
-  return `<div class="sheet"><div>
-    <div class="block"><h3 class="eyebrow">Results</h3><dl class="pairs lab">${(r.results || []).map(([n, v]) => pair(esc(n), esc(v))).join("")}</dl></div>
-    <div class="block"><h3 class="eyebrow">Report details</h3><dl class="pairs">${details}</dl></div></div>
-    <div><div class="block"><h3 class="eyebrow">Lab document</h3>${doc}</div>${check}</div></div>`;
-}
+/* ---------- product documents ---------- */
 const docsFor = (p) => (p ? DOCS.filter((d) => d.product_id === p.id) : []);
 function docsHTML(list) {
   if (!list.length) return "";
   return `<div class="block"><h3 class="eyebrow">Documents</h3><ul class="doclist">${list.map((d) => `<li><a href="/doc/${d.id}" target="_blank" rel="noopener">
     <span class="dtype">${d.file_type === "application/pdf" ? "PDF" : "IMG"}</span><span><strong>${esc(d.title)}</strong><small>${esc(d.kind)}</small></span></a></li>`).join("")}</ul></div>`;
-}
-function drawReports() {
-  const words = state.q.toLowerCase().split(/\s+/).map(norm).filter(Boolean);
-  const hay = (r) => norm([r.product, r.strength, r.sample, r.batch, r.task, r.key, r.lab].join(" "));
-  const list = REPORTS.filter((r) => (!state.pick || r.product === state.pick) && (!state.size || r.strength === state.size) && words.every((w) => hay(r).includes(w)));
-  const filtering = words.length || state.pick || state.size;
-  if (filtering && list.length === 1) openIds.add(rid(list[0]));
-  const groups = new Map();
-  list.forEach((r) => { if (!groups.has(r.product)) groups.set(r.product, []); groups.get(r.product).push(r); });
-  $("groups").innerHTML = !REPORTS.length ? `<div class="card empty"><p><strong>No reports have been published yet.</strong></p></div>`
-    : !list.length ? `<div class="card empty"><p><strong>No report matches.</strong> Check the name, size or code, or clear the filters.</p><button class="btn" type="button" id="clear">Clear filters</button></div>`
-    : [...groups].map(([name, rs]) => `<section class="group"><header><h2>${esc(name)}</h2><span class="eyebrow">${plural(rs.length, "report")}</span></header>
-      <div class="rows">${rs.map((r) => {
-        const purity = ((r.results || []).find(([n]) => isPurity(n)) || [])[1] || "";
-        const amounts = (r.results || []).filter(([n]) => !isPurity(n));
-        const amount = amounts.length === 1 ? `${esc(amounts[0][1])} measured` : amounts.map(([n, v]) => `${esc(n)} ${esc(v)}`).join(" · ");
-        return `<details class="report" id="${rid(r)}"${openIds.has(rid(r)) ? " open" : ""}><summary><span class="row">
-          <span class="r-name">${esc(`${r.product} ${r.strength}`)}</span>
-          <span class="r-batch${r.batch ? "" : " none"}">${r.batch ? esc(r.batch) : "Batch not stated"}</span>
-          <span class="r-date">${fmtDate(r.tested)}</span><span class="r-purity">${esc(purity)}</span><span class="r-amount">${amount}</span>
-          <span class="chev" aria-hidden="true"></span></span></summary>${sheetHTML(r)}</details>`;
-      }).join("")}</div></section>`).join("");
-  $("count").textContent = !REPORTS.length ? "" : filtering ? `Showing ${list.length} of ${plural(REPORTS.length, "report")}` : `${plural(REPORTS.length, "report")} across ${plural(new Set(REPORTS.map((r) => r.product)).size, "peptide")}`;
-}
-function fillSizes() {
-  const pool = REPORTS.filter((r) => r.strength && (!state.pick || r.product === state.pick));
-  const sizes = [...new Map(pool.map((r) => [r.strength, parseFloat(r.strength) || 0]))].sort((a, b) => a[1] - b[1]).map(([s]) => s);
-  $("size").innerHTML = `<option value="">All sizes</option>` + sizes.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
-  $("size").value = state.size;
-}
-function showDoc(r) {
-  $("vTitle").innerHTML = `${esc(`${r.product} ${r.strength}`)}<small>${esc(r.lab || "Lab")} report${r.task ? " · task #" + esc(r.task) : ""} · analysed ${fmtDate(r.tested)}</small>`;
-  $("vBody").innerHTML = `<img src="${esc(r.image)}" alt="${esc(`Lab report for ${r.product} ${r.strength}`)}">`;
-  $("vOpen").href = r.image;
-  $("vVerify").hidden = !r.verifyUrl; if (r.verifyUrl) $("vVerify").href = r.verifyUrl;
-  openD($("viewer"));
-}
-function jumpTo(id) {
-  state.q = ""; state.pick = ""; state.size = ""; $("q").value = ""; $("product").value = ""; fillSizes();
-  openIds.add(id); drawReports();
-  const el = $(id); if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-  history.replaceState(null, "", "#" + id);
 }
 
 /* ---------- order lookup ---------- */
@@ -550,13 +481,13 @@ function acctView(mode) {
   const b = $("acBody"), close = `<button class="btn" type="button" data-close>Close</button>`;
   const fld = (id, label, type = "text", ac = "", val = "") => `<div class="field"><label class="eyebrow" for="${id}">${label}</label><input id="${id}" type="${type}" autocomplete="${ac}" value="${esc(val)}"></div>`;
   if (!ME && mode === "request") {
-    b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Request a PIN</h2>${close}</div>
-      <div class="tabs"><button type="button" data-acct="signin">Sign in</button><button class="on" type="button">Request a PIN</button></div>
-      <p class="dist">Tell us who you are and we'll set you up with a PIN. Accounts are created by ${esc(S.brand || "the store")}, not online.</p>
+    b.innerHTML = `<div class="sectionhead" style="padding:0"><h2 id="acTitle">Contact us</h2>${close}</div>
+      <div class="tabs"><button type="button" data-acct="signin">Sign in</button><button class="on" type="button">Contact us</button></div>
+      <p class="dist">Ask us for a PIN or send any message — we'll get back to you within one business day.${S.contact ? ` You can also reach us at ${esc(S.contact)}.` : ""} Accounts are created by ${esc(S.brand || "the store")}, not online.</p>
       <form id="acForm" class="stack"><div class="grid2">${fld("rqN", "Your name", "text", "name")}${fld("rqC", "Company or clinic (optional)", "text", "organization")}${fld("rqE", "Email", "email", "email")}${fld("rqP", "Phone", "tel", "tel")}</div>
-      <div class="field"><label class="eyebrow" for="rqM">Message (optional)</label><textarea id="rqM" maxlength="1000" placeholder="Anything we should know, e.g. who referred you"></textarea></div>
+      <div class="field"><label class="eyebrow" for="rqM">Message</label><textarea id="rqM" maxlength="1000" rows="4" placeholder="Ask for a PIN, ask about a product, or anything else"></textarea></div>
       <label class="hp">Leave this empty <input id="rqW" tabindex="-1" autocomplete="off"></label>
-      <div class="err" id="acErr" hidden></div><button class="btn solid wide">Send request</button></form>`;
+      <div class="err" id="acErr" hidden></div><button class="btn solid wide">Send</button></form>`;
     $("acForm").onsubmit = async (e) => {
       e.preventDefault();
       try {
@@ -643,20 +574,16 @@ document.addEventListener("click", (e) => {
   const po = t.closest("[data-payorder]");
   if (po && ME) { payOrder(po.dataset.payorder, ME.email, po); return; }
   if (t.closest("[data-signin]")) { loadAccount().then(() => { acctView(); openD($("acct")); }); return; }
+  if (t.closest("[data-contact]")) { e.preventDefault(); loadAccount().then(() => { acctView("request"); openD($("acct")); }); return; }
   const c = t.closest("[data-cat]");
-  if (c && LAB) { location.href = "/#products"; return; }
   if (c) { e.preventDefault(); cat = c.dataset.cat; drawProducts(); $("products").scrollIntoView({ behavior: "smooth" }); return; }
   const add = t.closest("[data-add]");
   if (add) { addToCart(+add.dataset.add); drawProducts(); toast("Added to cart"); return; }
   const inc = t.closest("[data-inc]"), dec = t.closest("[data-dec]"), rm = t.closest("[data-rm]");
   if (inc || dec || rm) { const id = +(inc || dec || rm).dataset[inc ? "inc" : dec ? "dec" : "rm"]; if (rm) { cart = cart.filter((c) => c.id !== id); saveCart(); } else addToCart(id, inc ? 1 : -1); drawCart(); drawProducts(); return; }
   if (t.closest("#toCheckout")) { openCheckout(); return; }
-  const jump = t.closest("[data-jump]"); if (jump) { e.preventDefault(); jumpTo(jump.dataset.jump); return; }
-  const rep = t.closest("[data-report]");
-  if (rep) { const r = REPORTS.find((x) => String(x.id) === rep.dataset.report); if (r) { e.preventDefault(); const pr = PRODUCTS.find((x) => String(x.id) === rep.dataset.pid); $("rmTitle").textContent = `${r.product} ${r.strength}`.trim() + " · lab report"; $("rmBody").innerHTML = sheetHTML(r) + docsHTML(docsFor(pr)); openD($("repModal")); } return; }
   const dk = t.closest("[data-docs]");
   if (dk) { const pr = PRODUCTS.find((x) => String(x.id) === dk.dataset.docs); if (pr) { $("rmTitle").textContent = `${pr.name} ${pr.strength}`.trim() + " · documents"; $("rmBody").innerHTML = docsHTML(docsFor(pr)); openD($("repModal")); } return; }
-  const doc = t.closest("[data-doc]"); if (doc) { const r = REPORTS.find((x) => String(x.id) === doc.dataset.doc); if (r && r.image) showDoc(r); return; }
   const copy = t.closest("[data-copy]");
   if (copy) {
     const flash = (w) => { copy.textContent = w; setTimeout(() => { copy.textContent = "Copy key"; }, 1600); };
@@ -666,26 +593,19 @@ document.addEventListener("click", (e) => {
     });
     return;
   }
-  if (t.closest("#clear")) { state.q = ""; state.pick = ""; state.size = ""; $("q").value = ""; $("product").value = ""; fillSizes(); drawReports(); }
 });
-document.addEventListener("toggle", (e) => { const d = e.target; if (d.classList && d.classList.contains("report")) { if (d.open) openIds.add(d.id); else openIds.delete(d.id); } }, true);
 document.querySelectorAll("dialog").forEach((d) => d.addEventListener("click", (e) => { if (e.target === d && d.id !== "gate") closeD(d); }));
 $("acctOpen").onclick = async () => { await loadAccount(); acctView(); openD($("acct")); };
 $("cartOpen").onclick = () => { drawCart(); openD($("cart")); };
 $("stoggle").onclick = () => { $("top").classList.toggle("searching"); if ($("top").classList.contains("searching")) $("hq").focus(); };
-$("hq").addEventListener("input", () => { if (LAB) { state.q = $("hq").value; $("q").value = $("hq").value; drawReports(); } else drawProducts(); });
-$("hq").addEventListener("keydown", (e) => { if (e.key === "Enter") $(LAB ? "reports" : "products").scrollIntoView({ behavior: "smooth" }); });
-$("q").addEventListener("input", (e) => { state.q = e.target.value; drawReports(); });
-$("product").addEventListener("change", (e) => { state.pick = e.target.value; state.size = ""; fillSizes(); drawReports(); });
-$("size").addEventListener("change", (e) => { state.size = e.target.value; drawReports(); });
+$("hq").addEventListener("input", () => drawProducts());
+$("hq").addEventListener("keydown", (e) => { if (e.key === "Enter") $("products").scrollIntoView({ behavior: "smooth" }); });
 $("fulfil").addEventListener("change", drawTotals);
 $("cCodeApply").onclick = applyCode;
 $("cCode").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); applyCode(); } });
 $("cCode").addEventListener("input", () => { if (CODE && $("cCode").value.trim().toUpperCase() !== CODE.code) { CODE = null; $("cCodeMsg").textContent = ""; drawTotals(); } });
-document.addEventListener("change", (e) => { if (e.target.matches("[data-coaonly]")) { coaOnly = e.target.checked; store.set("coaOnly", coaOnly); if (LAB) location.href = "/#products"; else drawProducts(); } });
 $("coForm").addEventListener("submit", submitOrder);
 $("trackForm").addEventListener("submit", lookup);
-$("vClose").onclick = () => closeD($("viewer"));
 
 function drawHelix() {
   let out = "";
@@ -705,7 +625,7 @@ let first = true;
 // prices or buttons — those come with the fresh data a moment later, so nobody sees another person's pricing.
 function drawFromSnapshot() {
   const snap = store.get("storeSnap");
-  if (!snap || !Array.isArray(snap.products) || !snap.settings || LAB) return;
+  if (!snap || !Array.isArray(snap.products) || !snap.settings) return;
   try { S = snap.settings; PRODUCTS = snap.products; REPORTS = snap.reports || []; DOCS = snap.documents || []; PENDING = true; drawProducts(); gate(); } catch (e) { PENDING = false; }
 }
 async function load() {
@@ -719,8 +639,7 @@ async function load() {
     first = false;
     afterPayment();
     const name = S.brand || "360 Peptides";
-    document.title = LAB ? `Lab reports · ${name}` : name;
-    if (LAB) $("hq").placeholder = "Search lab reports";
+    document.title = name;
     $("brand").textContent = name; $("footBrand").textContent = name;
     if (S.siteLogoV) { $("brandImg").src = "/site-logo?v=" + S.siteLogoV; $("brandImg").alt = name; $("brandImg").hidden = false; $("brand").classList.add("hp"); $("tagline").classList.add("hp"); }
     if (S.tagline) { $("tagline").textContent = S.tagline; $("tagline").hidden = false; }
@@ -746,18 +665,9 @@ async function load() {
     $("footCopy").textContent = `© ${new Date().getFullYear()} ${name}`;
     fetch("/api/build").then((r) => r.json()).then((b) => { $("footVer").textContent = `Version ${b.version} · updated ${fmtDate(b.updated)}`; $("footVer").hidden = false; }).catch(() => {});
     drawHelix();
-    const names = [...new Set(REPORTS.map((r) => r.product))];
-    $("product").insertAdjacentHTML("beforeend", names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join(""));
-    fillSizes();
-    // (product / report counts under the headline removed at owner request)
-    let hash = location.hash.slice(1); try { hash = decodeURIComponent(hash); } catch (x) { /* raw */ }
-    const h = norm(hash);
-    const target = h && (REPORTS.find((r) => rid(r) === hash) || REPORTS.find((r) => norm(r.task) === h) || REPORTS.find((r) => r.batch && norm(r.batch) === h));
-    if (target) openIds.add(rid(target));
-    drawReports();
-    if (target) requestAnimationFrame(() => { const el = $(rid(target)); if (el) el.scrollIntoView({ block: "center" }); });
     gate();
-  } else drawReports();
+    if (location.hash === "#contact") loadAccount().then(() => { acctView("request"); openD($("acct")); });
+  }
   { const base = S.priceNote || ""; $("pNote").textContent = HIDDEN ? "Prices show once you sign in with your PIN." : SIGN_TO_ORDER ? "Store prices shown. Sign in with your PIN to order and see your account pricing." : PRICING ? `${base}${base ? " · " : ""}Your account pricing is applied.` : base; }
   drawProducts(); drawCartCount();
 }
