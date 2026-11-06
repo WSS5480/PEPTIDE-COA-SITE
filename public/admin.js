@@ -92,11 +92,11 @@ function drawLogin(msg) {
 /* ---------- shell ---------- */
 // [key, label, who]: "all" = owner, staff and sales reps · "team" = owner and staff · "owner" · "ownerrep" = owner and reps. "line" draws the divider:
 // sales reps only ever see what's above it (their own customers, orders and commissions) plus My account.
+const LAB_REPORTS = false; // lab-report (COA) tooling in the admin: off (owner request, Nov 2026); the storefront never shows reports
 const NAV = [["dashboard", "Dashboard", "all"], ["orders", "Orders", "all"], ["neworder", "New order", "all"], ["fill", "Fill orders", "team"], ["customers", "Customers", "all"], ["commissions", "Commissions", "ownerrep"], ["ar", "Invoices & AR", "all"], ["analytics", "Analytics", "all"], ["salescost", "Sales & cost", "owner"], ["pnl", "Profit / loss", "owner"], ["line"],
   ["products", "Products & prices", "team"], ["inventory", "Inventory", "team"], ...(LAB_REPORTS ? [["reports", "Lab reports", "team"]] : []), ["discounts", "Discount codes", "owner"], ["promo", "Promo banner", "team"], ["page", "Page setup", "team"], ["settings", "Site settings", "team"], ["university", "🎓 360 University", "team"], ["line2"],
   // below the second line: the things you reach from either app (the portal links here too)
   ["staff", "Team", "owner"], ["setup", "Email & approvals", "owner"], ["geo", "Geofencing", "owner"], ["apps", "Apps & downloads", "all"], ["howto", "How to", "all"], ["account", "My account", "all"]];
-const LAB_REPORTS = false; // lab-report (COA) tooling in the admin: off (owner request, Nov 2026); the storefront never shows reports
 const canSee = (who) => (who === "all" || (who === "owner" && isOwner()) || (who === "team" && !isRep()) || (who === "ownerrep" && (isOwner() || isRep())));
 function shell() {
   if (window.PushUI && !document.body.classList.contains("embed")) setTimeout(() => window.PushUI.nudge({ toast, what: me.role === "rep" ? "your customers' orders" : "new orders, card payments, PIN requests and low stock" }), 1500);
