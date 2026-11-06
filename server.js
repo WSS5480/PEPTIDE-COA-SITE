@@ -58,7 +58,7 @@ const SID_ATTRS = () => (process.env.HUB_SECRET && process.env.TRACKER_URL) ? "S
 
 function publicSettings(s) {
   const keys = ["brand", "tagline", "distributorOf", "brandUrl", "contact", "announcement", "announcementOn", "bannerScroll", "perksOn", "perks", "vial", "vialLogoV", "siteLogoV", "vialPhotoV", "heroEyebrow", "headline", "storeOpen", "minAge", "ageGate", "minOrderCents", "priceNote", "intro", "disclaimers", "paymentInstructions", "footerNotice", "policyTerms", "policyReturns", "policyShipping", "policyPrivacy",
-    "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote", "pricesRequireLogin", "showSoldOut", "stockDisplay", "stockLowAt", "custIdleMin"];
+    "shippingOn", "shippingLabel", "shippingNote", "shippingCents", "shippingFreeOverCents", "deliveryOn", "deliveryLabel", "deliveryNote", "pricesRequireLogin", "hidePrices", "showSoldOut", "stockDisplay", "stockLowAt", "custIdleMin"];
   // card payments only work once the Stripe key is on the host, so the store is told the effective state
   const out = { ...Object.fromEntries(keys.map((k) => [k, s[k]])), cardPayments: !!(s.cardPayments && stripe), stripePk: s.cardPayments && stripe ? STRIPE_PK : "", bannerTone: s.bannerTone || "navy", bannerLink: s.bannerLink || "", bannerSpeed: Math.min(90, Math.max(6, Number(s.bannerSpeed) || 30)), bannerSticky: s.bannerSticky !== false, smsCustomer: s.smsOn !== false && s.smsCustomerOn !== false && sms.ready() };
   // the promo banner stops on its own after its end date (Central time)
@@ -264,9 +264,9 @@ app.get("/api/store", wrap(async (req, res) => {
   // With "prices only after sign-in" on, guests get the catalog without prices.
   const markup = cust && cust.markup !== null ? Number(cust.markup) : null;
   const guest = !cust && !house, guestUp = guest && s.guestPricesOn ? Math.max(0, Number(s.guestMarkup) || 0) : 0;
-  // Everyone sees prices (the store's default prices, or their own once signed in). "Prices only after sign-in" now
-  // only means guests sign in with their PIN before they can order.
-  const hide = false, signToOrder = !!s.pricesRequireLogin && guest && !s.guestPricesOn;
+  // Everyone sees prices (the store's default prices, or their own once signed in) unless "Hide prices from visitors" is on:
+  // then visitors see "Sign in for pricing" until they sign in with a PIN. "Sign in to order" means guests see prices but sign in to order.
+  const hide = !!s.hidePrices && guest, signToOrder = hide || (!!s.pricesRequireLogin && guest && !s.guestPricesOn);
   const out = listed.map(({ cost_cents, ...p }) => ({ ...p, stock: s.showSoldOut || (s.stockDisplay && s.stockDisplay !== "none") ? p.stock : null, price_cents: hide ? null : guestPrice(priceFor({ ...p, cost_cents }, markup), guestUp) })); // stock counts stay private unless sold-out messages are on
   res.set("Cache-Control", "no-store");
   res.json({ settings: publicSettings(s), products: out, reports: reports.map(reportOut), fulfillment: fulfillmentOptions(s), documents, pricing: markup !== null ? { markup } : null, pricesHidden: hide, signToOrder, signedIn: !!cust || !!(house && !cust), house: !!(house && !cust) });
@@ -325,7 +325,7 @@ app.post("/api/orders", limit("order", 20, 15 * 60 * 1000), wrap(async (req, res
   const address = { line1: str(a.line1, 160), line2: str(a.line2, 160), city: str(a.city, 80), state: str(a.state, 40), zip: str(a.zip, 20), country: str(a.country || "US", 40) };
   const signedIn = await customerFrom(req);
   const house = !signedIn && (await houseFrom(req));
-  if (s.pricesRequireLogin && !signedIn && !house && !s.guestPricesOn) return bad(res, "Please sign in with your PIN to order.");
+  if ((s.hidePrices || (s.pricesRequireLogin && !s.guestPricesOn)) && !signedIn && !house) return bad(res, "Please sign in with your PIN to order.");
   if (!name) return bad(res, "Enter your name.");
   if (email ? !isEmail(email) : !signedIn) return bad(res, email ? "That email doesn't look right." : "Enter your email.");
   if (!address.line1 || !address.city || !address.state || !address.zip) return bad(res, "Enter a full shipping address.");

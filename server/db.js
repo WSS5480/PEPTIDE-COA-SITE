@@ -336,6 +336,7 @@ const DEFAULT_SETTINGS = {
   heroEyebrow: "Third-party tested",
   headline: "Research peptides with the lab report on every vial",
   storeOpen: true,
+  hidePrices: false,          // visitors who aren't signed in see "Sign in for pricing" instead of prices (the office and signed-in customers see them)
   pricesRequireLogin: true,   // prices (and the cart) show only once a customer signs in with their PIN
   guestPricesOn: false,      // …unless this is on: visitors who aren't signed in see prices (and can order) at the store price plus guestMarkup %
   guestMarkup: 0,
